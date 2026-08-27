@@ -7,10 +7,26 @@ export const db = window.supabase?.createClient(config.supabaseUrl, config.supab
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
 }) || null;
 
+const AUTH_TIMEOUT_MS = 12000;
+
+export async function withAuthTimeout(operation) {
+  let timeout;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('Authentication timed out. Please try again.')), AUTH_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export async function requireUser() {
   if (!db) return null;
   try {
-    const { data: { user } } = await db.auth.getUser();
+    const { data: { user } } = await withAuthTimeout(db.auth.getUser());
     return user;
   } catch {
     return null;

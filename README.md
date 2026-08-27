@@ -39,3 +39,19 @@ The checked-in Supabase URL and `sb_publishable_…` key are public client confi
 - Create a personal MCQ and select `My Content` in QBank/Test.
 - Confirm reset clears only personal learning state and never deletes imported questions.
 - Confirm account A cannot read account B's bookmarks, notes, learning state, personal content, test sessions, or test answers.
+
+## Fail-safe validation
+
+Run the deterministic frontend fixtures and source-contract checks:
+
+```bash
+node scripts/qbank-validate.mjs
+```
+
+Run the same checks plus the read-only aggregate database invariants after an import or non-destructive migration:
+
+```bash
+DATABASE_URL='postgresql://…' node scripts/qbank-validate.mjs --database
+```
+
+The command prints one concise `PASS` or `FAIL` line per invariant and exits non-zero if any check fails. It uses aggregates and stable synthetic fixtures; it does not alter real learner state or enumerate filter permutations. The imported-question floor is currently 418 in `scripts/qbank-validation.sql`; after a verified import, raise that floor to the newly accepted imported count so a later non-destructive migration cannot silently reduce it.

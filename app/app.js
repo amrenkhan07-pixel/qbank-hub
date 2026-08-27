@@ -1,4 +1,5 @@
-import { db, initError, isMissingTable, requireUser } from './supabase.js';
+import { db, initError, isMissingTable, requireUser, withAuthTimeout } from './supabase.js';
+import { assertValidation, validateGeneratedQuestionSet, validateQuestionStateBindings, validateResumeSnapshot } from './validation.js';
 
 const root = document.querySelector('#app');
 const TARGET_SECONDS = 50;
@@ -178,13 +179,13 @@ async function statusCandidateIds(filters) {
   const statuses = new Set(filters.statuses || []);
   if (!statuses.size || statuses.has('all') || statuses.has('my_content')) return null;
   const union = new Set(); const add = (values) => values.forEach((value) => union.add(value));
-  if (statuses.has('bookmarked')) add(unique(await paged(() => db.from('bookmarks').select('question_id').eq('user_id', state.user.id))));
+  if (statuses.has('bookmarked')) add(unique(await paged(() => db.from('user_question_state').select('question_id').eq('user_id', state.user.id).eq('bookmarked', true))));
   const needsLearning = ['marked', 'incorrect', 'correct', 'recall_due', 'difficult', 'confident_wrong', 'slow'].some((value) => statuses.has(value));
   if (needsLearning) {
-    const result = await optional(db.from('question_learning_state').select('*').eq('user_id', state.user.id), 'learning');
+    const result = await optional(db.from('user_question_state').select('*').eq('user_id', state.user.id), 'learning');
     const rows = result.data || [];
     if (statuses.has('marked')) add(rows.filter((x) => x.marked_for_review).map((x) => x.question_id));
-    if (statuses.has('incorrect')) add(rows.filter((x) => x.last_is_correct === false || x.incorrect_count > 0).map((x) => x.question_id));
+    if (statuses.has('incorrect')) add(rows.filter((x) => x.last_is_correct === false || x.wrong).map((x) => x.question_id));
     if (statuses.has('correct')) add(rows.filter((x) => x.last_is_correct === true).map((x) => x.question_id));
     if (statuses.has('recall_due')) add(rows.filter((x) => x.recall_due_at && new Date(x.recall_due_at) <= new Date()).map((x) => x.question_id));
     if (statuses.has('difficult')) add(rows.filter((x) => x.personally_difficult).map((x) => x.question_id));
@@ -211,6 +212,55 @@ async function candidateIds(filters) {
   const status = await statusCandidateIds(filters);
   if (status) candidate = intersect(candidate, status);
   return candidate;
+}
+
+async function rowsForQuestionIds(table, columns, questionIds, configure = (query) => query) {
+  const rows = [];
+  for (let index = 0; index < questionIds.length; index += 200) {
+    const result = await configure(db.from(table).select(columns).in('question_id', questionIds.slice(index, index + 200)));
+    if (result.error) throw result.error;
+    rows.push(...(result.data || []));
+  }
+  return rows;
+}
+
+async function validationMembership(filters, questions) {
+  const questionIds = questions.map((question) => question.id);
+  const topicQuestionIds = (filters.topics || []).length
+    ? unique(await rowsForQuestionIds('question_topics', 'question_id', questionIds, (query) => query.in('topic_id', filters.topics)))
+    : questionIds;
+  const subtopicQuestionIds = (filters.subtopics || []).length
+    ? unique(await rowsForQuestionIds('question_subtopics', 'question_id', questionIds, (query) => query.in('subtopic_id', filters.subtopics)))
+    : questionIds;
+  const statuses = new Set(filters.statuses || []);
+  if (!statuses.size || statuses.has('all')) return { topicQuestionIds, subtopicQuestionIds, statusQuestionIds: questionIds };
+
+  const statusQuestionIds = new Set();
+  if (statuses.has('my_content')) questions.filter((question) => question.content_origin === 'user' && question.created_by === state.user.id).forEach((question) => statusQuestionIds.add(question.id));
+  if (statuses.has('bookmarked')) {
+    const rows = await rowsForQuestionIds('user_question_state', 'question_id', questionIds, (query) => query.eq('user_id', state.user.id).eq('bookmarked', true));
+    rows.forEach((row) => statusQuestionIds.add(row.question_id));
+  }
+  const learningStatuses = ['incorrect', 'correct', 'marked', 'recall_due', 'difficult', 'confident_wrong', 'slow'];
+  if (learningStatuses.some((status) => statuses.has(status))) {
+    const now = Date.now();
+    const rows = await rowsForQuestionIds('user_question_state', '*', questionIds, (query) => query.eq('user_id', state.user.id));
+    rows.forEach((row) => {
+      const matches = (statuses.has('incorrect') && (row.last_is_correct === false || row.wrong === true))
+        || (statuses.has('correct') && row.last_is_correct === true)
+        || (statuses.has('marked') && (row.marked_for_review === true || row.revision === true))
+        || (statuses.has('recall_due') && row.recall_due_at && new Date(row.recall_due_at).getTime() <= now)
+        || (statuses.has('difficult') && row.personally_difficult === true)
+        || (statuses.has('confident_wrong') && row.last_is_correct === false && row.last_confidence === 'sure')
+        || (statuses.has('slow') && Number(row.last_time_seconds) > TARGET_SECONDS);
+      if (matches) statusQuestionIds.add(row.question_id);
+    });
+  }
+  if (statuses.has('new')) {
+    const attempted = new Set(unique(await rowsForQuestionIds('question_attempts', 'question_id', questionIds, (query) => query.eq('user_id', state.user.id))));
+    questionIds.filter((questionId) => !attempted.has(questionId)).forEach((questionId) => statusQuestionIds.add(questionId));
+  }
+  return { topicQuestionIds, subtopicQuestionIds, statusQuestionIds: [...statusQuestionIds] };
 }
 
 function applyDirectFilters(query, filters) {
@@ -277,23 +327,26 @@ async function loadPersonalState(questionIds) {
   const bookmarks = new Set(); const marked = new Set(); const learning = new Map();
   for (let i = 0; i < questionIds.length; i += 200) {
     const chunk = questionIds.slice(i, i + 200);
-    const [bookmarkResult, learningResult] = await Promise.all([
-      optional(db.from('bookmarks').select('question_id').eq('user_id', state.user.id).in('question_id', chunk)),
-      optional(db.from('question_learning_state').select('*').eq('user_id', state.user.id).in('question_id', chunk), 'learning'),
-    ]);
-    (bookmarkResult.data || []).forEach((row) => bookmarks.add(row.question_id));
-    (learningResult.data || []).forEach((row) => { learning.set(row.question_id, row); if (row.marked_for_review) marked.add(row.question_id); });
+    const learningResult = await optional(db.from('user_question_state').select('*').eq('user_id', state.user.id).in('question_id', chunk), 'learning');
+    (learningResult.data || []).forEach((row) => {
+      learning.set(row.question_id, row);
+      if (row.bookmarked) bookmarks.add(row.question_id);
+      if (row.marked_for_review) marked.add(row.question_id);
+    });
   }
   return { bookmarks, marked, learning };
 }
 
 async function createSession({ mode, preset, title, filters, requested, autoSubmit }) {
   loading('Building your question set…');
-  const questions = await loadQuestions(filters, requested);
+  const trueMatchingCount = await matchingCount(filters);
+  const questions = trueMatchingCount ? await loadQuestions(filters, requested) : [];
+  const membership = await validationMembership(filters, questions);
+  assertValidation(validateGeneratedQuestionSet({ questions, filters, requested, matchingCount: trueMatchingCount, ...membership }), 'Generated question set');
   if (!questions.length) { toast('No questions match those filters.'); location.hash = mode === 'test' ? '#/tests' : '#/qbank'; return; }
   const now = new Date().toISOString();
   const payload = {
-    user_id: state.user.id, title, mode, status: 'in_progress', filters, question_count: questions.length,
+    user_id: state.user.id, title, mode, status: 'in_progress', filters, total_questions: questions.length,
     duration_minutes: Math.max(1, Math.ceil(questions.length * TARGET_SECONDS / 60)), started_at: now,
     current_position: 0, preset, target_seconds_per_question: TARGET_SECONDS, auto_submit: autoSubmit,
     last_question_started_at: now,
@@ -312,6 +365,7 @@ async function createSession({ mode, preset, title, filters, requested, autoSubm
     }
   }
   const personal = await loadPersonalState(questions.map((q) => q.id));
+  assertValidation(validateQuestionStateBindings({ questions, answers: {}, bookmarks: personal.bookmarks, marked: personal.marked }), 'Question state');
   state.active = {
     ...payload, ...(session || {}), kind: mode, questions, index: 0, answers: {},
     bookmarks: personal.bookmarks, marked: personal.marked, learning: personal.learning,
@@ -326,7 +380,7 @@ async function home() {
   const [attempts, sessions, due, cards] = await Promise.all([
     db.from('question_attempts').select('question_id,is_correct,answered_at').eq('user_id', state.user.id).order('answered_at', { ascending: false }).limit(1000),
     optional(db.from('test_sessions').select('*').eq('user_id', state.user.id).eq('status', 'in_progress').order('updated_at', { ascending: false }).limit(1), 'sessions'),
-    optional(db.from('question_learning_state').select('question_id', { count: 'exact' }).eq('user_id', state.user.id).lte('recall_due_at', now), 'learning'),
+    optional(db.from('user_question_state').select('question_id', { count: 'exact' }).eq('user_id', state.user.id).lte('recall_due_at', now), 'learning'),
     optional(db.from('recall_card_progress').select('card_id', { count: 'exact' }).eq('user_id', state.user.id).lte('due_at', now), 'personal'),
   ]);
   const logs = attempts.data || []; const correct = logs.filter((row) => row.is_correct).length;
@@ -345,7 +399,7 @@ async function home() {
     weak = [...tally].filter(([, value]) => value[1] >= 2).sort((a, b) => a[1][0] / a[1][1] - b[1][0] / b[1][1]).slice(0, 3).map(([id, value]) => ({ id, name: names.get(String(id))?.name || 'Unclassified', accuracy: pct(value[0], value[1]) }));
   }
   layout(`<section class="home-hero"><div><span class="eyebrow">YOUR STUDY PLAN</span><h1>What should you do next?</h1><p class="subtle">One clear action, based on your real learning state.</p></div><a class="button large" href="${recommendation.route}">${e(recommendation.label)}</a></section>
-  <section class="action-grid">${active ? `<article class="card action-card priority"><span class="eyebrow">CONTINUE</span><h2>${e(active.title || active.preset || active.mode)}</h2><p>Question ${(active.current_position || 0) + 1} of ${active.question_count}</p><button class="button" data-action="resume" data-id="${e(active.id)}">Resume exact session</button></article>` : `<article class="card action-card"><span class="eyebrow">CONTINUE</span><h2>No unfinished session</h2><p class="subtle">Start a practice set or test when you are ready.</p><a class="button secondary" href="#/qbank">Build practice</a></article>`}<article class="card action-card"><span class="eyebrow">ACTIVE RECALL</span><h2>${dueCount} due</h2><p>Questions and recall cards ready now.</p><a class="button secondary" href="#/review">Open recall</a></article><a class="card action-card link-card" href="#/analytics"><span class="eyebrow">ACCURACY</span><h2>${pct(correct, logs.length)}</h2><p>${logs.length} recent attempts · Open analytics</p></a></section>
+  <section class="action-grid">${active ? `<article class="card action-card priority"><span class="eyebrow">CONTINUE</span><h2>${e(active.title || active.preset || active.mode)}</h2><p>Question ${(active.current_position || 0) + 1} of ${active.total_questions}</p><button class="button" data-action="resume" data-id="${e(active.id)}">Resume exact session</button></article>` : `<article class="card action-card"><span class="eyebrow">CONTINUE</span><h2>No unfinished session</h2><p class="subtle">Start a practice set or test when you are ready.</p><a class="button secondary" href="#/qbank">Build practice</a></article>`}<article class="card action-card"><span class="eyebrow">ACTIVE RECALL</span><h2>${dueCount} due</h2><p>Questions and recall cards ready now.</p><a class="button secondary" href="#/review">Open recall</a></article><a class="card action-card link-card" href="#/analytics"><span class="eyebrow">ACCURACY</span><h2>${pct(correct, logs.length)}</h2><p>${logs.length} recent attempts · Open analytics</p></a></section>
   <section class="card section-card"><div class="section-heading"><div><span class="eyebrow">WEAK AREAS</span><h2>Turn weakness into a question set</h2></div><a href="#/analytics">See all analytics</a></div>${weak.length ? `<div class="weak-list">${weak.map((item) => `<button class="weak-item" data-action="quick-subject" data-id="${e(item.id)}"><span>${e(item.name)}</span><b>${item.accuracy}</b><small>Start revision</small></button>`).join('')}</div>` : '<div class="empty">Answer a few questions and weak areas will appear here.</div>'}</section><div class="secondary-metrics"><span>${logs.length} recent attempts</span><span>${correct} correct</span></div>`);
 }
 
@@ -375,7 +429,7 @@ const TEST_PRESETS = {
 async function tests() {
   layout(`<div class="page-heading"><span class="eyebrow">TEST</span><h1>Choose a test type</h1><p>Start with intent, then narrow the question pool.</p></div><section class="preset-grid">${Object.entries(TEST_PRESETS).map(([id, item]) => `<button class="card preset-card" data-action="choose-preset" data-preset="${id}"><b>${e(item[0])}</b><span>${e(item[1])}</span></button>`).join('')}</section><section id="test-builder-slot"></section><section class="card section-card"><div class="section-heading"><div><span class="eyebrow">CONTINUE</span><h2>Unfinished tests</h2></div><a href="#/history">History</a></div><div id="resume-tests" class="empty">Loading…</div></section>`);
   const result = await optional(db.from('test_sessions').select('*').eq('user_id', state.user.id).eq('status', 'in_progress').order('updated_at', { ascending: false }).limit(10), 'sessions');
-  document.querySelector('#resume-tests').innerHTML = result.data?.length ? `<ul class="list">${result.data.map((session) => `<li><div><b>${e(session.title || session.preset || 'Test')}</b><div class="subtle">Question ${(session.current_position || 0) + 1}/${session.question_count} · ${date(session.updated_at)}</div></div><button class="button secondary" data-action="resume" data-id="${e(session.id)}">Resume</button></li>`).join('')}</ul>` : '<div class="empty">No unfinished tests.</div>';
+  document.querySelector('#resume-tests').innerHTML = result.data?.length ? `<ul class="list">${result.data.map((session) => `<li><div><b>${e(session.title || session.preset || 'Test')}</b><div class="subtle">Question ${(session.current_position || 0) + 1}/${session.total_questions} · ${date(session.updated_at)}</div></div><button class="button secondary" data-action="resume" data-id="${e(session.id)}">Resume</button></li>`).join('')}</ul>` : '<div class="empty">No unfinished tests.</div>';
 }
 
 function showTestBuilder(preset) {
@@ -444,7 +498,7 @@ function startQuestionTimer() {
 function elapsedOnQuestion() { return Math.max(0, Math.floor((Date.now() - state.active.questionStartedAt) / 1000)); }
 
 async function recordAttempt(question, answer) {
-  const args = { p_question_id: question.id, p_selected_option: answer.selected_option, p_is_correct: selectedKey(answer) === correctKey(question), p_mode: state.active.kind === 'test' ? 'test' : 'qbank', p_session_id: state.active.id || null, p_time_spent_seconds: answer.time_spent_seconds || 0, p_confidence: answer.confidence || null, p_error_reason: answer.error_reason || null };
+  const args = { p_question_id: question.id, p_selected_option: answer.selected_option, p_is_correct: selectedKey(answer) === correctKey(question), p_mode: state.active.kind === 'test' ? 'test' : 'qbank', p_test_session_id: state.active.id || null, p_time_spent_seconds: answer.time_spent_seconds || 0, p_confidence: answer.confidence || null, p_error_reason: answer.error_reason || null };
   const result = await db.rpc('qbank_record_attempt', args);
   if (!result.error) return;
   if (isMissingTable(result.error) || /function .* does not exist|schema cache/i.test(result.error.message)) {
@@ -480,23 +534,32 @@ async function navigateActive(index) {
 
 async function toggleBookmark() {
   const question = activeQuestion(); const active = state.active;
-  if (active.bookmarks.has(question.id)) {
-    const result = await db.from('bookmarks').delete().eq('user_id', state.user.id).eq('question_id', question.id); if (result.error) return toast(result.error.message, 'error');
-    active.bookmarks.delete(question.id); toast('Bookmark removed');
-  } else {
-    const result = await db.from('bookmarks').upsert({ user_id: state.user.id, question_id: question.id }, { onConflict: 'user_id,question_id' }); if (result.error) return toast(result.error.message, 'error');
-    active.bookmarks.add(question.id); toast('Bookmarked');
+  const bookmarked = !active.bookmarks.has(question.id);
+  let result = await db.rpc('qbank_set_bookmark', { p_question_id: question.id, p_bookmarked: bookmarked });
+  if (result.error && /function .* does not exist|schema cache/i.test(result.error.message)) {
+    result = await db.from('user_question_state').upsert({ user_id: state.user.id, question_id: question.id, bookmarked }, { onConflict: 'user_id,question_id' });
+    if (!result.error) {
+      const mirror = bookmarked
+        ? await db.from('bookmarks').upsert({ user_id: state.user.id, question_id: question.id }, { onConflict: 'user_id,question_id' })
+        : await db.from('bookmarks').delete().eq('user_id', state.user.id).eq('question_id', question.id);
+      if (mirror.error) {
+        await db.from('user_question_state').upsert({ user_id: state.user.id, question_id: question.id, bookmarked: !bookmarked }, { onConflict: 'user_id,question_id' });
+        result = mirror;
+      }
+    }
   }
+  if (result.error) return toast(result.error.message, 'error');
+  bookmarked ? active.bookmarks.add(question.id) : active.bookmarks.delete(question.id);
+  const learning = active.learning.get(question.id) || { user_id: state.user.id, question_id: question.id };
+  active.learning.set(question.id, { ...learning, bookmarked });
+  toast(bookmarked ? 'Bookmarked' : 'Bookmark removed');
   await saveActiveAnswer(question.id); renderActive();
 }
 
 async function toggleMark() {
   const question = activeQuestion(); const active = state.active; const marked = !active.marked.has(question.id);
-  const result = await optional(db.from('question_learning_state').upsert({ user_id: state.user.id, question_id: question.id, marked_for_review: marked }, { onConflict: 'user_id,question_id' }), 'learning');
-  if (result.error && result.missing) {
-    if (marked) await optional(db.from('review_queue').upsert({ user_id: state.user.id, question_id: question.id, reason: 'marked', due_at: new Date().toISOString() }, { onConflict: 'user_id,question_id' }));
-    else await optional(db.from('review_queue').delete().eq('user_id', state.user.id).eq('question_id', question.id).eq('reason', 'marked'));
-  } else if (result.error) return toast(result.error.message, 'error');
+  const result = await optional(db.from('user_question_state').upsert({ user_id: state.user.id, question_id: question.id, marked_for_review: marked, revision: marked }, { onConflict: 'user_id,question_id' }), 'learning');
+  if (result.error) return toast(result.error.message, 'error');
   marked ? active.marked.add(question.id) : active.marked.delete(question.id); await saveActiveAnswer(question.id); renderActive();
 }
 
@@ -504,7 +567,7 @@ async function updateAnswerMetadata(field, value) {
   const question = activeQuestion(); const answer = state.active.answers[question.id]; if (!answer) return;
   answer[field] = answer[field] === value ? null : value; await saveActiveAnswer(question.id);
   const column = field === 'confidence' ? 'last_confidence' : 'last_error_reason';
-  await optional(db.from('question_learning_state').upsert({ user_id: state.user.id, question_id: question.id, [column]: answer[field] }, { onConflict: 'user_id,question_id' }), 'learning');
+  await optional(db.from('user_question_state').upsert({ user_id: state.user.id, question_id: question.id, [column]: answer[field] }, { onConflict: 'user_id,question_id' }), 'learning');
   renderActive();
 }
 
@@ -537,6 +600,8 @@ async function resumeSession(id) {
     if (itemsResult.error) throw itemsResult.error;
     const questions = (itemsResult.data || []).map((item) => ({ id: item.question_id, ...item.question_snapshot, options: item.question_snapshot.options || [] }));
     const answers = Object.fromEntries((answersResult.data || []).map((answer) => [answer.question_id, answer])); const personal = await loadPersonalState(questions.map((question) => question.id)); const session = sessionResult.data;
+    assertValidation(validateResumeSnapshot({ session, storedRows: itemsResult.data || [], questions, answers: answersResult.data || [] }), 'Resume');
+    assertValidation(validateQuestionStateBindings({ questions, answers, bookmarks: personal.bookmarks, marked: new Set([...personal.marked, ...(answersResult.data || []).filter((answer) => answer.marked_for_review).map((answer) => answer.question_id)]) }), 'Resumed question state');
     state.active = { ...session, kind: session.mode === 'practice' ? 'practice' : 'test', questions, index: Math.min(session.current_position || 0, Math.max(questions.length - 1, 0)), answers, bookmarks: personal.bookmarks, marked: new Set([...personal.marked, ...(answersResult.data || []).filter((x) => x.marked_for_review).map((x) => x.question_id)]), learning: personal.learning, questionStartedAt: Date.now(), explanationOpen: false, completedReview: session.status !== 'in_progress' };
     renderActive();
   } catch (error) { toast(error.message || 'Could not resume session.', 'error'); location.hash = '#/home'; }
@@ -550,27 +615,28 @@ async function submitActive(timedOut = false) {
   let completed = null;
   if (active.id) { const result = await db.rpc('submit_test_session', { p_session_id: active.id, p_timed_out: timedOut }); if (result.error) return toast(result.error.message, 'error'); completed = result.data; }
   if (active.kind === 'test') for (const question of active.questions) { const answer = active.answers[question.id]; if (answer?.selected_option) await recordAttempt(question, answer); }
-  const score = completed?.score ?? active.questions.filter((q) => selectedKey(active.answers[q.id]) === correctKey(q)).length;
-  state.active = { ...active, ...(completed || {}), score, correct_count: completed?.correct_count ?? score, incorrect_count: completed?.incorrect_count ?? answeredRows.length - score, unanswered_count: completed?.unanswered_count ?? unanswered, time_used_seconds: completed?.time_used_seconds ?? Math.floor((Date.now() - new Date(active.started_at).getTime()) / 1000), timed_out: timedOut, status: timedOut ? 'timed_out' : 'completed', completedReview: false };
+  if (Array.isArray(completed)) completed = completed[0] || null;
+  const totalCorrect = completed?.total_correct ?? active.questions.filter((q) => selectedKey(active.answers[q.id]) === correctKey(q)).length;
+  state.active = { ...active, ...(completed || {}), total_questions: completed?.total_questions ?? active.questions.length, total_correct: totalCorrect, incorrect_count: completed?.incorrect_count ?? answeredRows.length - totalCorrect, unanswered_count: completed?.unanswered_count ?? unanswered, total_time_seconds: completed?.total_time_seconds ?? Math.floor((Date.now() - new Date(active.started_at).getTime()) / 1000), timed_out: completed?.timed_out ?? timedOut, status: completed?.status ?? (timedOut ? 'timed_out' : 'completed'), completedReview: false };
   resultScreen();
 }
 
 function resultScreen() {
   const active = state.active; const answered = Object.values(active.answers).filter((answer) => answer?.selected_option).length;
   const average = answered ? Math.round(Object.values(active.answers).reduce((sum, answer) => sum + (answer?.time_spent_seconds || 0), 0) / answered) : 0;
-  layout(`<div class="page-heading"><span class="eyebrow">${active.timed_out ? 'TIME EXPIRED' : 'COMPLETED'}</span><h1>${e(active.title || 'Result')}</h1><p>${date(new Date())}</p></div><section class="result-grid"><div class="card metric"><span>Score</span><b>${active.score}/${active.questions.length}</b></div><div class="card metric"><span>Accuracy</span><b>${pct(active.score, answered)}</b></div><div class="card metric"><span>Incorrect</span><b>${active.incorrect_count}</b></div><div class="card metric"><span>Unanswered</span><b>${active.unanswered_count}</b></div><div class="card metric"><span>Average time</span><b>${average}s</b></div></section><section class="card result-actions"><h2>Turn this result into action</h2><div class="row"><button class="button" data-action="review-result">Review every question</button><button class="button secondary" data-action="review-mistakes">Review incorrect</button><button class="button secondary" data-action="retake">Retake</button><a class="button ghost" href="#/history">History</a></div></section>`);
+  layout(`<div class="page-heading"><span class="eyebrow">${active.timed_out ? 'TIME EXPIRED' : 'COMPLETED'}</span><h1>${e(active.title || 'Result')}</h1><p>${date(new Date())}</p></div><section class="result-grid"><div class="card metric"><span>Score</span><b>${active.total_correct}/${active.total_questions}</b></div><div class="card metric"><span>Accuracy</span><b>${pct(active.total_correct, answered)}</b></div><div class="card metric"><span>Incorrect</span><b>${active.incorrect_count}</b></div><div class="card metric"><span>Unanswered</span><b>${active.unanswered_count}</b></div><div class="card metric"><span>Average time</span><b>${average}s</b></div></section><section class="card result-actions"><h2>Turn this result into action</h2><div class="row"><button class="button" data-action="review-result">Review every question</button><button class="button secondary" data-action="review-mistakes">Review incorrect</button><button class="button secondary" data-action="retake">Retake</button><a class="button ghost" href="#/history">History</a></div></section>`);
 }
 
 async function history() {
   const result = await optional(db.from('test_sessions').select('*').eq('user_id', state.user.id).neq('status', 'in_progress').order('completed_at', { ascending: false }).limit(100), 'sessions');
-  layout(`<div class="page-heading"><span class="eyebrow">TEST HISTORY</span><h1>Completed sessions</h1><p>Every result leads back to its original question set.</p></div><section class="card">${result.data?.length ? `<ul class="history-list">${result.data.map((session) => `<li><div><b>${e(session.title || session.preset || 'Test')}</b><div class="subtle">${date(session.completed_at)} · ${session.question_count} questions · ${session.correct_count ?? session.score ?? 0} correct · ${session.incorrect_count ?? '—'} incorrect</div></div><div class="row"><span class="pill">${pct(session.score, (session.correct_count || 0) + (session.incorrect_count || 0))}</span><button class="button secondary" data-action="resume" data-id="${e(session.id)}">Open result</button></div></li>`).join('')}</ul>` : '<div class="empty">No completed sessions yet.</div>'}</section>`);
+  layout(`<div class="page-heading"><span class="eyebrow">TEST HISTORY</span><h1>Completed sessions</h1><p>Every result leads back to its original question set.</p></div><section class="card">${result.data?.length ? `<ul class="history-list">${result.data.map((session) => `<li><div><b>${e(session.title || session.preset || 'Test')}</b><div class="subtle">${date(session.completed_at)} · ${session.total_questions} questions · ${session.total_correct} correct · ${session.incorrect_count ?? '—'} incorrect</div></div><div class="row"><span class="pill">${pct(session.total_correct, session.total_correct + (session.incorrect_count || 0))}</span><button class="button secondary" data-action="resume" data-id="${e(session.id)}">Open result</button></div></li>`).join('')}</ul>` : '<div class="empty">No completed sessions yet.</div>'}</section>`);
 }
 
 async function review() {
   const now = new Date().toISOString();
-  const [learning, bookmarks, cards] = await Promise.all([optional(db.from('question_learning_state').select('*').eq('user_id', state.user.id), 'learning'), optional(db.from('bookmarks').select('question_id').eq('user_id', state.user.id)), optional(db.from('recall_card_progress').select('card_id').eq('user_id', state.user.id).lte('due_at', now), 'personal')]);
+  const [learning, cards] = await Promise.all([optional(db.from('user_question_state').select('*').eq('user_id', state.user.id), 'learning'), optional(db.from('recall_card_progress').select('card_id').eq('user_id', state.user.id).lte('due_at', now), 'personal')]);
   const rows = learning.data || [];
-  const sections = [['incorrect', 'Incorrect', rows.filter((x) => x.last_is_correct === false || x.incorrect_count > 0).length, 'Questions that produced errors.'], ['bookmarked', 'Bookmarked', bookmarks.data?.length || 0, 'Questions saved for later.'], ['marked', 'Marked for Review', rows.filter((x) => x.marked_for_review).length, 'Questions you explicitly marked.'], ['recall_due', 'Recall Due', rows.filter((x) => x.recall_due_at && x.recall_due_at <= now).length + (cards.data?.length || 0), 'Scheduled for active recall now.'], ['confident_wrong', 'Confidently Wrong', rows.filter((x) => x.last_is_correct === false && x.last_confidence === 'sure').length, 'High-confidence misconceptions.'], ['slow', 'Slow Questions >50s', rows.filter((x) => x.last_time_seconds > TARGET_SECONDS).length, 'Questions needing faster recall.'], ['my_content', 'My Content', '—', 'Your MCQs, recall cards and notes.']];
+  const sections = [['incorrect', 'Incorrect', rows.filter((x) => x.last_is_correct === false || x.wrong).length, 'Questions that produced errors.'], ['bookmarked', 'Bookmarked', rows.filter((x) => x.bookmarked).length, 'Questions saved for later.'], ['marked', 'Marked for Review', rows.filter((x) => x.marked_for_review).length, 'Questions you explicitly marked.'], ['recall_due', 'Recall Due', rows.filter((x) => x.recall_due_at && x.recall_due_at <= now).length + (cards.data?.length || 0), 'Scheduled for active recall now.'], ['confident_wrong', 'Confidently Wrong', rows.filter((x) => x.last_is_correct === false && x.last_confidence === 'sure').length, 'High-confidence misconceptions.'], ['slow', 'Slow Questions >50s', rows.filter((x) => x.last_time_seconds > TARGET_SECONDS).length, 'Questions needing faster recall.'], ['my_content', 'My Content', '—', 'Your MCQs, recall cards and notes.']];
   layout(`<div class="page-heading"><span class="eyebrow">REVIEW</span><h1>Everything worth revisiting</h1><p>Open questions directly or turn a category into a revision test.</p></div>${!state.features.learning ? featureNotice('Apply the learning-interface migration for accurate consolidated review counts.') : ''}<section class="review-grid">${sections.map(([status, title, count, description]) => `<article class="card review-card"><span class="eyebrow">${e(title)}</span><b class="review-count">${count}</b><p>${e(description)}</p><div class="row"><button class="button secondary" data-action="open-review" data-status="${status}">Open</button><button class="button" data-action="start-revision" data-status="${status}">Start revision test</button></div></article>`).join('')}</section><section class="card section-card"><div class="section-heading"><h2>Test history</h2><a class="button secondary" href="#/history">Open history</a></div></section>`);
 }
 
@@ -648,7 +714,7 @@ async function resetLearning(event) {
   if (scope === 'subject') questionIds = (await paged(() => db.from('questions').select('id').eq('subject_id', entity))).map((row) => row.id);
   if (scope === 'topic') questionIds = unique((await db.from('question_topics').select('question_id').eq('topic_id', entity)).data);
   if (scope === 'subtopic') questionIds = unique((await db.from('question_subtopics').select('question_id').eq('subtopic_id', entity)).data);
-  for (const table of ['question_attempts', 'question_learning_state', 'review_queue']) { let query = db.from(table).delete().eq('user_id', state.user.id); if (questionIds) query = query.in('question_id', questionIds); const result = await optional(query); if (result.error && !result.missing) return toast(result.error.message, 'error'); }
+  for (const table of ['question_attempts', 'user_question_state', 'review_queue']) { let query = db.from(table).delete().eq('user_id', state.user.id); if (questionIds) query = query.in('question_id', questionIds); const result = await optional(query); if (result.error && !result.missing) return toast(result.error.message, 'error'); }
   if (scope === 'all') { await optional(db.from('test_sessions').delete().eq('user_id', state.user.id)); await optional(db.from('recall_card_progress').delete().eq('user_id', state.user.id)); }
   if (value.remove_bookmarks) { let query = db.from('bookmarks').delete().eq('user_id', state.user.id); if (questionIds) query = query.in('question_id', questionIds); await query; }
   if (value.remove_notes) { let query = db.from('question_notes').delete().eq('user_id', state.user.id); if (questionIds) query = query.in('question_id', questionIds); await query; }
@@ -680,7 +746,17 @@ function auth() {
   document.querySelector('#auth-form').onsubmit = signIn;
 }
 
-async function signIn(event) { event.preventDefault(); if (!db) return toast(initError, 'error'); const value = Object.fromEntries(new FormData(event.currentTarget)); const { error } = await db.auth.signInWithPassword(value); if (error) toast(error.message, 'error'); }
+async function signIn(event) {
+  event.preventDefault();
+  if (!db) return toast(initError, 'error');
+  const value = Object.fromEntries(new FormData(event.currentTarget));
+  try {
+    const { error } = await withAuthTimeout(db.auth.signInWithPassword(value));
+    if (error) toast(error.message, 'error');
+  } catch (error) {
+    toast(error.message || 'Sign in did not complete. Please try again.', 'error');
+  }
+}
 async function signUp() { const form = document.querySelector('#auth-form'); if (!form?.reportValidity()) return; const { data, error } = await db.auth.signUp(Object.fromEntries(new FormData(form))); if (error) return toast(error.message, 'error'); toast(data.session ? 'Account created.' : 'Account created. Check your email to confirm.'); }
 async function resetPassword() { const email = document.querySelector('[name="email"]')?.value.trim(); if (!email) return toast('Enter your email first.'); const { error } = await db.auth.resetPasswordForEmail(email, { redirectTo: location.origin }); toast(error ? error.message : 'Password reset email sent.', error ? 'error' : ''); }
 
@@ -707,7 +783,16 @@ window.addEventListener('hashchange', render);
 
 async function bootstrap() {
   loading(); state.user = await requireUser();
-  if (db) { try { await loadMeta(); } catch (error) { console.error('Startup metadata failed', error); } db.auth.onAuthStateChange((_event, session) => { state.user = session?.user || null; state.meta.subjects = []; render(); }); }
+  if (db) {
+    db.auth.onAuthStateChange((_event, session) => {
+      state.user = session?.user || null;
+      state.meta.subjects = [];
+      setTimeout(render, 0);
+    });
+    if (state.user) {
+      try { await loadMeta(); } catch (error) { console.error('Startup metadata failed', error); }
+    }
+  }
   render();
 }
 
