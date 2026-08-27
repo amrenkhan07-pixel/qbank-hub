@@ -18,5 +18,5 @@ export async function requireUser() {
 }
 
 export function isMissingTable(error) {
-  return Boolean(error && (/relation .* does not exist|schema cache|Could not find the table/i.test(error.message)));
+  return Boolean(error && (/relation .* does not exist|column .* does not exist|function .* does not exist|schema cache|Could not find the (table|column|function)/i.test(error.message)));
 }
