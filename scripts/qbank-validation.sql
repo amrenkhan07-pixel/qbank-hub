@@ -50,40 +50,9 @@ session_filter_violations as (
     or (nullif(s.filters ->> 'year', '') is not null and q.exam_year is distinct from (s.filters ->> 'year')::integer)
     or (nullif(s.filters ->> 'search', '') is not null and q.question_text not ilike '%' || (s.filters ->> 'search') || '%')
     or (nullif(s.filters ->> 'source', '') is not null and coalesce(q.source_reference, '') not ilike '%' || (s.filters ->> 'source') || '%')
-    or (
-      coalesce(jsonb_array_length(s.filters -> 'statuses'), 0) > 0
-      and not ((s.filters -> 'statuses') ? 'all')
-      and not (
-        ((s.filters -> 'statuses') ? 'bookmarked' and exists (
-          select 1 from public.bookmarks b where b.user_id = s.user_id and b.question_id = q.id
-        ))
-        or ((s.filters -> 'statuses') ? 'incorrect' and exists (
-          select 1 from public.user_question_state u where u.user_id = s.user_id and u.question_id = q.id and (u.last_is_correct = false or u.wrong)
-        ))
-        or ((s.filters -> 'statuses') ? 'correct' and exists (
-          select 1 from public.user_question_state u where u.user_id = s.user_id and u.question_id = q.id and u.last_is_correct = true
-        ))
-        or ((s.filters -> 'statuses') ? 'marked' and exists (
-          select 1 from public.user_question_state u where u.user_id = s.user_id and u.question_id = q.id and (u.marked_for_review or u.revision)
-        ))
-        or ((s.filters -> 'statuses') ? 'recall_due' and exists (
-          select 1 from public.user_question_state u where u.user_id = s.user_id and u.question_id = q.id and u.recall_due_at <= now()
-        ))
-        or ((s.filters -> 'statuses') ? 'difficult' and exists (
-          select 1 from public.user_question_state u where u.user_id = s.user_id and u.question_id = q.id and u.personally_difficult
-        ))
-        or ((s.filters -> 'statuses') ? 'confident_wrong' and exists (
-          select 1 from public.user_question_state u where u.user_id = s.user_id and u.question_id = q.id and u.last_is_correct = false and u.last_confidence = 'sure'
-        ))
-        or ((s.filters -> 'statuses') ? 'slow' and exists (
-          select 1 from public.user_question_state u where u.user_id = s.user_id and u.question_id = q.id and u.last_time_seconds > 50
-        ))
-        or ((s.filters -> 'statuses') ? 'new' and not exists (
-          select 1 from public.question_attempts a where a.user_id = s.user_id and a.question_id = q.id
-        ))
-        or ((s.filters -> 'statuses') ? 'my_content' and q.created_by = s.user_id and q.content_origin = 'user')
-      )
-    )
+    -- Status membership is intentionally not re-evaluated for historical
+    -- sessions: incorrect/bookmarked/marked/recall state can legitimately
+    -- change after the immutable session snapshot was created.
 ),
 checks(check_name, failures, detail) as (
   select 'content.imported_question_floor',
@@ -141,6 +110,39 @@ checks(check_name, failures, detail) as (
   from public.questions q
   where nullif(btrim(q.source_subtopic_label), '') is not null
     and not exists (select 1 from public.question_subtopics qs where qs.question_id = q.id)
+
+  union all select 'taxonomy.source_label_matches_subtopic', count(*), format('%s labeled questions leak into unrelated subtopics', count(*))
+  from public.questions q
+  join public.question_subtopics qs on qs.question_id = q.id
+  join public.subtopics st on st.id = qs.subtopic_id
+  where nullif(btrim(q.source_subtopic_label), '') is not null
+    and lower(regexp_replace(st.name, '[^[:alnum:]]', '', 'g'))
+        <> lower(regexp_replace(q.source_subtopic_label, '[^[:alnum:]]', '', 'g'))
+
+  union all select 'taxonomy.subtopic_names_unique_per_topic', count(*), format('%s normalized duplicate subtopic names', count(*))
+  from (
+    select topic_id, lower(regexp_replace(name, '[^[:alnum:]]', '', 'g')) normalized_name
+    from public.subtopics group by topic_id, normalized_name having count(*) > 1
+  ) duplicates
+
+  union all select 'permutations.cross_subject_subtopic_is_zero', count(*), format('%s questions leak across subject subtopics', count(*))
+  from (
+    select qs.question_id
+    from public.question_subtopics qs
+    join public.subtopics st on st.id = qs.subtopic_id
+    join public.topics t on t.id = st.topic_id
+    join public.platform_subjects ps on ps.id = t.platform_subject_id
+    group by qs.question_id having count(distinct ps.subject_id) > 1
+  ) leaked
+
+  union all select 'permutations.subtopic_count_consistency', count(*), format('%s subtopic counts disagree with distinct mappings', count(*))
+  from (
+    select st.id,
+      count(qs.question_id) stored_count,
+      count(distinct qs.question_id) distinct_count
+    from public.subtopics st left join public.question_subtopics qs on qs.subtopic_id = st.id
+    group by st.id
+  ) counts where stored_count <> distinct_count
 
   union all select 'sessions.filter_invariants', failures, format('%s stored questions violate session filters', failures)
   from session_filter_violations

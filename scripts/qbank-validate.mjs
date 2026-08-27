@@ -28,6 +28,10 @@ const wrongPlatform = validateGeneratedQuestionSet({ questions: [question({ plat
 check('fixture.platform_violation_detected', wrongPlatform.status === 'FAIL');
 const wrongSubtopic = validateGeneratedQuestionSet({ questions: [question()], filters: { ...filters, subtopics: ['st-1'] }, requested: 1, matchingCount: 1, subtopicQuestionIds: [] });
 check('fixture.subtopic_violation_detected', wrongSubtopic.status === 'FAIL');
+const multiSubtopic = validateGeneratedQuestionSet({ questions: [question(), question({ id: 'q-2' })], filters: { ...filters, subjects: [], subtopics: ['st-1', 'st-2'] }, requested: 2, matchingCount: 2, subtopicQuestionIds: ['q-1', 'q-2'] });
+check('fixture.multi_subtopic_union_preserved', multiSubtopic.status === 'PASS');
+const crossSubjectZero = validateGeneratedQuestionSet({ questions: [], filters: { ...filters, subjects: ['s-1', 's-2'], subtopics: ['st-1', 'st-2'] }, requested: 10, matchingCount: 0, subtopicQuestionIds: [] });
+check('fixture.cross_subject_zero_result_preserved', crossSubjectZero.status === 'PASS');
 const duplicate = validateGeneratedQuestionSet({ questions: [question(), question()], filters, requested: 2, matchingCount: 2 });
 check('fixture.duplicate_question_detected', duplicate.status === 'FAIL');
 const brokenOptions = validateGeneratedQuestionSet({ questions: [question({ options: [{ option_key: 'A', option_text: '' }] })], filters, requested: 1, matchingCount: 1 });
@@ -46,6 +50,10 @@ check('frontend.live_session_total_columns', !/\bquestion_count\b|\bcorrect_coun
 check('frontend.generated_set_guard_installed', appSource.includes('validateGeneratedQuestionSet'));
 check('frontend.resume_guard_installed', appSource.includes('validateResumeSnapshot'));
 check('frontend.ui_count_uses_database_count', /updateMatchCount[\s\S]*matchingCount\(readFilters\(form\)\)/.test(appSource));
+check('frontend.live_taxonomy_columns', !/subtopics'\)\.select\('id,name,subject_id,topic_id'\)|order\('display_order'\)/.test(appSource), 'expected platform_subject_id/sort_order');
+check('frontend.session_persists_subtopic_filters', /test_sessions'\)\.insert\([\s\S]*filters/.test(appSource));
+check('frontend.analytics_preserves_subtopic_context', /type === 'subtopic' \? \[id\] : \[\]/.test(appSource));
+check('frontend.retake_preserves_filter_context', /preset: state\.active\.preset[\s\S]*filters: state\.active\.filters/.test(appSource));
 
 for (const row of rows) console.log(`${row.status} — ${row.name}${row.detail ? ` — ${row.detail}` : ''}`);
 

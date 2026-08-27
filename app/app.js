@@ -88,19 +88,27 @@ async function optional(query, feature) {
 
 async function loadMeta(force = false) {
   if (!force && state.meta.subjects.length && state.meta.platforms.length) return;
-  const [subjects, platforms, systems, topics, subtopics, tags] = await Promise.all([
+  const [subjects, platforms, platformSubjects, systems, topics, subtopics, tags] = await Promise.all([
     db.from('subjects').select('id,name').order('name'),
     db.from('platforms').select('id,name').order('name'),
-    optional(db.from('systems').select('id,name,subject_id').order('display_order').order('name')),
-    optional(db.from('topics').select('id,name,subject_id,system_id,parent_topic_id').order('display_order').order('name')),
-    optional(db.from('subtopics').select('id,name,subject_id,topic_id').order('display_order').order('name'), 'subtopics'),
+    db.from('platform_subjects').select('id,subject_id'),
+    optional(db.from('systems').select('id,name,platform_subject_id').order('sort_order').order('name')),
+    optional(db.from('topics').select('id,name,platform_subject_id,system_id,parent_topic_id').order('sort_order').order('name')),
+    optional(db.from('subtopics').select('id,name,topic_id').order('sort_order').order('name'), 'subtopics'),
     optional(db.from('tags').select('id,name').order('name')),
   ]);
   if (subjects.error) throw subjects.error;
   if (platforms.error) throw platforms.error;
+  if (platformSubjects.error) throw platformSubjects.error;
+  const subjectByPlatformSubject = new Map((platformSubjects.data || []).map((row) => [row.id, row.subject_id]));
+  const hydratedTopics = (topics.data || []).map((topic) => ({ ...topic, subject_id: subjectByPlatformSubject.get(topic.platform_subject_id) || '' }));
+  const topicById = new Map(hydratedTopics.map((topic) => [topic.id, topic]));
   state.meta = {
-    subjects: subjects.data || [], platforms: platforms.data || [], systems: systems.data || [],
-    topics: (topics.data || []).filter((topic) => !topic.parent_topic_id), subtopics: subtopics.data || [], tags: tags.data || [],
+    subjects: subjects.data || [], platforms: platforms.data || [],
+    systems: (systems.data || []).map((system) => ({ ...system, subject_id: subjectByPlatformSubject.get(system.platform_subject_id) || '' })),
+    topics: hydratedTopics.filter((topic) => !topic.parent_topic_id),
+    subtopics: (subtopics.data || []).map((subtopic) => ({ ...subtopic, subject_id: topicById.get(subtopic.topic_id)?.subject_id || '' })),
+    tags: tags.data || [],
   };
 }
 
