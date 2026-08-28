@@ -1,5 +1,6 @@
 import { db, initError, isMissingTable, requireUser, withAuthTimeout } from './supabase.js';
 import { assertValidation, buildTaxonomyIndex, resolveTaxonomyCascade, validateGeneratedQuestionSet, validateQuestionStateBindings, validateResumeSnapshot } from './validation.js?v=20260828-cascade';
+import { runTaxonomyDomRegression } from './taxonomy-dom-regression.js?v=20260828-dom-regression';
 
 const root = document.querySelector('#app');
 const TARGET_SECONDS = 50;
@@ -115,7 +116,7 @@ async function loadMeta(force = false) {
 }
 
 function multiPicker(name, label, items, empty = `No ${label.toLowerCase()} available`) {
-  return `<div class="field multi-field" data-multi-field="${e(name)}"><label>${e(label)}</label><details class="multi-picker"><summary><span data-multi-summary>${e(`All ${name}`)}</span></summary><div class="multi-menu">${items.length ? items.map((item) => `<label class="check-row" data-subject="${e(item.subject_id || '')}" data-topic="${e(item.topic_id || '')}"><input type="checkbox" name="${e(name)}" value="${e(item.id)}" /> <span>${e(item.name)}</span></label>`).join('') : `<span class="subtle">${e(empty)}</span>`}</div></details></div>`;
+  return `<div class="field multi-field" data-multi-field="${e(name)}"><label>${e(label)}</label><details class="multi-picker"><summary><span data-multi-summary>${e(`All ${name}`)}</span></summary><div class="multi-menu">${items.length ? items.map((item) => `<label class="check-row" data-taxonomy-label="${e(item.name)}" data-subject="${e(item.subject_id || '')}" data-topic="${e(item.topic_id || '')}"><input type="checkbox" name="${e(name)}" value="${e(item.id)}" /> <span>${e(item.name)}</span></label>`).join('') : `<span class="subtle">${e(empty)}</span>`}</div></details></div>`;
 }
 
 function statusPicker(revision = false) {
@@ -425,6 +426,14 @@ async function qbank() {
     catch (error) { toast(error.message || 'Could not build practice set.', 'error'); qbank(); }
   };
   updateMatchCount(form);
+  const diagnostic = new URLSearchParams(location.hash.split('?')[1] || '').get('dom-regression');
+  if (diagnostic === '1') {
+    window.__QBANK_DOM_REGRESSION__ = { status: 'RUNNING' };
+    requestAnimationFrame(async () => {
+      window.__QBANK_DOM_REGRESSION__ = await runTaxonomyDomRegression({ form, questionIndex: state.meta.questionTaxonomy });
+      console.info('QBank taxonomy DOM regression', window.__QBANK_DOM_REGRESSION__);
+    });
+  }
 }
 
 const TEST_PRESETS = {

@@ -89,6 +89,8 @@ check('cascade.sixty_thousand_mapping_rows', largeCascade.matchingQuestionIds.le
 }));
 
 const appSource = readFileSync(resolve(root, 'app/app.js'), 'utf8');
+const stylesSource = readFileSync(resolve(root, 'app/styles.css'), 'utf8');
+const domRegressionSource = readFileSync(resolve(root, 'app/taxonomy-dom-regression.js'), 'utf8');
 const importerSource = readFileSync(resolve(root, 'scripts/qbank_import.py'), 'utf8');
 const importerMigration = readFileSync(resolve(root, 'supabase/migrations/202608280003_qbank_import_pipeline.sql'), 'utf8');
 check('frontend.canonical_learning_state_table', !appSource.includes("from('question_learning_state')"), 'expected user_question_state');
@@ -102,7 +104,17 @@ check('frontend.analytics_preserves_subtopic_context', /type === 'subtopic' \? \
 check('frontend.retake_preserves_filter_context', /preset: state\.active\.preset[\s\S]*filters: state\.active\.filters/.test(appSource));
 check('frontend.mapping_based_taxonomy_cascade', appSource.includes('resolveTaxonomyCascade(state.meta.questionTaxonomy'));
 check('frontend.hidden_taxonomy_rows_not_displayed', /row\.hidden = !visible;[\s\S]*row\.style\.display = visible \? '' : 'none'/.test(appSource));
-check('frontend.cascade_modules_cache_busted', appSource.includes("./validation.js?v=20260828-cascade") && readFileSync(resolve(root, 'index.html'), 'utf8').includes('./app/app.js?v=20260828-cascade'));
+check('frontend.hidden_attribute_overrides_check_row_display', /\[hidden\]\s*\{\s*display:\s*none\s*!important;?\s*\}/.test(stylesSource));
+check('browser.taxonomy_dom_regression_installed', appSource.includes('runTaxonomyDomRegression')
+  && domRegressionSource.includes('getComputedStyle')
+  && domRegressionSource.includes('getBoundingClientRect')
+  && domRegressionSource.includes('anesthesiaIsolation')
+  && domRegressionSource.includes('anatomyIsolation')
+  && domRegressionSource.includes('mixedUnion')
+  && domRegressionSource.includes('invalidChildPruning')
+  && domRegressionSource.includes('zeroCountLabelsHidden'));
+check('frontend.cascade_modules_cache_busted', appSource.includes("./validation.js?v=20260828-cascade")
+  && readFileSync(resolve(root, 'index.html'), 'utf8').includes('./app/app.js?v=20260828-dom-regression'));
 const importerTests = spawnSync('python3', ['-m', 'unittest', 'scripts.tests.test_qbank_import'], { cwd: root, encoding: 'utf8' });
 check('importer.fixture_and_scale_tests', importerTests.status === 0, (importerTests.stderr || importerTests.stdout || '').trim().split('\n').slice(-1)[0] || 'python unittest');
 check('importer.dry_run_default_is_read_only', /database_modified["']?:?\s*False/.test(importerSource) && /--confirm-import/.test(importerSource));
