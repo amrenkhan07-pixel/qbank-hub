@@ -427,7 +427,9 @@ async function qbank() {
   };
   updateMatchCount(form);
   const diagnostic = new URLSearchParams(location.hash.split('?')[1] || '').get('dom-regression');
-  if (diagnostic === '1' && !window.__QBANK_DOM_REGRESSION__) {
+  if (diagnostic === '1' && document.documentElement.dataset.qbankDomRegressionStarted !== '1') {
+    document.documentElement.dataset.qbankDomRegressionStarted = '1';
+    document.documentElement.dataset.qbankDomRegression = JSON.stringify({ status: 'RUNNING' });
     window.__QBANK_DOM_REGRESSION__ = { status: 'RUNNING' };
     requestAnimationFrame(async () => {
       try {
@@ -435,6 +437,7 @@ async function qbank() {
       } catch (error) {
         window.__QBANK_DOM_REGRESSION__ = { status: 'FAIL', error: error?.message || String(error) };
       }
+      document.documentElement.dataset.qbankDomRegression = JSON.stringify(window.__QBANK_DOM_REGRESSION__);
       console.info('QBank taxonomy DOM regression', window.__QBANK_DOM_REGRESSION__);
     });
   }
