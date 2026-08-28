@@ -427,19 +427,22 @@ async function qbank() {
   };
   updateMatchCount(form);
   const diagnostic = new URLSearchParams(location.hash.split('?')[1] || '').get('dom-regression');
-  if (diagnostic === '1' && document.documentElement.dataset.qbankDomRegressionStarted !== '1') {
-    document.documentElement.dataset.qbankDomRegressionStarted = '1';
+  if (diagnostic === '1') {
+    const regressionRun = `${Date.now()}-${Math.random()}`;
+    document.documentElement.dataset.qbankDomRegressionRun = regressionRun;
     document.documentElement.dataset.qbankDomRegression = JSON.stringify({ status: 'RUNNING' });
     window.__QBANK_DOM_REGRESSION__ = { status: 'RUNNING' };
-    requestAnimationFrame(async () => {
+    setTimeout(async () => {
+      if (!form.isConnected || document.documentElement.dataset.qbankDomRegressionRun !== regressionRun) return;
       try {
         window.__QBANK_DOM_REGRESSION__ = await runTaxonomyDomRegression({ form, questionIndex: state.meta.questionTaxonomy });
       } catch (error) {
         window.__QBANK_DOM_REGRESSION__ = { status: 'FAIL', error: error?.message || String(error) };
       }
+      if (document.documentElement.dataset.qbankDomRegressionRun !== regressionRun) return;
       document.documentElement.dataset.qbankDomRegression = JSON.stringify(window.__QBANK_DOM_REGRESSION__);
       console.info('QBank taxonomy DOM regression', window.__QBANK_DOM_REGRESSION__);
-    });
+    }, 100);
   }
 }
 

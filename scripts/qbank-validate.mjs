@@ -115,7 +115,7 @@ check('browser.taxonomy_dom_regression_installed', appSource.includes('runTaxono
   && domRegressionSource.includes('invalidChildPruning')
   && domRegressionSource.includes('zeroCountLabelsHidden'));
 check('frontend.cascade_modules_cache_busted', appSource.includes("./validation.js?v=20260828-cascade")
-  && readFileSync(resolve(root, 'index.html'), 'utf8').includes('./app/app.js?v=20260828-dom-regression-2'));
+  && readFileSync(resolve(root, 'index.html'), 'utf8').includes('./app/app.js?v=20260828-dom-regression-3'));
 const importerTests = spawnSync('python3', ['-m', 'unittest', 'scripts.tests.test_qbank_import'], { cwd: root, encoding: 'utf8' });
 check('importer.fixture_and_scale_tests', importerTests.status === 0, (importerTests.stderr || importerTests.stdout || '').trim().split('\n').slice(-1)[0] || 'python unittest');
 check('importer.dry_run_default_is_read_only', /database_modified["']?:?\s*False/.test(importerSource) && /--confirm-import/.test(importerSource));
