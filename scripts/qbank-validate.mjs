@@ -104,7 +104,7 @@ check('frontend.analytics_preserves_subtopic_context', /type === 'subtopic' \? \
 check('frontend.retake_preserves_filter_context', /preset: state\.active\.preset[\s\S]*filters: state\.active\.filters/.test(appSource));
 check('frontend.mapping_based_taxonomy_cascade', appSource.includes('resolveTaxonomyCascade(state.meta.questionTaxonomy'));
 check('frontend.hidden_taxonomy_rows_not_displayed', /row\.hidden = !visible;[\s\S]*row\.style\.display = visible \? '' : 'none'/.test(appSource));
-check('frontend.hidden_attribute_overrides_check_row_display', /\[hidden\]\s*\{\s*display:\s*none\s*!important;?\s*\}/.test(stylesSource));
+check('frontend.hidden_attribute_overrides_check_row_display', /html\s+\[hidden\]\s*\{\s*display:\s*none\s*!important;?\s*\}/.test(stylesSource));
 check('browser.taxonomy_dom_regression_installed', appSource.includes('runTaxonomyDomRegression')
   && domRegressionSource.includes('getComputedStyle')
   && domRegressionSource.includes('getBoundingClientRect')

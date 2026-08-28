@@ -427,10 +427,14 @@ async function qbank() {
   };
   updateMatchCount(form);
   const diagnostic = new URLSearchParams(location.hash.split('?')[1] || '').get('dom-regression');
-  if (diagnostic === '1') {
+  if (diagnostic === '1' && !window.__QBANK_DOM_REGRESSION__) {
     window.__QBANK_DOM_REGRESSION__ = { status: 'RUNNING' };
     requestAnimationFrame(async () => {
-      window.__QBANK_DOM_REGRESSION__ = await runTaxonomyDomRegression({ form, questionIndex: state.meta.questionTaxonomy });
+      try {
+        window.__QBANK_DOM_REGRESSION__ = await runTaxonomyDomRegression({ form, questionIndex: state.meta.questionTaxonomy });
+      } catch (error) {
+        window.__QBANK_DOM_REGRESSION__ = { status: 'FAIL', error: error?.message || String(error) };
+      }
       console.info('QBank taxonomy DOM regression', window.__QBANK_DOM_REGRESSION__);
     });
   }
