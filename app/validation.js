@@ -2,6 +2,53 @@ const cleanText = (value) => String(value ?? '').replace(/<[^>]*>/g, ' ').replac
 const asSet = (value) => value instanceof Set ? value : new Set(value || []);
 const ids = (questions) => (questions || []).map((question) => String(question.id));
 
+const stringIds = (values) => [...new Set((values || []).map(String).filter(Boolean))];
+
+export function buildTaxonomyIndex(questionRows = []) {
+  return (questionRows || []).map((question) => ({
+    id: String(question.id),
+    platform_id: String(question.platform_id || ''),
+    subject_id: String(question.subject_id || ''),
+    system_id: String(question.system_id || ''),
+    topic_ids: stringIds((question.question_topics || question.topic_ids || []).map((item) => item?.topic_id ?? item)),
+    subtopic_ids: stringIds((question.question_subtopics || question.subtopic_ids || []).map((item) => item?.subtopic_id ?? item)),
+  })).filter((question) => question.id && question.platform_id && question.subject_id);
+}
+
+export function resolveTaxonomyCascade(questionIndex = [], selection = {}) {
+  const selected = {
+    platforms: stringIds(selection.platforms), subjects: stringIds(selection.subjects),
+    systems: stringIds(selection.systems), topics: stringIds(selection.topics),
+    subtopics: stringIds(selection.subtopics),
+  };
+  const valid = {};
+  const keepValid = (level) => { selected[level] = selected[level].filter((id) => valid[level].has(id)); };
+  const matches = (value, choices) => !choices.length || choices.includes(value);
+  const intersects = (values, choices) => !choices.length || values.some((value) => choices.includes(value));
+
+  valid.platforms = new Set(questionIndex.map((question) => question.platform_id).filter(Boolean));
+  keepValid('platforms');
+  let candidates = questionIndex.filter((question) => matches(question.platform_id, selected.platforms));
+
+  valid.subjects = new Set(candidates.map((question) => question.subject_id).filter(Boolean));
+  keepValid('subjects');
+  candidates = candidates.filter((question) => matches(question.subject_id, selected.subjects));
+
+  valid.systems = new Set(candidates.map((question) => question.system_id).filter(Boolean));
+  keepValid('systems');
+  candidates = candidates.filter((question) => matches(question.system_id, selected.systems));
+
+  valid.topics = new Set(candidates.flatMap((question) => question.topic_ids));
+  keepValid('topics');
+  candidates = candidates.filter((question) => intersects(question.topic_ids, selected.topics));
+
+  valid.subtopics = new Set(candidates.flatMap((question) => question.subtopic_ids));
+  keepValid('subtopics');
+  candidates = candidates.filter((question) => intersects(question.subtopic_ids, selected.subtopics));
+
+  return { valid, selected, matchingQuestionIds: candidates.map((question) => question.id) };
+}
+
 function result(check, failures, details = '') {
   return { check, status: failures.length ? 'FAIL' : 'PASS', failures, details };
 }

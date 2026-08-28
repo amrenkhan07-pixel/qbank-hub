@@ -1,5 +1,5 @@
 import { db, initError, isMissingTable, requireUser, withAuthTimeout } from './supabase.js';
-import { assertValidation, validateGeneratedQuestionSet, validateQuestionStateBindings, validateResumeSnapshot } from './validation.js';
+import { assertValidation, buildTaxonomyIndex, resolveTaxonomyCascade, validateGeneratedQuestionSet, validateQuestionStateBindings, validateResumeSnapshot } from './validation.js';
 
 const root = document.querySelector('#app');
 const TARGET_SECONDS = 50;
@@ -7,7 +7,7 @@ const PAGE_SIZE = 500;
 const state = {
   user: null,
   route: 'home',
-  meta: { subjects: [], platforms: [], systems: [], topics: [], subtopics: [], tags: [] },
+  meta: { subjects: [], platforms: [], systems: [], topics: [], subtopics: [], tags: [], questionTaxonomy: [] },
   active: null,
   timer: null,
   filterTimer: null,
@@ -88,7 +88,7 @@ async function optional(query, feature) {
 
 async function loadMeta(force = false) {
   if (!force && state.meta.subjects.length && state.meta.platforms.length) return;
-  const [subjects, platforms, platformSubjects, systems, topics, subtopics, tags] = await Promise.all([
+  const [subjects, platforms, platformSubjects, systems, topics, subtopics, tags, questionTaxonomy] = await Promise.all([
     db.from('subjects').select('id,name').order('name'),
     db.from('platforms').select('id,name').order('name'),
     db.from('platform_subjects').select('id,subject_id'),
@@ -96,6 +96,7 @@ async function loadMeta(force = false) {
     optional(db.from('topics').select('id,name,platform_subject_id,system_id,parent_topic_id').order('sort_order').order('name')),
     optional(db.from('subtopics').select('id,name,topic_id').order('sort_order').order('name'), 'subtopics'),
     optional(db.from('tags').select('id,name').order('name')),
+    paged(() => db.from('questions').select('id,platform_id,subject_id,system_id,question_topics(topic_id),question_subtopics(subtopic_id)')),
   ]);
   if (subjects.error) throw subjects.error;
   if (platforms.error) throw platforms.error;
@@ -109,6 +110,7 @@ async function loadMeta(force = false) {
     topics: hydratedTopics.filter((topic) => !topic.parent_topic_id),
     subtopics: (subtopics.data || []).map((subtopic) => ({ ...subtopic, subject_id: topicById.get(subtopic.topic_id)?.subject_id || '' })),
     tags: tags.data || [],
+    questionTaxonomy: buildTaxonomyIndex(questionTaxonomy),
   };
 }
 
@@ -142,20 +144,19 @@ function readFilters(form) {
 
 function setupDependentFilters(form) {
   const update = () => {
-    const subjects = new Set(readMulti(form, 'subjects'));
-    form.querySelectorAll('[data-multi-field="systems"] .check-row').forEach((row) => {
-      const visible = !subjects.size || !row.dataset.subject || subjects.has(row.dataset.subject);
-      row.hidden = !visible; if (!visible) row.querySelector('input').checked = false;
+    const cascade = resolveTaxonomyCascade(state.meta.questionTaxonomy, {
+      platforms: readMulti(form, 'platforms'), subjects: readMulti(form, 'subjects'),
+      systems: readMulti(form, 'systems'), topics: readMulti(form, 'topics'),
+      subtopics: readMulti(form, 'subtopics'),
     });
-    form.querySelectorAll('[data-multi-field="topics"] .check-row').forEach((row) => {
-      const visible = subjects.size && (!row.dataset.subject || subjects.has(row.dataset.subject));
-      row.hidden = !visible; if (!visible) row.querySelector('input').checked = false;
-    });
-    const topics = new Set(readMulti(form, 'topics'));
-    form.querySelectorAll('[data-multi-field="subtopics"] .check-row').forEach((row) => {
-      const visible = topics.size && topics.has(row.dataset.topic);
-      row.hidden = !visible; if (!visible) row.querySelector('input').checked = false;
-    });
+    for (const level of ['platforms', 'subjects', 'systems', 'topics', 'subtopics']) {
+      const selected = new Set(cascade.selected[level]);
+      form.querySelectorAll(`[data-multi-field="${level}"] input`).forEach((input) => {
+        const visible = cascade.valid[level].has(input.value);
+        input.closest('.check-row').hidden = !visible;
+        input.checked = visible && selected.has(input.value);
+      });
+    }
     form.querySelectorAll('[data-multi-field]').forEach((field) => {
       const checked = readMulti(form, field.dataset.multiField);
       field.querySelector('[data-multi-summary]').textContent = checked.length ? `${checked.length} selected` : `All ${field.dataset.multiField}`;

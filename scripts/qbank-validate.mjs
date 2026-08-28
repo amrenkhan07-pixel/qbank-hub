@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { validateGeneratedQuestionSet, validateQuestionStateBindings, validateResumeSnapshot } from '../app/validation.js';
+import { buildTaxonomyIndex, resolveTaxonomyCascade, validateGeneratedQuestionSet, validateQuestionStateBindings, validateResumeSnapshot } from '../app/validation.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
@@ -44,6 +44,50 @@ check('fixture.exact_resume_order', validResume.status === 'PASS');
 const wrongResume = validateResumeSnapshot({ session: { total_questions: 1 }, storedRows, questions: [question({ id: 'q-2' })], answers: [] });
 check('fixture.resume_order_violation_detected', wrongResume.status === 'FAIL');
 
+const taxonomy = buildTaxonomyIndex([
+  { id: 'qa-1', platform_id: 'cerebellum', subject_id: 'anatomy', system_id: 'anatomy-system', question_topics: [{ topic_id: 'anatomy-topic' }], question_subtopics: [{ subtopic_id: 'anatomy-subtopic' }] },
+  { id: 'qn-1', platform_id: 'cerebellum', subject_id: 'anesthesia', system_id: 'anesthesia-system', question_topics: [{ topic_id: 'anesthesia-topic' }], question_subtopics: [{ subtopic_id: 'anesthesia-subtopic' }] },
+  { id: 'qn-2', platform_id: 'cerebellum', subject_id: 'anesthesia', system_id: '', question_topics: [{ topic_id: 'anesthesia-topic-2' }], question_subtopics: [{ subtopic_id: 'anesthesia-subtopic-2' }] },
+  { id: 'qa-2', platform_id: 'other-platform', subject_id: 'anatomy', system_id: 'other-anatomy-system', question_topics: [{ topic_id: 'other-anatomy-topic' }], question_subtopics: [{ subtopic_id: 'other-anatomy-subtopic' }] },
+  { id: 'qn-3', platform_id: 'other-platform', subject_id: 'anesthesia', system_id: 'other-anesthesia-system', question_topics: [{ topic_id: 'other-anesthesia-topic' }], question_subtopics: [{ subtopic_id: 'other-anesthesia-subtopic' }] },
+]);
+const cascade = (selection) => resolveTaxonomyCascade(taxonomy, selection);
+const equals = (actual, expected) => [...actual].sort().join('|') === [...expected].sort().join('|');
+
+let cascadeResult = cascade({ platforms: ['cerebellum'], subjects: ['anesthesia'] });
+check('cascade.one_platform_one_subject', equals(cascadeResult.valid.topics, ['anesthesia-topic', 'anesthesia-topic-2']));
+cascadeResult = cascade({ platforms: ['cerebellum'], subjects: ['anatomy', 'anesthesia'] });
+check('cascade.one_platform_multiple_subjects_union', equals(cascadeResult.valid.topics, ['anatomy-topic', 'anesthesia-topic', 'anesthesia-topic-2']));
+cascadeResult = cascade({ platforms: ['cerebellum', 'other-platform'], subjects: ['anesthesia'] });
+check('cascade.multiple_platforms_one_subject_union', equals(cascadeResult.valid.topics, ['anesthesia-topic', 'anesthesia-topic-2', 'other-anesthesia-topic']));
+cascadeResult = cascade({ platforms: ['cerebellum', 'other-platform'], subjects: ['anatomy', 'anesthesia'] });
+check('cascade.multiple_platforms_multiple_subjects_union', cascadeResult.matchingQuestionIds.length === 5);
+cascadeResult = cascade({ platforms: ['cerebellum'], subjects: ['anesthesia'], topics: ['anesthesia-topic'] });
+check('cascade.platform_subject_topic_narrows_subtopics', equals(cascadeResult.valid.subtopics, ['anesthesia-subtopic']));
+cascadeResult = cascade({ platforms: ['cerebellum'], subjects: ['anesthesia'], subtopics: ['anesthesia-subtopic-2'] });
+check('cascade.platform_subject_subtopic', equals(cascadeResult.matchingQuestionIds, ['qn-2']));
+cascadeResult = cascade({ platforms: ['cerebellum'], subjects: ['anesthesia'], systems: ['anesthesia-system'], topics: ['anesthesia-topic'], subtopics: ['anesthesia-subtopic'] });
+check('cascade.full_system_topic_subtopic_path', equals(cascadeResult.matchingQuestionIds, ['qn-1']));
+cascadeResult = cascade({ platforms: ['cerebellum'], subjects: ['anesthesia'], systems: ['anatomy-system'], topics: ['anatomy-topic'], subtopics: ['anatomy-subtopic'] });
+check('cascade.upstream_change_prunes_invalid_downstream', !cascadeResult.selected.systems.length && !cascadeResult.selected.topics.length && !cascadeResult.selected.subtopics.length && !cascadeResult.valid.topics.has('anatomy-topic'));
+cascadeResult = cascade({});
+check('cascade.clearing_filters_restores_all_valid_choices', cascadeResult.matchingQuestionIds.length === 5 && cascadeResult.valid.platforms.size === 2 && cascadeResult.valid.subjects.size === 2);
+check('cascade.zero_mapping_taxonomy_hidden', !cascadeResult.valid.topics.has('orphan-topic') && !cascadeResult.valid.subtopics.has('orphan-subtopic'));
+cascadeResult = cascade({ platforms: ['cerebellum'], subjects: ['anesthesia'] });
+check('regression.cerebellum_anesthesia_excludes_anatomy', !cascadeResult.valid.topics.has('anatomy-topic') && !cascadeResult.valid.subtopics.has('anatomy-subtopic'));
+cascadeResult = cascade({ platforms: ['cerebellum'], subjects: ['anatomy'] });
+check('regression.cerebellum_anatomy_excludes_anesthesia', !cascadeResult.valid.topics.has('anesthesia-topic') && !cascadeResult.valid.subtopics.has('anesthesia-subtopic'));
+const largeTaxonomy = buildTaxonomyIndex(Array.from({ length: 60000 }, (_, index) => ({
+  id: `large-${index}`, platform_id: `p-${index % 3}`, subject_id: `s-${index % 19}`,
+  system_id: `sys-${index % 7}`, question_topics: [{ topic_id: `topic-${index % 200}` }],
+  question_subtopics: [{ subtopic_id: `subtopic-${index % 1000}` }],
+})));
+const largeCascade = resolveTaxonomyCascade(largeTaxonomy, { platforms: ['p-1'], subjects: ['s-1', 's-2'] });
+const largeById = new Map(largeTaxonomy.map((item) => [item.id, item]));
+check('cascade.sixty_thousand_mapping_rows', largeCascade.matchingQuestionIds.length > 0 && largeCascade.matchingQuestionIds.every((id) => {
+  const item = largeById.get(id); return item.platform_id === 'p-1' && ['s-1', 's-2'].includes(item.subject_id);
+}));
+
 const appSource = readFileSync(resolve(root, 'app/app.js'), 'utf8');
 check('frontend.canonical_learning_state_table', !appSource.includes("from('question_learning_state')"), 'expected user_question_state');
 check('frontend.live_session_total_columns', !/\bquestion_count\b|\bcorrect_count\b/.test(appSource), 'expected total_questions/total_correct');
@@ -54,6 +98,7 @@ check('frontend.live_taxonomy_columns', !/subtopics'\)\.select\('id,name,subject
 check('frontend.session_persists_subtopic_filters', /test_sessions'\)\.insert\([\s\S]*filters/.test(appSource));
 check('frontend.analytics_preserves_subtopic_context', /type === 'subtopic' \? \[id\] : \[\]/.test(appSource));
 check('frontend.retake_preserves_filter_context', /preset: state\.active\.preset[\s\S]*filters: state\.active\.filters/.test(appSource));
+check('frontend.mapping_based_taxonomy_cascade', appSource.includes('resolveTaxonomyCascade(state.meta.questionTaxonomy'));
 
 for (const row of rows) console.log(`${row.status} — ${row.name}${row.detail ? ` — ${row.detail}` : ''}`);
 

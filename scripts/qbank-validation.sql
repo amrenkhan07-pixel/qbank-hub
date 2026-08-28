@@ -54,6 +54,43 @@ session_filter_violations as (
     -- sessions: incorrect/bookmarked/marked/recall state can legitimately
     -- change after the immutable session snapshot was created.
 ),
+cerebellum_platform as (
+  select id from public.platforms where lower(btrim(name)) = 'cerebellum'
+),
+anesthesia_subject as (
+  select id from public.subjects where lower(btrim(name)) = 'anesthesia'
+),
+anatomy_subject as (
+  select id from public.subjects where lower(btrim(name)) = 'anatomy'
+),
+cerebellum_anesthesia_topics as (
+  select distinct qt.topic_id
+  from public.questions q
+  join public.question_topics qt on qt.question_id = q.id
+  where q.platform_id in (select id from cerebellum_platform)
+    and q.subject_id in (select id from anesthesia_subject)
+),
+cerebellum_anatomy_topics as (
+  select distinct qt.topic_id
+  from public.questions q
+  join public.question_topics qt on qt.question_id = q.id
+  where q.platform_id in (select id from cerebellum_platform)
+    and q.subject_id in (select id from anatomy_subject)
+),
+cerebellum_anesthesia_subtopics as (
+  select distinct qs.subtopic_id
+  from public.questions q
+  join public.question_subtopics qs on qs.question_id = q.id
+  where q.platform_id in (select id from cerebellum_platform)
+    and q.subject_id in (select id from anesthesia_subject)
+),
+cerebellum_anatomy_subtopics as (
+  select distinct qs.subtopic_id
+  from public.questions q
+  join public.question_subtopics qs on qs.question_id = q.id
+  where q.platform_id in (select id from cerebellum_platform)
+    and q.subject_id in (select id from anatomy_subject)
+),
 checks(check_name, failures, detail) as (
   select 'content.imported_question_floor',
          greatest(418 - count(*) filter (where content_origin = 'imported'), 0)::bigint,
@@ -143,6 +180,20 @@ checks(check_name, failures, detail) as (
     from public.subtopics st left join public.question_subtopics qs on qs.subtopic_id = st.id
     group by st.id
   ) counts where stored_count <> distinct_count
+
+  union all select 'regression.cerebellum_subject_context_exists',
+    case when (select count(*) from cerebellum_platform) = 1
+           and (select count(*) from anesthesia_subject) = 1
+           and (select count(*) from anatomy_subject) = 1 then 0 else 1 end,
+    'requires one Cerebellum platform and one Anatomy/Anesthesia subject'
+
+  union all select 'regression.cerebellum_anesthesia_anatomy_topic_isolation', count(*), format('%s topic IDs are shared across the two subject populations', count(*))
+  from cerebellum_anesthesia_topics anesthesia
+  join cerebellum_anatomy_topics anatomy using (topic_id)
+
+  union all select 'regression.cerebellum_anesthesia_anatomy_subtopic_isolation', count(*), format('%s subtopic IDs are shared across the two subject populations', count(*))
+  from cerebellum_anesthesia_subtopics anesthesia
+  join cerebellum_anatomy_subtopics anatomy using (subtopic_id)
 
   union all select 'sessions.filter_invariants', failures, format('%s stored questions violate session filters', failures)
   from session_filter_violations
