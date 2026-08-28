@@ -1,0 +1,13 @@
+{
+  "name": "example-source",
+  "question_selectors": [".question-card", "[data-question-id]"],
+  "stem_selectors": [".question-text", ".stem"],
+  "option_selectors": ["[data-option]", ".option"],
+  "explanation_selectors": [".explanation", ".solution"],
+  "answer_selectors": [".correct-answer", ".answer-key"],
+  "taxonomy_selectors": {
+    "system": [".system"],
+    "topic": [".topic"],
+    "subtopic": [".subtopic"]
+  }
+}

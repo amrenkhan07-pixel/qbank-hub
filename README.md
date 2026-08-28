@@ -55,3 +55,55 @@ DATABASE_URL='postgresql://…' node scripts/qbank-validate.mjs --database
 ```
 
 The command prints one concise `PASS` or `FAIL` line per invariant and exits non-zero if any check fails. It uses aggregates and stable synthetic fixtures; it does not alter real learner state or enumerate filter permutations. The imported-question floor is currently 418 in `scripts/qbank-validation.sql`; after a verified import, raise that floor to the newly accepted imported count so a later non-destructive migration cannot silently reduce it.
+
+## Permanent HTML import workflow
+
+The importer is separate from the browser application. It parses HTML locally,
+resolves taxonomy against Supabase, classifies each row as `NEW`,
+`EXACT EXISTING MATCH`, `POSSIBLE DUPLICATE`, `INVALID`, or `CONFLICT`, and writes
+a machine-readable report under `import-reports/`. Dry-run never calls a write
+endpoint.
+
+One-time database preparation (review before applying):
+
+```bash
+supabase db push
+```
+
+The additive `202608280003_qbank_import_pipeline.sql` migration adds fingerprint
+metadata, an RLS-protected import manifest, uniqueness constraints, and the
+service-role-only transactional import RPC. It does not import content.
+
+Mandatory dry run for every source:
+
+```bash
+SUPABASE_URL='https://PROJECT.supabase.co' \
+SUPABASE_SERVICE_ROLE_KEY='runtime-only-secret' \
+python3 scripts/qbank_import.py '/absolute/path/source.html' \
+  --dry-run --platform Cerebellum --subject Anatomy \
+  --source-collection 'Cerebellum Anatomy'
+```
+
+Never put the service-role key in this repository, a browser file, shell
+history, or an import report. `--snapshot` can replace live access in tests.
+When a source needs different markup selectors, copy
+`scripts/import-profiles/generic.example.json`, adjust it, and pass `--profile`.
+
+After manually reviewing a zero-blocker dry run, actual import requires all
+safety gates and automatically runs importer tests plus the complete database
+validation suite:
+
+```bash
+SUPABASE_URL='https://PROJECT.supabase.co' \
+SUPABASE_SERVICE_ROLE_KEY='runtime-only-secret' \
+DATABASE_URL='postgresql://runtime-only-connection' \
+python3 scripts/qbank_import.py '/absolute/path/source.html' \
+  --import --confirm-import --platform Cerebellum --subject Anatomy \
+  --source-collection 'Cerebellum Anatomy'
+```
+
+Any possible duplicate, conflict, invalid structure, unresolved Platform or
+Subject, or failing preflight test refuses the import. The database RPC uses one
+transaction and checks question/option structure, taxonomy mappings, counts,
+and protected learner-state counts before commit. Afterward, verify the actual
+authenticated Platform → Subject → System → Topic → Subtopic UI cascade.

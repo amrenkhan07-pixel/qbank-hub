@@ -89,6 +89,8 @@ check('cascade.sixty_thousand_mapping_rows', largeCascade.matchingQuestionIds.le
 }));
 
 const appSource = readFileSync(resolve(root, 'app/app.js'), 'utf8');
+const importerSource = readFileSync(resolve(root, 'scripts/qbank_import.py'), 'utf8');
+const importerMigration = readFileSync(resolve(root, 'supabase/migrations/202608280003_qbank_import_pipeline.sql'), 'utf8');
 check('frontend.canonical_learning_state_table', !appSource.includes("from('question_learning_state')"), 'expected user_question_state');
 check('frontend.live_session_total_columns', !/\bquestion_count\b|\bcorrect_count\b/.test(appSource), 'expected total_questions/total_correct');
 check('frontend.generated_set_guard_installed', appSource.includes('validateGeneratedQuestionSet'));
@@ -101,6 +103,12 @@ check('frontend.retake_preserves_filter_context', /preset: state\.active\.preset
 check('frontend.mapping_based_taxonomy_cascade', appSource.includes('resolveTaxonomyCascade(state.meta.questionTaxonomy'));
 check('frontend.hidden_taxonomy_rows_not_displayed', /row\.hidden = !visible;[\s\S]*row\.style\.display = visible \? '' : 'none'/.test(appSource));
 check('frontend.cascade_modules_cache_busted', appSource.includes("./validation.js?v=20260828-cascade") && readFileSync(resolve(root, 'index.html'), 'utf8').includes('./app/app.js?v=20260828-cascade'));
+const importerTests = spawnSync('python3', ['-m', 'unittest', 'scripts.tests.test_qbank_import'], { cwd: root, encoding: 'utf8' });
+check('importer.fixture_and_scale_tests', importerTests.status === 0, (importerTests.stderr || importerTests.stdout || '').trim().split('\n').slice(-1)[0] || 'python unittest');
+check('importer.dry_run_default_is_read_only', /database_modified["']?:?\s*False/.test(importerSource) && /--confirm-import/.test(importerSource));
+check('importer.classifies_all_safety_states', ['NEW', 'EXACT EXISTING MATCH', 'POSSIBLE DUPLICATE', 'INVALID', 'CONFLICT'].every((value) => importerSource.includes(value)));
+check('importer.transactional_service_role_only_rpc', /security invoker/i.test(importerMigration) && /revoke all on function public\.qbank_import_batch\(jsonb\) from public, anon, authenticated/i.test(importerMigration) && /grant execute on function public\.qbank_import_batch\(jsonb\) to service_role/i.test(importerMigration));
+check('importer.protected_study_state_guard', importerMigration.includes('protected learner state changed during import'));
 
 for (const row of rows) console.log(`${row.status} — ${row.name}${row.detail ? ` — ${row.detail}` : ''}`);
 
