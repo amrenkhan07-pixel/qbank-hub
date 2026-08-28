@@ -153,7 +153,9 @@ function setupDependentFilters(form) {
       const selected = new Set(cascade.selected[level]);
       form.querySelectorAll(`[data-multi-field="${level}"] input`).forEach((input) => {
         const visible = cascade.valid[level].has(input.value);
-        input.closest('.check-row').hidden = !visible;
+        const row = input.closest('.check-row');
+        row.hidden = !visible;
+        row.style.display = visible ? '' : 'none';
         input.checked = visible && selected.has(input.value);
       });
     }

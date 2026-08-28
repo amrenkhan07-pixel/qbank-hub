@@ -99,6 +99,7 @@ check('frontend.session_persists_subtopic_filters', /test_sessions'\)\.insert\([
 check('frontend.analytics_preserves_subtopic_context', /type === 'subtopic' \? \[id\] : \[\]/.test(appSource));
 check('frontend.retake_preserves_filter_context', /preset: state\.active\.preset[\s\S]*filters: state\.active\.filters/.test(appSource));
 check('frontend.mapping_based_taxonomy_cascade', appSource.includes('resolveTaxonomyCascade(state.meta.questionTaxonomy'));
+check('frontend.hidden_taxonomy_rows_not_displayed', /row\.hidden = !visible;[\s\S]*row\.style\.display = visible \? '' : 'none'/.test(appSource));
 
 for (const row of rows) console.log(`${row.status} — ${row.name}${row.detail ? ` — ${row.detail}` : ''}`);
 
