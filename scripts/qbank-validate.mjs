@@ -100,6 +100,7 @@ check('frontend.analytics_preserves_subtopic_context', /type === 'subtopic' \? \
 check('frontend.retake_preserves_filter_context', /preset: state\.active\.preset[\s\S]*filters: state\.active\.filters/.test(appSource));
 check('frontend.mapping_based_taxonomy_cascade', appSource.includes('resolveTaxonomyCascade(state.meta.questionTaxonomy'));
 check('frontend.hidden_taxonomy_rows_not_displayed', /row\.hidden = !visible;[\s\S]*row\.style\.display = visible \? '' : 'none'/.test(appSource));
+check('frontend.cascade_modules_cache_busted', appSource.includes("./validation.js?v=20260828-cascade") && readFileSync(resolve(root, 'index.html'), 'utf8').includes('./app/app.js?v=20260828-cascade'));
 
 for (const row of rows) console.log(`${row.status} — ${row.name}${row.detail ? ` — ${row.detail}` : ''}`);
 
