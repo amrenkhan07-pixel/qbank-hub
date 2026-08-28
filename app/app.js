@@ -5,6 +5,7 @@ import { runTaxonomyDomRegression } from './taxonomy-dom-regression.js?v=2026082
 const root = document.querySelector('#app');
 const TARGET_SECONDS = 50;
 const PAGE_SIZE = 500;
+const filterCountRequests = new WeakMap();
 const state = {
   user: null,
   route: 'home',
@@ -297,9 +298,17 @@ async function matchingCount(filters) {
 
 async function updateMatchCount(form) {
   const holder = form.querySelector('[data-match-count]'); if (!holder) return;
+  const requestId = (filterCountRequests.get(form) || 0) + 1;
+  filterCountRequests.set(form, requestId);
   holder.textContent = 'Counting…';
-  try { const count = await matchingCount(readFilters(form)); holder.textContent = `${count.toLocaleString()} question${count === 1 ? '' : 's'} match`; holder.dataset.count = count; }
-  catch (error) { holder.textContent = 'Count unavailable'; console.warn(error); }
+  try {
+    const count = await matchingCount(readFilters(form));
+    if (!form.isConnected || filterCountRequests.get(form) !== requestId) return;
+    holder.textContent = `${count.toLocaleString()} question${count === 1 ? '' : 's'} match`; holder.dataset.count = count;
+  } catch (error) {
+    if (!form.isConnected || filterCountRequests.get(form) !== requestId) return;
+    holder.textContent = 'Count unavailable'; console.warn(error);
+  }
 }
 
 async function batchOptions(questionIds) {

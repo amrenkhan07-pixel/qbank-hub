@@ -98,6 +98,7 @@ check('frontend.live_session_total_columns', !/\bquestion_count\b|\bcorrect_coun
 check('frontend.generated_set_guard_installed', appSource.includes('validateGeneratedQuestionSet'));
 check('frontend.resume_guard_installed', appSource.includes('validateResumeSnapshot'));
 check('frontend.ui_count_uses_database_count', /updateMatchCount[\s\S]*matchingCount\(readFilters\(form\)\)/.test(appSource));
+check('frontend.stale_filter_counts_cannot_overwrite_current_count', appSource.includes('filterCountRequests.get(form) !== requestId'));
 check('frontend.live_taxonomy_columns', !/subtopics'\)\.select\('id,name,subject_id,topic_id'\)|order\('display_order'\)/.test(appSource), 'expected platform_subject_id/sort_order');
 check('frontend.session_persists_subtopic_filters', /test_sessions'\)\.insert\([\s\S]*filters/.test(appSource));
 check('frontend.analytics_preserves_subtopic_context', /type === 'subtopic' \? \[id\] : \[\]/.test(appSource));
@@ -115,7 +116,7 @@ check('browser.taxonomy_dom_regression_installed', appSource.includes('runTaxono
   && domRegressionSource.includes('invalidChildPruning')
   && domRegressionSource.includes('zeroCountLabelsHidden'));
 check('frontend.cascade_modules_cache_busted', appSource.includes("./validation.js?v=20260828-cascade")
-  && readFileSync(resolve(root, 'index.html'), 'utf8').includes('./app/app.js?v=20260828-dom-regression-3'));
+  && readFileSync(resolve(root, 'index.html'), 'utf8').includes('./app/app.js?v=20260828-dom-regression-4'));
 const importerTests = spawnSync('python3', ['-m', 'unittest', 'scripts.tests.test_qbank_import'], { cwd: root, encoding: 'utf8' });
 check('importer.fixture_and_scale_tests', importerTests.status === 0, (importerTests.stderr || importerTests.stdout || '').trim().split('\n').slice(-1)[0] || 'python unittest');
 check('importer.dry_run_default_is_read_only', /database_modified["']?:?\s*False/.test(importerSource) && /--confirm-import/.test(importerSource));
