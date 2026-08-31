@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { buildTaxonomyIndex, resolveTaxonomyCascade, validateGeneratedQuestionSet, validateQuestionStateBindings, validateResumeSnapshot } from '../app/validation.js';
+import { buildTaxonomyIndex, resolveTaxonomyCascade, validateAnalyticsDrilldown, validateGeneratedQuestionSet, validateQuestionSetLifecycle, validateQuestionStateBindings, validateResumeSnapshot } from '../app/validation.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
@@ -43,6 +43,18 @@ const validResume = validateResumeSnapshot({ session: { total_questions: 1 }, st
 check('fixture.exact_resume_order', validResume.status === 'PASS');
 const wrongResume = validateResumeSnapshot({ session: { total_questions: 1 }, storedRows, questions: [question({ id: 'q-2' })], answers: [] });
 check('fixture.resume_order_violation_detected', wrongResume.status === 'FAIL');
+
+const lifecycleIds = ['q-1', 'q-2', 'q-3'];
+const lifecycle = validateQuestionSetLifecycle({ sourceQuestionIds: lifecycleIds, browseQuestionIds: lifecycleIds, previewQuestionIds: lifecycleIds, sessionQuestionIds: lifecycleIds, targetSeconds: 150 });
+check('lifecycle.browse_preview_start_exact_ids', lifecycle.status === 'PASS');
+const prematurePreview = validateQuestionSetLifecycle({ sourceQuestionIds: lifecycleIds, browseQuestionIds: lifecycleIds, previewQuestionIds: lifecycleIds, sessionQuestionIds: lifecycleIds, previewSessionWrites: 1, previewTimerCount: 1, targetSeconds: 150 });
+check('lifecycle.premature_preview_side_effect_detected', prematurePreview.status === 'FAIL');
+const browseSideEffect = validateQuestionSetLifecycle({ sourceQuestionIds: lifecycleIds, browseQuestionIds: lifecycleIds, previewQuestionIds: lifecycleIds, sessionQuestionIds: lifecycleIds, browseAttemptWrites: 1, browseTimerCount: 1, targetSeconds: 150 });
+check('lifecycle.browse_side_effect_detected', browseSideEffect.status === 'FAIL');
+const analyticsPopulation = validateAnalyticsDrilldown({ attempts: [{ question_id: 'q-1', is_correct: false }, { question_id: 'q-1', is_correct: true }, { question_id: 'q-2', is_correct: false }], allQuestionIds: ['q-1', 'q-2'], correctQuestionIds: ['q-1'], incorrectQuestionIds: ['q-1', 'q-2'] });
+check('analytics.exact_contributing_populations', analyticsPopulation.status === 'PASS');
+const analyticsLeak = validateAnalyticsDrilldown({ attempts: [{ question_id: 'q-1', is_correct: false }], allQuestionIds: ['q-1'], correctQuestionIds: [], incorrectQuestionIds: ['q-1', 'q-2'] });
+check('analytics.unrelated_question_detected', analyticsLeak.status === 'FAIL');
 
 const taxonomy = buildTaxonomyIndex([
   { id: 'qa-1', platform_id: 'cerebellum', subject_id: 'anatomy', system_id: 'anatomy-system', question_topics: [{ topic_id: 'anatomy-topic' }], question_subtopics: [{ subtopic_id: 'anatomy-subtopic' }] },
@@ -101,8 +113,13 @@ check('frontend.ui_count_uses_database_count', /updateMatchCount[\s\S]*matchingC
 check('frontend.stale_filter_counts_cannot_overwrite_current_count', appSource.includes('filterCountRequests.get(form) !== requestId'));
 check('frontend.live_taxonomy_columns', !/subtopics'\)\.select\('id,name,subject_id,topic_id'\)|order\('display_order'\)/.test(appSource), 'expected platform_subject_id/sort_order');
 check('frontend.session_persists_subtopic_filters', /test_sessions'\)\.insert\([\s\S]*filters/.test(appSource));
-check('frontend.analytics_preserves_subtopic_context', /type === 'subtopic' \? \[id\] : \[\]/.test(appSource));
+check('frontend.analytics_preserves_subtopic_context', appSource.includes("aggregate('subtopic_ids', true)"));
 check('frontend.retake_preserves_filter_context', /preset: state\.active\.preset[\s\S]*filters: state\.active\.filters/.test(appSource));
+check('frontend.ready_defers_session_creation', /function readyScreen[\s\S]*start-pending-test[\s\S]*async function createSession[\s\S]*readyScreen\(await prepareQuestionSet[\s\S]*async function startPendingSession[\s\S]*test_sessions'\)\.insert/.test(appSource));
+check('frontend.browse_has_no_timer_or_session', /kind: 'browse'[\s\S]*questionStartedAt: null[\s\S]*if \(!browsing\) startQuestionTimer\(\)/.test(appSource));
+check('frontend.shared_exact_question_set_actions', appSource.includes('prepareQuestionSet') && appSource.includes('actionSetButtons') && appSource.includes('questionIds: selectedIds'));
+check('frontend.review_taxonomy_multiselect', appSource.includes('id="review-filter-form"') && appSource.includes("multiPicker('subtopics'"));
+check('frontend.analytics_exact_drilldowns', appSource.includes('value.incorrectIds') && appSource.includes('value.correctIds') && appSource.includes("aggregate('subtopic_ids', true)"));
 check('frontend.mapping_based_taxonomy_cascade', appSource.includes('resolveTaxonomyCascade(state.meta.questionTaxonomy'));
 check('frontend.hidden_taxonomy_rows_not_displayed', /row\.hidden = !visible;[\s\S]*row\.style\.display = visible \? '' : 'none'/.test(appSource));
 check('frontend.hidden_attribute_overrides_check_row_display', /html\s+\[hidden\]\s*\{\s*display:\s*none\s*!important;?\s*\}/.test(stylesSource));
@@ -115,8 +132,8 @@ check('browser.taxonomy_dom_regression_installed', appSource.includes('runTaxono
   && domRegressionSource.includes('mixedUnion')
   && domRegressionSource.includes('invalidChildPruning')
   && domRegressionSource.includes('zeroCountLabelsHidden'));
-check('frontend.cascade_modules_cache_busted', appSource.includes("./validation.js?v=20260828-cascade")
-  && readFileSync(resolve(root, 'index.html'), 'utf8').includes('./app/app.js?v=20260828-dom-regression-4'));
+check('frontend.cascade_modules_cache_busted', appSource.includes("./validation.js?v=20260828-learning-flow")
+  && readFileSync(resolve(root, 'index.html'), 'utf8').includes('./app/app.js?v=20260828-learning-flow'));
 const importerTests = spawnSync('python3', ['-m', 'unittest', 'scripts.tests.test_qbank_import'], { cwd: root, encoding: 'utf8' });
 check('importer.fixture_and_scale_tests', importerTests.status === 0, (importerTests.stderr || importerTests.stdout || '').trim().split('\n').slice(-1)[0] || 'python unittest');
 check('importer.dry_run_default_is_read_only', /database_modified["']?:?\s*False/.test(importerSource) && /--confirm-import/.test(importerSource));

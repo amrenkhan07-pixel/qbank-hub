@@ -1,5 +1,5 @@
 import { db, initError, isMissingTable, requireUser, withAuthTimeout } from './supabase.js';
-import { assertValidation, buildTaxonomyIndex, resolveTaxonomyCascade, validateGeneratedQuestionSet, validateQuestionStateBindings, validateResumeSnapshot } from './validation.js?v=20260828-cascade';
+import { assertValidation, buildTaxonomyIndex, resolveTaxonomyCascade, validateGeneratedQuestionSet, validateQuestionStateBindings, validateResumeSnapshot } from './validation.js?v=20260828-learning-flow';
 import { runTaxonomyDomRegression } from './taxonomy-dom-regression.js?v=20260828-dom-regression';
 
 const root = document.querySelector('#app');
@@ -11,6 +11,10 @@ const state = {
   route: 'home',
   meta: { subjects: [], platforms: [], systems: [], topics: [], subtopics: [], tags: [], questionTaxonomy: [] },
   active: null,
+  pendingSet: null,
+  actionSets: new Map(),
+  lastBuilder: null,
+  reviewFilters: null,
   timer: null,
   filterTimer: null,
   features: { learning: true, subtopics: true, sessions: true, personal: true },
@@ -344,6 +348,111 @@ async function loadQuestions(filters, requested = 10) {
   }));
 }
 
+async function loadQuestionsByIds(questionIds) {
+  const ordered = [...new Set((questionIds || []).map(String).filter(Boolean))];
+  const rows = [];
+  for (let index = 0; index < ordered.length; index += 200) {
+    const result = await db.from('questions').select('*').in('id', ordered.slice(index, index + 200));
+    if (result.error) throw result.error;
+    rows.push(...(result.data || []));
+  }
+  const byQuestion = new Map(rows.map((question) => [String(question.id), question]));
+  const questions = ordered.map((id) => byQuestion.get(id)).filter(Boolean);
+  const options = await batchOptions(questions.map((question) => question.id));
+  return Promise.all(questions.map(async (question) => {
+    let imageUrl = question.image_url || '';
+    if (!imageUrl && question.image_path) { const signed = await db.storage.from('question-media').createSignedUrl(question.image_path, 3600); imageUrl = signed.data?.signedUrl || ''; }
+    return { ...question, image_url: imageUrl, options: options.get(question.id) || [] };
+  }));
+}
+
+async function matchingQuestionIds(filters) {
+  const candidate = await candidateIds(filters);
+  if (candidate && !candidate.size) return [];
+  if (candidate && candidate.size <= 400) {
+    const query = applyDirectFilters(db.from('questions').select('id'), filters).in('id', [...candidate]);
+    const { data, error } = await query; if (error) throw error;
+    return (data || []).map((row) => row.id);
+  }
+  const rows = await paged(() => applyDirectFilters(db.from('questions').select('id'), filters));
+  return rows.map((row) => row.id).filter((id) => !candidate || candidate.has(id));
+}
+
+function shuffled(values) {
+  const result = [...values];
+  for (let index = result.length - 1; index > 0; index -= 1) {
+    const swap = Math.floor(Math.random() * (index + 1));
+    [result[index], result[swap]] = [result[swap], result[index]];
+  }
+  return result;
+}
+
+async function prepareQuestionSet({ mode = 'test', preset = 'custom', title = 'Question set', filters, requested = 'all', autoSubmit = true, questionIds = null, origin = '#/qbank' }) {
+  loading('Building your exact question set…');
+  const normalizedFilters = { platforms: [], subjects: [], systems: [], topics: [], subtopics: [], statuses: ['all'], pyq: '', year: '', search: '', source: '', ...(filters || {}) };
+  const population = questionIds ? [...new Set(questionIds.map(String))] : await matchingQuestionIds(normalizedFilters);
+  const requestedCount = requested === 'all' ? population.length : Math.min(population.length, Math.max(1, Number(requested) || 10));
+  const selectedIds = questionIds ? population : shuffled(population).slice(0, requestedCount);
+  const questions = await loadQuestionsByIds(selectedIds);
+  const membership = await validationMembership(normalizedFilters, questions);
+  assertValidation(validateGeneratedQuestionSet({ questions, filters: normalizedFilters, requested: selectedIds.length, matchingCount: questionIds ? selectedIds.length : population.length, ...membership }), 'Generated question set');
+  if (!questions.length) throw new Error('No questions match those filters.');
+  return { mode, preset, title, filters: normalizedFilters, requested, autoSubmit, origin, questionIds: selectedIds, questions, matchingCount: population.length, targetSeconds: questions.length * TARGET_SECONDS };
+}
+
+function taxonomySummary(questionSet) {
+  const names = (items, ids) => {
+    const lookup = byId(items);
+    const values = (ids || []).map((id) => lookup.get(String(id))?.name).filter(Boolean);
+    return values.length ? values.join(', ') : 'All applicable';
+  };
+  return {
+    platforms: names(state.meta.platforms, questionSet.filters.platforms),
+    subjects: names(state.meta.subjects, questionSet.filters.subjects),
+    topics: names(state.meta.topics, questionSet.filters.topics),
+    subtopics: names(state.meta.subtopics, questionSet.filters.subtopics),
+  };
+}
+
+function registerActionSet(definition) {
+  const token = `set-${Date.now()}-${state.actionSets.size + 1}`;
+  state.actionSets.set(token, { origin: `#/${state.route}`, ...definition, questionIds: [...new Set((definition.questionIds || []).map(String))] });
+  return token;
+}
+
+function actionSetButtons(definition, testLabel = 'Start test') {
+  if (!definition.questionIds?.length) return '<span class="subtle">No matching questions</span>';
+  const token = registerActionSet(definition);
+  return `<div class="row"><button class="button secondary compact" data-action="open-action-set" data-set="${e(token)}">Open questions</button><button class="button compact" data-action="preview-action-set" data-set="${e(token)}">${e(testLabel)}</button></div>`;
+}
+
+function readyScreen(questionSet) {
+  state.pendingSet = questionSet;
+  const summary = taxonomySummary(questionSet);
+  layout(`<div class="page-heading"><span class="eyebrow">READY</span><h1>${e(questionSet.title)}</h1><p>Your exact question set is frozen. Nothing starts until you press START TEST.</p></div><section class="card ready-card"><div class="result-grid"><div class="metric"><span>Questions</span><b>${questionSet.questions.length}</b></div><div class="metric"><span>Per question</span><b>50s</b></div><div class="metric"><span>Total target</span><b>${timerText(questionSet.targetSeconds)}</b></div><div class="metric"><span>Mode</span><b>${questionSet.mode === 'practice' ? 'Practice' : 'Test'}</b></div></div><dl class="ready-summary"><div><dt>Platforms</dt><dd>${e(summary.platforms)}</dd></div><div><dt>Subjects</dt><dd>${e(summary.subjects)}</dd></div><div><dt>Topics</dt><dd>${e(summary.topics)}</dd></div><div><dt>Subtopics</dt><dd>${e(summary.subtopics)}</dd></div></dl><div class="row"><button class="button large" data-action="start-pending-test">START TEST</button><button class="button secondary" data-action="cancel-question-set">BACK / CANCEL</button></div></section>`);
+}
+
+async function createSession(definition) {
+  try { readyScreen(await prepareQuestionSet(definition)); }
+  catch (error) { toast(error.message || 'Could not build question set.', 'error'); location.hash = definition.origin || '#/qbank'; }
+}
+
+async function openQuestionSet(definition) {
+  try {
+    const questionSet = await prepareQuestionSet({ ...definition, mode: 'browse', autoSubmit: false });
+    const personal = await loadPersonalState(questionSet.questionIds);
+    const recent = [];
+    for (let index = 0; index < questionSet.questionIds.length; index += 200) {
+      const result = await db.from('question_attempts').select('question_id,selected_option,is_correct,answered_at,time_spent_seconds,confidence,error_reason').eq('user_id', state.user.id).in('question_id', questionSet.questionIds.slice(index, index + 200)).order('answered_at', { ascending: false });
+      if (!result.error) recent.push(...(result.data || []));
+    }
+    const answers = {};
+    recent.forEach((answer) => { if (!answers[answer.question_id]) answers[answer.question_id] = answer; });
+    state.active = { ...questionSet, kind: 'browse', testMode: definition.mode === 'practice' ? 'practice' : 'test', index: 0, answers, bookmarks: personal.bookmarks, marked: personal.marked, learning: personal.learning, questionStartedAt: null, explanationOpen: false, completedReview: true };
+    renderActive();
+  } catch (error) { toast(error.message || 'Could not open questions.', 'error'); location.hash = definition.origin || '#/qbank'; }
+}
+
 async function loadPersonalState(questionIds) {
   const bookmarks = new Set(); const marked = new Set(); const learning = new Map();
   for (let i = 0; i < questionIds.length; i += 200) {
@@ -358,13 +467,9 @@ async function loadPersonalState(questionIds) {
   return { bookmarks, marked, learning };
 }
 
-async function createSession({ mode, preset, title, filters, requested, autoSubmit }) {
-  loading('Building your question set…');
-  const trueMatchingCount = await matchingCount(filters);
-  const questions = trueMatchingCount ? await loadQuestions(filters, requested) : [];
-  const membership = await validationMembership(filters, questions);
-  assertValidation(validateGeneratedQuestionSet({ questions, filters, requested, matchingCount: trueMatchingCount, ...membership }), 'Generated question set');
-  if (!questions.length) { toast('No questions match those filters.'); location.hash = mode === 'test' ? '#/tests' : '#/qbank'; return; }
+async function startPendingSession() {
+  const questionSet = state.pendingSet; if (!questionSet) return;
+  const { mode, preset, title, filters, autoSubmit, questions } = questionSet;
   const now = new Date().toISOString();
   const payload = {
     user_id: state.user.id, title, mode, status: 'in_progress', filters, total_questions: questions.length,
@@ -392,6 +497,7 @@ async function createSession({ mode, preset, title, filters, requested, autoSubm
     bookmarks: personal.bookmarks, marked: personal.marked, learning: personal.learning,
     questionStartedAt: Date.now(), explanationOpen: false, completedReview: false,
   };
+  state.pendingSet = null;
   renderActive();
 }
 
@@ -415,23 +521,24 @@ async function home() {
   if (attemptedIds.length) {
     const result = await db.from('questions').select('id,subject_id').in('id', attemptedIds.slice(0, 1000));
     const questionSubject = new Map((result.data || []).map((q) => [q.id, q.subject_id])); const tally = new Map();
-    logs.forEach((row) => { const id = questionSubject.get(row.question_id); if (!id) return; const value = tally.get(id) || [0, 0]; value[0] += row.is_correct ? 1 : 0; value[1]++; tally.set(id, value); });
+    logs.forEach((row) => { const id = questionSubject.get(row.question_id); if (!id) return; const value = tally.get(id) || { correct: 0, total: 0, incorrectIds: new Set() }; value.correct += row.is_correct ? 1 : 0; value.total++; if (!row.is_correct) value.incorrectIds.add(String(row.question_id)); tally.set(id, value); });
     const names = byId(state.meta.subjects);
-    weak = [...tally].filter(([, value]) => value[1] >= 2).sort((a, b) => a[1][0] / a[1][1] - b[1][0] / b[1][1]).slice(0, 3).map(([id, value]) => ({ id, name: names.get(String(id))?.name || 'Unclassified', accuracy: pct(value[0], value[1]) }));
+    weak = [...tally].filter(([, value]) => value.total >= 2 && value.incorrectIds.size).sort((a, b) => a[1].correct / a[1].total - b[1].correct / b[1].total).slice(0, 3).map(([id, value]) => ({ id, name: names.get(String(id))?.name || 'Unclassified', accuracy: pct(value.correct, value.total), questionIds: [...value.incorrectIds] }));
   }
   layout(`<section class="home-hero"><div><span class="eyebrow">YOUR STUDY PLAN</span><h1>What should you do next?</h1><p class="subtle">One clear action, based on your real learning state.</p></div><a class="button large" href="${recommendation.route}">${e(recommendation.label)}</a></section>
   <section class="action-grid">${active ? `<article class="card action-card priority"><span class="eyebrow">CONTINUE</span><h2>${e(active.title || active.preset || active.mode)}</h2><p>Question ${(active.current_position || 0) + 1} of ${active.total_questions}</p><button class="button" data-action="resume" data-id="${e(active.id)}">Resume exact session</button></article>` : `<article class="card action-card"><span class="eyebrow">CONTINUE</span><h2>No unfinished session</h2><p class="subtle">Start a practice set or test when you are ready.</p><a class="button secondary" href="#/qbank">Build practice</a></article>`}<article class="card action-card"><span class="eyebrow">ACTIVE RECALL</span><h2>${dueCount} due</h2><p>Questions and recall cards ready now.</p><a class="button secondary" href="#/review">Open recall</a></article><a class="card action-card link-card" href="#/analytics"><span class="eyebrow">ACCURACY</span><h2>${pct(correct, logs.length)}</h2><p>${logs.length} recent attempts · Open analytics</p></a></section>
-  <section class="card section-card"><div class="section-heading"><div><span class="eyebrow">WEAK AREAS</span><h2>Turn weakness into a question set</h2></div><a href="#/analytics">See all analytics</a></div>${weak.length ? `<div class="weak-list">${weak.map((item) => `<button class="weak-item" data-action="quick-subject" data-id="${e(item.id)}"><span>${e(item.name)}</span><b>${item.accuracy}</b><small>Start revision</small></button>`).join('')}</div>` : '<div class="empty">Answer a few questions and weak areas will appear here.</div>'}</section><div class="secondary-metrics"><span>${logs.length} recent attempts</span><span>${correct} correct</span></div>`);
+  <section class="card section-card"><div class="section-heading"><div><span class="eyebrow">WEAK AREAS</span><h2>Turn weakness into an exact question set</h2></div><a href="#/analytics">See all analytics</a></div>${weak.length ? `<div class="weak-list">${weak.map((item) => `<article class="weak-item"><span>${e(item.name)}</span><b>${item.accuracy}</b><small>${item.questionIds.length} incorrect contributing question${item.questionIds.length === 1 ? '' : 's'}</small>${actionSetButtons({ mode: 'test', preset: 'analytics', title: `${item.name} weak-area revision`, filters: { platforms: [], subjects: [item.id], systems: [], topics: [], subtopics: [], statuses: ['all'], pyq: '', year: '', search: '', source: '' }, questionIds: item.questionIds }, 'Start revision test')}</article>`).join('')}</div>` : '<div class="empty">Answer a few questions and weak areas will appear here.</div>'}</section><div class="secondary-metrics"><span>${logs.length} recent attempts</span><span>${correct} correct</span></div>`);
 }
 
 async function qbank() {
-  layout(`<div class="page-heading"><span class="eyebrow">QBANK</span><h1>Build a focused practice set</h1><p>Platform → Subject → Topic → Subtopic. Systems remain optional.</p></div><section class="card builder-card"><form id="practice-form" class="stack"><div class="filters">${filterFields()}</div><div class="builder-footer"><div><b data-match-count>Choose filters to count questions</b><div class="subtle">Target time uses 50 seconds per question.</div></div><div class="row"><label class="inline-label">Questions <select name="count-mode"><option value="10">10</option><option value="20">20</option><option value="50">50</option><option value="100">100</option><option value="all">All matching</option><option value="custom">Custom</option></select></label><input class="custom-count hidden" name="custom-count" type="number" min="1" max="5000" value="30" aria-label="Custom question count" /><button class="button">Start practice</button></div></div></form></section>`);
+  layout(`<div class="page-heading"><span class="eyebrow">QBANK</span><h1>Build a focused practice set</h1><p>Platform → Subject → Topic → Subtopic. Systems remain optional.</p></div><section class="card builder-card"><form id="practice-form" class="stack"><div class="filters">${filterFields()}</div><div class="builder-footer"><div><b data-match-count>Choose filters to count questions</b><div class="subtle">Browse without timers, or preview the same exact set before starting.</div></div><div class="row"><label class="inline-label">Questions <select name="count-mode"><option value="10">10</option><option value="20">20</option><option value="50">50</option><option value="100">100</option><option value="all">All matching</option><option value="custom">Custom</option></select></label><input class="custom-count hidden" name="custom-count" type="number" min="1" max="5000" value="30" aria-label="Custom question count" /><button class="button secondary" name="intent" value="browse">Open questions</button><button class="button" name="intent" value="test">Start practice</button></div></div></form></section>`);
   const form = document.querySelector('#practice-form'); setupDependentFilters(form);
   form.elements['count-mode'].onchange = () => form.querySelector('.custom-count').classList.toggle('hidden', form.elements['count-mode'].value !== 'custom');
   form.onsubmit = async (event) => {
     event.preventDefault(); const filters = readFilters(form); const mode = form.elements['count-mode'].value;
     const requested = mode === 'custom' ? Number(form.elements['custom-count'].value) : mode;
-    try { await createSession({ mode: 'practice', preset: 'qbank', title: 'QBank practice', filters, requested, autoSubmit: false }); }
+    const definition = { mode: 'practice', preset: 'qbank', title: 'QBank practice', filters, requested, autoSubmit: false, origin: '#/qbank' };
+    try { if (event.submitter?.value === 'browse') await openQuestionSet(definition); else await createSession(definition); }
     catch (error) { toast(error.message || 'Could not build practice set.', 'error'); qbank(); }
   };
   updateMatchCount(form);
@@ -474,13 +581,14 @@ async function tests() {
 function showTestBuilder(preset) {
   const item = TEST_PRESETS[preset] || TEST_PRESETS.custom; const revision = preset === 'revision';
   const slot = document.querySelector('#test-builder-slot');
-  slot.innerHTML = `<section class="card builder-card"><div class="section-heading"><div><span class="eyebrow">${e(item[0])}</span><h2>Configure this test</h2></div><button class="button ghost compact" data-action="close-builder">Close</button></div><form id="test-form" class="stack" data-preset="${e(preset)}"><div class="filters">${filterFields({ revision })}</div><div class="builder-footer"><div><b data-match-count>Counting available questions…</b><div class="subtle">50 seconds/question · total target calculated automatically</div></div><div class="row"><label class="inline-label">Questions <select name="count"><option>10</option><option>20</option><option selected>50</option><option>100</option><option value="all">All matching</option></select></label><button class="button">Start ${e(item[0])}</button></div></div></form></section>`;
+  slot.innerHTML = `<section class="card builder-card"><div class="section-heading"><div><span class="eyebrow">${e(item[0])}</span><h2>Configure this test</h2></div><button class="button ghost compact" data-action="close-builder">Close</button></div><form id="test-form" class="stack" data-preset="${e(preset)}"><div class="filters">${filterFields({ revision })}</div><div class="builder-footer"><div><b data-match-count>Counting available questions…</b><div class="subtle">Browse without timers, or preview this exact set before starting.</div></div><div class="row"><label class="inline-label">Questions <select name="count"><option>10</option><option>20</option><option selected>50</option><option>100</option><option value="all">All matching</option></select></label><button class="button secondary" name="intent" value="browse">Open questions</button><button class="button" name="intent" value="test">Preview ${e(item[0])}</button></div></div></form></section>`;
   const form = document.querySelector('#test-form'); if (preset === 'pyq') form.elements.pyq.value = 'yes'; setupDependentFilters(form);
   form.onsubmit = async (event) => {
     event.preventDefault(); const filters = readFilters(form);
     if (['subject', 'topic'].includes(preset) && !filters.subjects.length) return toast('Choose at least one subject.');
     if (preset === 'topic' && !filters.topics.length && !filters.subtopics.length) return toast('Choose at least one topic or subtopic.');
-    try { await createSession({ mode: 'test', preset, title: item[0], filters, requested: form.elements.count.value, autoSubmit: true }); }
+    const definition = { mode: 'test', preset, title: item[0], filters, requested: form.elements.count.value, autoSubmit: true, origin: '#/tests' };
+    try { if (event.submitter?.value === 'browse') await openQuestionSet(definition); else await createSession(definition); }
     catch (error) { toast(error.message || 'Could not create test.', 'error'); }
   };
   updateMatchCount(form); slot.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -494,8 +602,9 @@ function questionMeta(question) {
 }
 
 function explanationBlock(question, answer, open) {
-  const right = selectedKey(answer) === correctKey(question);
-  return `<div class="answer-panel ${right ? 'correct-panel' : 'wrong-panel'}"><div class="row"><b>${right ? 'Correct' : `Correct answer: ${e(correctKey(question) || 'Not provided')}`}</b><button class="button ghost compact" data-action="toggle-explanation">${open ? 'Hide explanation' : 'View explanation'}</button></div>${open ? `<div class="rich-content">${question.explanation_html ? richHtml(question.explanation_html) : '<p>No explanation is available for this question.</p>'}</div>${question.source_reference || question.source_collection ? `<details class="question-info"><summary>Question info</summary><p>${e(question.source_collection || '')}${question.source_reference ? ` · ${e(question.source_reference)}` : ''}</p></details>` : ''}` : ''}</div>`;
+  const selected = selectedKey(answer); const right = Boolean(selected) && selected === correctKey(question);
+  const resultLabel = !selected ? `Correct answer: ${e(correctKey(question) || 'Not provided')}` : right ? 'Previously answered correctly' : `Previously answered incorrectly · Correct answer: ${e(correctKey(question) || 'Not provided')}`;
+  return `<div class="answer-panel ${right ? 'correct-panel' : 'wrong-panel'}"><div class="row"><b>${resultLabel}</b><button class="button ghost compact" data-action="toggle-explanation">${open ? 'Hide explanation' : 'View explanation'}</button></div>${open ? `<div class="rich-content">${question.explanation_html ? richHtml(question.explanation_html) : '<p>No explanation is available for this question.</p>'}</div>${question.source_reference || question.source_collection ? `<details class="question-info"><summary>Question info</summary><p>${e(question.source_collection || '')}${question.source_reference ? ` · ${e(question.source_reference)}` : ''}</p></details>` : ''}` : ''}</div>`;
 }
 
 function renderQuestion(question, answer, reveal) {
@@ -517,8 +626,9 @@ function renderActive() {
   const active = state.active; const question = activeQuestion(); if (!active || !question) return;
   const answer = active.answers[question.id]; const reveal = active.completedReview || active.kind === 'practice' && Boolean(answer?.selected_option);
   const answered = Object.values(active.answers).filter((item) => item?.selected_option).length;
-  layout(`<section class="question-header"><div><span class="pill">${active.completedReview ? 'Review' : active.kind === 'test' ? e(TEST_PRESETS[active.preset]?.[0] || 'Test') : 'Practice'}</span><h1>${e(active.title || 'Question set')}</h1></div><div class="timer-cluster"><div><span>QUESTION TARGET</span><b id="question-timer">00:50</b></div><div><span>TOTAL TARGET</span><b>${timerText(active.questions.length * TARGET_SECONDS)}</b></div></div></section><div class="question-layout"><section class="card question-card"><div class="question-topline"><span>Question ${active.index + 1} of ${active.questions.length}</span><span>${questionMeta(question)}</span></div><div class="progress"><i style="width:${((active.index + 1) / active.questions.length) * 100}%"></i></div>${renderQuestion(question, answer, reveal)}${feedbackControls(answer || {}, reveal, selectedKey(answer) !== correctKey(question))}<div class="question-actions"><div class="row"><button class="button ghost ${active.bookmarks.has(question.id) ? 'active-control' : ''}" data-action="bookmark" aria-pressed="${active.bookmarks.has(question.id)}">${active.bookmarks.has(question.id) ? '★ Bookmarked' : '☆ Bookmark'}</button><button class="button ghost ${active.marked.has(question.id) ? 'active-control' : ''}" data-action="mark" aria-pressed="${active.marked.has(question.id)}">${active.marked.has(question.id) ? '✓ Marked for review' : 'Mark for review'}</button><button class="button ghost" data-action="note">Note</button><button class="button ghost" data-action="report">Report</button></div><div class="row"><button class="button secondary" data-action="previous" ${active.index === 0 ? 'disabled' : ''}>Previous</button><button class="button" data-action="next">${active.index === active.questions.length - 1 ? (active.completedReview ? 'Back to results' : 'Finish') : 'Next'}</button></div></div></section><aside class="card palette-card"><div class="section-heading"><h3>Question palette</h3><span>${answered}/${active.questions.length}</span></div><div class="palette">${active.questions.slice(0, 500).map((item, index) => `<button data-action="jump" data-index="${index}" class="${index === active.index ? 'current' : ''} ${active.answers[item.id]?.selected_option ? 'answered' : ''} ${active.marked.has(item.id) ? 'marked' : ''}" aria-label="Question ${index + 1}">${index + 1}</button>`).join('')}</div>${active.questions.length > 500 ? '<p class="subtle">Palette shows the first 500 positions; Previous/Next continues through all questions.</p>' : ''}${active.kind === 'test' && !active.completedReview ? `<p class="subtle">${active.questions.length - answered} unanswered</p><button class="button danger full" data-action="submit">Submit test</button>` : ''}</aside></div>`);
-  startQuestionTimer();
+  const browsing = active.kind === 'browse';
+  layout(`<section class="question-header"><div><span class="pill">${browsing ? 'Browse' : active.completedReview ? 'Review' : active.kind === 'test' ? e(TEST_PRESETS[active.preset]?.[0] || 'Test') : 'Practice'}</span><h1>${e(active.title || 'Question set')}</h1></div>${browsing ? `<div class="row"><button class="button" data-action="preview-browsed-set">Start test with these exact questions</button><button class="button secondary" data-action="back-to-origin">Back</button></div>` : `<div class="timer-cluster"><div><span>QUESTION TARGET</span><b id="question-timer">00:50</b></div><div><span>TOTAL TARGET</span><b>${timerText(active.questions.length * TARGET_SECONDS)}</b></div></div>`}</section><div class="question-layout"><section class="card question-card"><div class="question-topline"><span>Question ${active.index + 1} of ${active.questions.length}</span><span>${questionMeta(question)}</span></div><div class="progress"><i style="width:${((active.index + 1) / active.questions.length) * 100}%"></i></div>${renderQuestion(question, answer, reveal)}${browsing ? '' : feedbackControls(answer || {}, reveal, selectedKey(answer) !== correctKey(question))}<div class="question-actions"><div class="row"><button class="button ghost ${active.bookmarks.has(question.id) ? 'active-control' : ''}" data-action="bookmark" aria-pressed="${active.bookmarks.has(question.id)}">${active.bookmarks.has(question.id) ? '★ Bookmarked' : '☆ Bookmark'}</button><button class="button ghost ${active.marked.has(question.id) ? 'active-control' : ''}" data-action="mark" aria-pressed="${active.marked.has(question.id)}">${active.marked.has(question.id) ? '✓ Marked for review' : 'Mark for review'}</button><button class="button ghost" data-action="note">Note</button><button class="button ghost" data-action="report">Report</button></div><div class="row"><button class="button secondary" data-action="previous" ${active.index === 0 ? 'disabled' : ''}>Previous</button><button class="button" data-action="next">${active.index === active.questions.length - 1 ? (browsing ? 'Back' : active.completedReview ? 'Back to results' : 'Finish') : 'Next'}</button></div></div></section><aside class="card palette-card"><div class="section-heading"><h3>Question palette</h3><span>${answered}/${active.questions.length}</span></div><div class="palette">${active.questions.slice(0, 500).map((item, index) => `<button data-action="jump" data-index="${index}" class="${index === active.index ? 'current' : ''} ${active.answers[item.id]?.selected_option ? 'answered' : ''} ${active.marked.has(item.id) ? 'marked' : ''}" aria-label="Question ${index + 1}">${index + 1}</button>`).join('')}</div>${active.questions.length > 500 ? '<p class="subtle">Palette shows the first 500 positions; Previous/Next continues through all questions.</p>' : ''}${active.kind === 'test' && !active.completedReview ? `<p class="subtle">${active.questions.length - answered} unanswered</p><button class="button danger full" data-action="submit">Submit test</button>` : ''}</aside></div>`);
+  if (!browsing) startQuestionTimer(); else clearInterval(state.timer);
 }
 
 function startQuestionTimer() {
@@ -565,8 +675,8 @@ async function selectAnswer(key) {
 
 async function navigateActive(index) {
   const active = state.active; const current = activeQuestion();
-  if (current) { const answer = active.answers[current.id] || {}; answer.time_spent_seconds = Math.max(answer.time_spent_seconds || 0, elapsedOnQuestion()); active.answers[current.id] = answer; await saveActiveAnswer(current.id); }
-  active.index = Math.max(0, Math.min(index, active.questions.length - 1)); active.questionStartedAt = Date.now(); active.explanationOpen = false;
+  if (current && active.kind !== 'browse') { const answer = active.answers[current.id] || {}; answer.time_spent_seconds = Math.max(answer.time_spent_seconds || 0, elapsedOnQuestion()); active.answers[current.id] = answer; await saveActiveAnswer(current.id); }
+  active.index = Math.max(0, Math.min(index, active.questions.length - 1)); active.questionStartedAt = active.kind === 'browse' ? null : Date.now(); active.explanationOpen = false;
   if (active.id) await optional(db.from('test_sessions').update({ current_position: active.index, last_question_started_at: new Date().toISOString() }).eq('id', active.id).eq('user_id', state.user.id), 'sessions');
   renderActive();
 }
@@ -673,31 +783,54 @@ async function history() {
 
 async function review() {
   const now = new Date().toISOString();
-  const [learning, cards] = await Promise.all([optional(db.from('user_question_state').select('*').eq('user_id', state.user.id), 'learning'), optional(db.from('recall_card_progress').select('card_id').eq('user_id', state.user.id).lte('due_at', now), 'personal')]);
+  const learning = await optional(db.from('user_question_state').select('*').eq('user_id', state.user.id), 'learning');
   const rows = learning.data || [];
-  const sections = [['incorrect', 'Incorrect', rows.filter((x) => x.last_is_correct === false || x.wrong).length, 'Questions that produced errors.'], ['bookmarked', 'Bookmarked', rows.filter((x) => x.bookmarked).length, 'Questions saved for later.'], ['marked', 'Marked for Review', rows.filter((x) => x.marked_for_review).length, 'Questions you explicitly marked.'], ['recall_due', 'Recall Due', rows.filter((x) => x.recall_due_at && x.recall_due_at <= now).length + (cards.data?.length || 0), 'Scheduled for active recall now.'], ['confident_wrong', 'Confidently Wrong', rows.filter((x) => x.last_is_correct === false && x.last_confidence === 'sure').length, 'High-confidence misconceptions.'], ['slow', 'Slow Questions >50s', rows.filter((x) => x.last_time_seconds > TARGET_SECONDS).length, 'Questions needing faster recall.'], ['my_content', 'My Content', '—', 'Your MCQs, recall cards and notes.']];
-  layout(`<div class="page-heading"><span class="eyebrow">REVIEW</span><h1>Everything worth revisiting</h1><p>Open questions directly or turn a category into a revision test.</p></div>${!state.features.learning ? featureNotice('Apply the learning-interface migration for accurate consolidated review counts.') : ''}<section class="review-grid">${sections.map(([status, title, count, description]) => `<article class="card review-card"><span class="eyebrow">${e(title)}</span><b class="review-count">${count}</b><p>${e(description)}</p><div class="row"><button class="button secondary" data-action="open-review" data-status="${status}">Open</button><button class="button" data-action="start-revision" data-status="${status}">Start revision test</button></div></article>`).join('')}</section><section class="card section-card"><div class="section-heading"><h2>Test history</h2><a class="button secondary" href="#/history">Open history</a></div></section>`);
-}
-
-async function startStatusSession(status, mode = 'practice') {
-  const filters = { platforms: [], subjects: [], systems: [], topics: [], subtopics: [], statuses: [status], pyq: '', year: '', search: '', source: '' };
-  await createSession({ mode, preset: 'revision', title: `${status.replaceAll('_', ' ')} revision`, filters, requested: 50, autoSubmit: mode === 'test' });
+  const selected = state.reviewFilters || { platforms: [], subjects: [], systems: [], topics: [], subtopics: [] };
+  const validIds = new Set(resolveTaxonomyCascade(state.meta.questionTaxonomy, selected).matchingQuestionIds);
+  const categories = [
+    ['incorrect', 'Incorrect', rows.filter((x) => x.last_is_correct === false || x.wrong), 'Questions whose current learning state is incorrect.'],
+    ['correct', 'Correct', rows.filter((x) => x.last_is_correct === true), 'Questions whose current learning state is correct.'],
+    ['bookmarked', 'Bookmarked', rows.filter((x) => x.bookmarked), 'Questions saved for later.'],
+    ['marked', 'Marked for Review', rows.filter((x) => x.marked_for_review || x.revision), 'Questions explicitly marked.'],
+    ['recall_due', 'Recall Due', rows.filter((x) => x.recall_due_at && x.recall_due_at <= now), 'Question recall items due now.'],
+    ['difficult', 'Personally Difficult', rows.filter((x) => x.personally_difficult), 'Questions flagged as difficult.'],
+    ['slow', 'Slow >50s', rows.filter((x) => Number(x.last_time_seconds) > TARGET_SECONDS), 'Questions whose latest relevant time exceeded 50 seconds.'],
+  ];
+  const taxonomyByQuestion = new Map(state.meta.questionTaxonomy.map((item) => [item.id, item]));
+  const groupRows = (ids, field, items, status, title) => {
+    const groups = new Map(); ids.forEach((id) => { const key = taxonomyByQuestion.get(String(id))?.[field]; if (key) { if (!groups.has(key)) groups.set(key, []); groups.get(key).push(id); } });
+    const names = byId(items);
+    return [...groups].sort((a, b) => b[1].length - a[1].length).map(([id, questionIds]) => `<li><span><b>${e(names.get(String(id))?.name || 'Unclassified')}</b><small>${questionIds.length} question${questionIds.length === 1 ? '' : 's'}</small></span>${actionSetButtons({ mode: 'test', preset: 'revision', title: `${title} · ${names.get(String(id))?.name || 'Unclassified'}`, filters: { ...selected, statuses: ['all'], pyq: '', year: '', search: '', source: '' }, questionIds }, 'Start revision test')}</li>`).join('');
+  };
+  const cards = categories.map(([status, title, categoryRows, description]) => {
+    const questionIds = [...new Set(categoryRows.map((row) => String(row.question_id)).filter((id) => validIds.has(id)))];
+    return `<article class="card review-detail"><div class="section-heading"><div><span class="eyebrow">${e(title)}</span><b class="review-count">${questionIds.length}</b><p>${e(description)}</p></div>${actionSetButtons({ mode: 'test', preset: 'revision', title: `${title} revision`, filters: { ...selected, statuses: ['all'], pyq: '', year: '', search: '', source: '' }, questionIds }, 'Start revision test')}</div>${questionIds.length ? `<details><summary>By subject</summary><ul class="action-list">${groupRows(questionIds, 'subject_id', state.meta.subjects, status, title)}</ul></details><details><summary>By platform</summary><ul class="action-list">${groupRows(questionIds, 'platform_id', state.meta.platforms, status, title)}</ul></details>` : ''}</article>`;
+  }).join('');
+  layout(`<div class="page-heading"><span class="eyebrow">REVIEW</span><h1>Everything worth revisiting</h1><p>Filter the review population, then browse or test the exact same question IDs.</p></div>${!state.features.learning ? featureNotice('Apply the learning-interface migration for accurate consolidated review counts.') : ''}<section class="card builder-card"><form id="review-filter-form" class="stack"><div class="filters">${multiPicker('platforms', 'Platforms', state.meta.platforms)}${multiPicker('subjects', 'Subjects', state.meta.subjects)}${multiPicker('systems', 'Systems (optional)', state.meta.systems)}${multiPicker('topics', 'Topics', state.meta.topics)}${multiPicker('subtopics', 'Subtopics', state.meta.subtopics)}</div><div class="row"><button class="button">Apply review filters</button><button type="button" class="button ghost" data-action="clear-review-filters">Clear</button></div></form></section><section class="review-stack">${cards}</section><section class="card section-card"><div class="section-heading"><h2>Test history</h2><a class="button secondary" href="#/history">Open history</a></div></section>`);
+  const form = document.querySelector('#review-filter-form');
+  for (const level of ['platforms', 'subjects', 'systems', 'topics', 'subtopics']) (selected[level] || []).forEach((id) => { const input = form.querySelector(`input[name="${level}"][value="${CSS.escape(String(id))}"]`); if (input) input.checked = true; });
+  setupDependentFilters(form);
+  form.onsubmit = (event) => { event.preventDefault(); const filters = readFilters(form); state.reviewFilters = filters; review(); };
 }
 
 async function analytics() {
-  let attemptsResult = await db.from('question_attempts').select('question_id,is_correct,answered_at,time_spent_seconds,confidence').eq('user_id', state.user.id).order('answered_at', { ascending: false }).limit(5000);
-  if (isMissingTable(attemptsResult.error)) attemptsResult = await db.from('question_attempts').select('question_id,is_correct,answered_at').eq('user_id', state.user.id).order('answered_at', { ascending: false }).limit(5000);
-  if (attemptsResult.error) throw attemptsResult.error;
-  const attempts = attemptsResult.data || []; const questionIds = [...new Set(attempts.map((row) => row.question_id))];
-  const questions = questionIds.length ? await paged(() => db.from('questions').select('id,subject_id,platform_id').in('id', questionIds)) : []; const qMap = new Map(questions.map((question) => [question.id, question]));
-  const aggregate = (field) => {
+  let attempts;
+  try { attempts = await paged(() => db.from('question_attempts').select('question_id,is_correct,answered_at,time_spent_seconds,confidence').eq('user_id', state.user.id).order('answered_at', { ascending: false })); }
+  catch { attempts = await paged(() => db.from('question_attempts').select('question_id,is_correct,answered_at').eq('user_id', state.user.id).order('answered_at', { ascending: false })); }
+  const questionIds = [...new Set(attempts.map((row) => String(row.question_id)))];
+  const qMap = new Map(state.meta.questionTaxonomy.map((question) => [question.id, question]));
+  const aggregate = (field, nested = false) => {
     const result = new Map();
-    attempts.forEach((attempt) => { const key = qMap.get(attempt.question_id)?.[field]; if (!key) return; const value = result.get(key) || { correct: 0, total: 0, time: 0, timed: 0 }; value.total++; value.correct += attempt.is_correct ? 1 : 0; if (attempt.time_spent_seconds != null) { value.time += attempt.time_spent_seconds; value.timed++; } result.set(key, value); });
+    attempts.forEach((attempt) => { const raw = qMap.get(String(attempt.question_id))?.[field]; const keys = nested ? raw || [] : [raw]; keys.forEach((key) => { if (!key) return; const value = result.get(key) || { correct: 0, total: 0, time: 0, timed: 0, all: new Set(), correctIds: new Set(), incorrectIds: new Set() }; value.total++; value.correct += attempt.is_correct ? 1 : 0; value.all.add(String(attempt.question_id)); (attempt.is_correct ? value.correctIds : value.incorrectIds).add(String(attempt.question_id)); if (attempt.time_spent_seconds != null) { value.time += attempt.time_spent_seconds; value.timed++; } result.set(key, value); }); });
     return result;
   };
-  const renderRows = (data, names, type) => data.size ? [...data].sort((a, b) => a[1].correct / a[1].total - b[1].correct / b[1].total).map(([id, value]) => `<button class="analytics-row" data-action="analytics-drill" data-type="${type}" data-id="${e(id)}"><span><b>${e(names.get(String(id))?.name || 'Unclassified')}</b><small>${value.total} attempts · ${value.timed ? Math.round(value.time / value.timed) : '—'}s avg</small></span><span>${pct(value.correct, value.total)}</span><span>Open questions →</span></button>`).join('') : '<div class="empty">No data yet.</div>';
+  const renderRows = (data, names, type) => data.size ? `<div class="analytics-actions">${[...data].sort((a, b) => a[1].correct / a[1].total - b[1].correct / b[1].total).map(([id, value]) => {
+    const label = names.get(String(id))?.name || 'Unclassified'; const filters = { platforms: [], subjects: [], systems: [], topics: [], subtopics: [], statuses: ['all'], pyq: '', year: '', search: '', source: '' };
+    const buttons = [['All attempted', [...value.all]], ['Incorrect', [...value.incorrectIds]], ['Correct', [...value.correctIds]]].map(([name, ids]) => ids.length ? actionSetButtons({ mode: 'test', preset: 'analytics', title: `${label} · ${name}`, filters, questionIds: ids }, name === 'Incorrect' ? 'Start revision test' : `Test ${name.toLowerCase()}`) : '').join('');
+    return `<article class="analytics-action-row"><div><b>${e(label)}</b><small>${value.total} attempts · ${pct(value.correct, value.total)} · ${value.timed ? Math.round(value.time / value.timed) : '—'}s avg</small></div><div class="analytics-drills">${buttons}</div></article>`;
+  }).join('')}</div>` : '<div class="empty">No data yet.</div>';
   const correct = attempts.filter((x) => x.is_correct).length; const timed = attempts.filter((x) => x.time_spent_seconds != null);
-  layout(`<div class="page-heading"><span class="eyebrow">ANALYTICS</span><h1>Performance that leads to questions</h1><p>Click any area to start a focused revision set.</p></div><section class="result-grid"><div class="card metric"><span>Overall accuracy</span><b>${pct(correct, attempts.length)}</b></div><div class="card metric"><span>Coverage</span><b>${questionIds.length}</b><small>unique questions</small></div><div class="card metric"><span>Average time</span><b>${timed.length ? `${Math.round(timed.reduce((s, x) => s + (x.time_spent_seconds || 0), 0) / timed.length)}s` : '—'}</b></div><div class="card metric"><span>Recent attempts</span><b>${attempts.length}</b></div></section><section class="analytics-grid"><div class="card"><div class="section-heading"><h2>Subject analytics</h2></div>${renderRows(aggregate('subject_id'), byId(state.meta.subjects), 'subject')}</div><div class="card"><div class="section-heading"><h2>Platform analytics</h2></div>${renderRows(aggregate('platform_id'), byId(state.meta.platforms), 'platform')}</div></section><section class="card section-card"><h2>Topic and subtopic analytics</h2><p class="subtle">Topic/subtopic filters are functional. Detailed historical drilldowns require existing questions to be mapped through question_topics and question_subtopics.</p><a class="button secondary" href="#/qbank">Open hierarchical filters</a></section>`);
+  layout(`<div class="page-heading"><span class="eyebrow">ANALYTICS</span><h1>Performance that leads to exact questions</h1><p>Every drilldown preserves the question IDs that produced its metric.</p></div><section class="result-grid"><div class="card metric"><span>Overall accuracy</span><b>${pct(correct, attempts.length)}</b></div><div class="card metric"><span>Coverage</span><b>${questionIds.length}</b><small>unique questions</small></div><div class="card metric"><span>Average time</span><b>${timed.length ? `${Math.round(timed.reduce((s, x) => s + (x.time_spent_seconds || 0), 0) / timed.length)}s` : '—'}</b></div><div class="card metric"><span>All attempts</span><b>${attempts.length}</b></div></section><section class="analytics-grid"><div class="card"><h2>Subject analytics</h2>${renderRows(aggregate('subject_id'), byId(state.meta.subjects), 'subject')}</div><div class="card"><h2>Platform analytics</h2>${renderRows(aggregate('platform_id'), byId(state.meta.platforms), 'platform')}</div><div class="card"><h2>Topic analytics</h2>${renderRows(aggregate('topic_ids', true), byId(state.meta.topics), 'topic')}</div><div class="card"><h2>Subtopic analytics</h2>${renderRows(aggregate('subtopic_ids', true), byId(state.meta.subtopics), 'subtopic')}</div></section>`);
 }
 
 function taxonomyOptions(items, first) { return `<option value="">${e(first)}</option>${items.map((item) => `<option value="${e(item.id)}">${e(item.name)}</option>`).join('')}`; }
@@ -760,11 +893,6 @@ async function resetLearning(event) {
   toast('Selected learning state reset. Imported questions were preserved.'); myBank();
 }
 
-async function analyticsDrill(type, id) {
-  const filters = { platforms: type === 'platform' ? [id] : [], subjects: type === 'subject' ? [id] : [], systems: [], topics: type === 'topic' ? [id] : [], subtopics: type === 'subtopic' ? [id] : [], statuses: ['incorrect'], pyq: '', year: '', search: '', source: '' };
-  await createSession({ mode: 'practice', preset: 'analytics', title: 'Analytics revision', filters, requested: 50, autoSubmit: false });
-}
-
 async function recordRecallResponse(value) {
   const question = activeQuestion();
   const result = await db.rpc('qbank_review_question', { p_question_id: question.id, p_response: value });
@@ -804,17 +932,25 @@ document.addEventListener('click', async (event) => {
   if (action === 'signout') await db.auth.signOut(); if (action === 'signup') await signUp(); if (action === 'reset-password') await resetPassword(); if (action === 'retry') render();
   if (action === 'choose-preset') showTestBuilder(target.dataset.preset); if (action === 'close-builder') document.querySelector('#test-builder-slot').innerHTML = '';
   if (action === 'answer') await selectAnswer(target.dataset.key); if (action === 'previous') await navigateActive(state.active.index - 1);
-  if (action === 'next') { if (state.active.index === state.active.questions.length - 1) { if (state.active.completedReview) return resultScreen(); return submitActive(false); } await navigateActive(state.active.index + 1); }
+  if (action === 'next') { if (state.active.index === state.active.questions.length - 1) { if (state.active.kind === 'browse') { location.hash = state.active.origin || '#/qbank'; return; } if (state.active.completedReview) return resultScreen(); return submitActive(false); } await navigateActive(state.active.index + 1); }
   if (action === 'jump') await navigateActive(Number(target.dataset.index)); if (action === 'bookmark') await toggleBookmark(); if (action === 'mark') await toggleMark();
   if (action === 'toggle-explanation') { state.active.explanationOpen = !state.active.explanationOpen; renderActive(); }
   if (action === 'confidence') await updateAnswerMetadata('confidence', target.dataset.value); if (action === 'error-reason') await updateAnswerMetadata('error_reason', target.dataset.value);
   if (action === 'recall-response') await recordRecallResponse(target.dataset.value);
   if (action === 'note') await noteModal(); if (action === 'report') reportModal(); if (action === 'close-modal') document.querySelector('#modal')?.remove(); if (action === 'submit') await submitActive(false); if (action === 'resume') await resumeSession(target.dataset.id);
+  if (action === 'start-pending-test') await startPendingSession();
+  if (action === 'cancel-question-set') { const origin = state.pendingSet?.origin || '#/qbank'; state.pendingSet = null; location.hash = origin; }
+  if (action === 'back-to-origin') location.hash = state.active?.origin || '#/qbank';
+  if (action === 'preview-browsed-set') await createSession({ mode: state.active.testMode || 'test', preset: state.active.preset, title: state.active.title, filters: state.active.filters, questionIds: state.active.questionIds, requested: state.active.questionIds.length, autoSubmit: state.active.testMode !== 'practice', origin: state.active.origin });
+  if (action === 'open-action-set' || action === 'preview-action-set') {
+    const definition = state.actionSets.get(target.dataset.set); if (!definition) return toast('That question set expired. Please reopen this page.', 'error');
+    if (action === 'open-action-set') await openQuestionSet(definition); else await createSession(definition);
+  }
+  if (action === 'clear-review-filters') { state.reviewFilters = null; await review(); }
   if (action === 'review-result') { state.active.index = 0; state.active.completedReview = true; state.active.questionStartedAt = Date.now(); renderActive(); }
   if (action === 'review-mistakes') { const questions = state.active.questions.filter((q) => state.active.answers[q.id]?.selected_option && selectedKey(state.active.answers[q.id]) !== correctKey(q)); if (!questions.length) return toast('No incorrect questions in this session.'); state.active = { ...state.active, questions, index: 0, completedReview: true, questionStartedAt: Date.now() }; renderActive(); }
-  if (action === 'retake') await createSession({ mode: state.active.kind, preset: state.active.preset || 'retake', title: `${state.active.title || 'Test'} retake`, filters: state.active.filters || {}, requested: state.active.questions.length, autoSubmit: state.active.kind === 'test' });
-  if (action === 'open-review') await startStatusSession(target.dataset.status, 'practice'); if (action === 'start-revision') await startStatusSession(target.dataset.status, 'test');
-  if (action === 'quick-subject') await analyticsDrill('subject', target.dataset.id); if (action === 'analytics-drill') await analyticsDrill(target.dataset.type, target.dataset.id); if (action === 'my-bank-tab') showMyBankTab(target.dataset.tab);
+  if (action === 'retake') await createSession({ mode: state.active.kind, preset: state.active.preset || 'retake', title: `${state.active.title || 'Test'} retake`, filters: state.active.filters || {}, questionIds: state.active.questions.map((question) => question.id), requested: state.active.questions.length, autoSubmit: state.active.kind === 'test', origin: '#/history' });
+  if (action === 'my-bank-tab') showMyBankTab(target.dataset.tab);
 });
 
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape') document.querySelector('#modal')?.remove(); });

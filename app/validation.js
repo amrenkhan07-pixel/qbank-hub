@@ -134,6 +134,44 @@ export function validateResumeSnapshot({ session = {}, storedRows = [], question
   return { status: checks.every((check) => check.status === 'PASS') ? 'PASS' : 'FAIL', checks };
 }
 
+export function validateQuestionSetLifecycle({
+  sourceQuestionIds = [], browseQuestionIds = [], previewQuestionIds = [], sessionQuestionIds = [],
+  previewSessionWrites = 0, previewAttemptWrites = 0, previewTimerCount = 0,
+  browseSessionWrites = 0, browseAttemptWrites = 0, browseTimerCount = 0,
+  startSessionWrites = 1, startTimerCount = 1, targetSeconds = 0, secondsPerQuestion = 50,
+}) {
+  const source = stringIds(sourceQuestionIds); const browse = stringIds(browseQuestionIds);
+  const preview = stringIds(previewQuestionIds); const session = stringIds(sessionQuestionIds);
+  const sameOrder = (left, right) => left.join('|') === right.join('|');
+  const checks = [
+    result('lifecycle.source_has_no_duplicates', source.length === sourceQuestionIds.length ? [] : ['duplicate source IDs']),
+    result('lifecycle.browse_uses_exact_source_ids', sameOrder(source, browse) ? [] : ['browse IDs differ']),
+    result('lifecycle.preview_uses_exact_source_ids', sameOrder(source, preview) ? [] : ['preview IDs differ']),
+    result('lifecycle.started_session_uses_preview_ids', sameOrder(preview, session) ? [] : ['session IDs differ']),
+    result('lifecycle.preview_is_read_only', previewSessionWrites === 0 && previewAttemptWrites === 0 ? [] : ['preview wrote session/attempt state']),
+    result('lifecycle.preview_has_no_timer', previewTimerCount === 0 ? [] : ['preview timer started']),
+    result('lifecycle.browse_is_read_only', browseSessionWrites === 0 && browseAttemptWrites === 0 ? [] : ['browse wrote session/attempt state']),
+    result('lifecycle.browse_has_no_timer', browseTimerCount === 0 ? [] : ['browse timer started']),
+    result('lifecycle.start_creates_session', startSessionWrites === 1 ? [] : [`expected 1 session write, got ${startSessionWrites}`]),
+    result('lifecycle.start_starts_timer', startTimerCount > 0 ? [] : ['start did not start timer']),
+    result('lifecycle.target_is_count_times_50', Number(targetSeconds) === source.length * Number(secondsPerQuestion) ? [] : [`${targetSeconds}/${source.length * secondsPerQuestion}`]),
+  ];
+  return { status: checks.every((check) => check.status === 'PASS') ? 'PASS' : 'FAIL', checks };
+}
+
+export function validateAnalyticsDrilldown({ attempts = [], allQuestionIds = [], correctQuestionIds = [], incorrectQuestionIds = [] }) {
+  const expectedAll = stringIds(attempts.map((row) => row.question_id));
+  const expectedCorrect = stringIds(attempts.filter((row) => row.is_correct === true).map((row) => row.question_id));
+  const expectedIncorrect = stringIds(attempts.filter((row) => row.is_correct === false).map((row) => row.question_id));
+  const samePopulation = (left, right) => stringIds(left).sort().join('|') === stringIds(right).sort().join('|');
+  const checks = [
+    result('analytics.all_reproduces_metric_population', samePopulation(expectedAll, allQuestionIds) ? [] : ['all population differs']),
+    result('analytics.correct_contains_only_contributors', samePopulation(expectedCorrect, correctQuestionIds) ? [] : ['correct population differs']),
+    result('analytics.incorrect_contains_only_contributors', samePopulation(expectedIncorrect, incorrectQuestionIds) ? [] : ['incorrect population differs']),
+  ];
+  return { status: checks.every((check) => check.status === 'PASS') ? 'PASS' : 'FAIL', checks };
+}
+
 export function assertValidation(report, context) {
   if (report.status === 'PASS') return report;
   const failures = report.checks.filter((check) => check.status === 'FAIL');
