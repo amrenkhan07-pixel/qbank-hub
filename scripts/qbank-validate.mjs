@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { buildTaxonomyIndex, deriveAnalyticsPopulations, resolveTaxonomyCascade, validateAnalyticsDrilldown, validateGeneratedQuestionSet, validateQuestionSetLifecycle, validateQuestionStateBindings, validateResumeSnapshot } from '../app/validation.js';
+import { analyticsTopicSubtopicRedundant, buildTaxonomyIndex, deriveAnalyticsPopulations, resolveTaxonomyCascade, validateAnalyticsDrilldown, validateGeneratedQuestionSet, validateQuestionSetLifecycle, validateQuestionStateBindings, validateResumeSnapshot } from '../app/validation.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
@@ -64,6 +64,22 @@ const analyticsLeak = validateAnalyticsDrilldown({ questionIds: ['q-1'], attempt
 check('analytics.unrelated_question_detected', analyticsLeak.status === 'FAIL');
 const derivedAnalytics = deriveAnalyticsPopulations({ questionIds: ['q-1', 'q-2', 'q-3'], attempts: analyticsFixtureAttempts, learning: analyticsFixtureLearning });
 check('analytics.latest_answer_not_attempt_accuracy', derivedAnalytics.incorrect.join() === 'q-1' && derivedAnalytics.correct.join() === 'q-2' && derivedAnalytics.totalAttempts === 3);
+const redundantTaxonomy = [
+  { id: 'q-1', topic_ids: ['topic-local'], subtopic_ids: ['subtopic-local'] },
+  { id: 'q-2', topic_ids: ['topic-regional'], subtopic_ids: ['subtopic-regional'] },
+];
+check('analytics.redundant_topic_subtopic_detected', analyticsTopicSubtopicRedundant({
+  questionIndex: redundantTaxonomy, questionIds: ['q-1', 'q-2'],
+  topics: [{ id: 'topic-local', name: 'Local Anesthetics' }, { id: 'topic-regional', name: 'Regional Anesthesia' }],
+  subtopics: [{ id: 'subtopic-local', name: 'Local Anesthetics' }, { id: 'subtopic-regional', name: 'Regional Anesthesia' }],
+}));
+check('analytics.genuine_subtopic_breakdown_preserved', !analyticsTopicSubtopicRedundant({
+  questionIndex: [
+    { id: 'q-1', topic_ids: ['topic-limb'], subtopic_ids: ['subtopic-upper'] },
+    { id: 'q-2', topic_ids: ['topic-limb'], subtopic_ids: ['subtopic-lower'] },
+  ], questionIds: ['q-1', 'q-2'], topics: [{ id: 'topic-limb', name: 'Limbs' }],
+  subtopics: [{ id: 'subtopic-upper', name: 'Upper Limb' }, { id: 'subtopic-lower', name: 'Lower Limb' }],
+}));
 
 const taxonomy = buildTaxonomyIndex([
   { id: 'qa-1', platform_id: 'cerebellum', subject_id: 'anatomy', system_id: 'anatomy-system', question_topics: [{ topic_id: 'anatomy-topic' }], question_subtopics: [{ subtopic_id: 'anatomy-subtopic' }] },
@@ -144,8 +160,13 @@ check('frontend.same_hash_origin_rerenders', /const goToHash = \(target\) => \{ 
 check('frontend.review_taxonomy_multiselect', appSource.includes('id="review-filter-form"') && appSource.includes("multiPicker('subtopics'"));
 check('frontend.analytics_exact_drilldowns', appSource.includes('analyticsStatusIds') && appSource.includes('questionIds: ids') && appSource.includes('Review Questions') && appSource.includes('Start Test'));
 check('frontend.analytics_dependent_multiselect', appSource.includes('id="analytics-filter-form"') && appSource.includes("setupDependentFilters(form)"));
-check('frontend.analytics_combined_summary', appSource.includes('COMBINED SELECTED POPULATION') && appSource.includes('Latest-answer accuracy') && appSource.includes('Total attempts'));
-check('frontend.analytics_breakdowns_lazy_and_paged', appSource.includes('load-analytics-breakdown') && appSource.includes('slice(0, page * 100)') && appSource.includes('Show next'));
+check('frontend.analytics_simplified_default', appSource.includes('<h1>Overall performance</h1>') && appSource.includes('analytics-primary-metrics') && appSource.includes('Questions attempted') && appSource.includes('Currently incorrect') && appSource.includes('Average time'));
+check('frontend.analytics_secondary_and_more_details', appSource.includes('analytics-secondary') && appSource.includes('Marked for Review') && appSource.includes('Recall Due') && appSource.includes('analytics-more-details') && appSource.includes('Total attempts'));
+check('frontend.analytics_one_breakdown_at_a_time', appSource.includes('select-analytics-breakdown') && appSource.includes('id="analytics-breakdown-selected"') && !appSource.includes('load-analytics-breakdown'));
+check('frontend.analytics_breakdowns_lazy_and_paged', appSource.includes('slice(0, page * 100)') && appSource.includes('Show next'));
+check('frontend.analytics_row_actions_progressively_disclosed', appSource.includes('<details class="analytics-breakdown-row">') && appSource.includes('<div class="analytics-row-detail">'));
+check('frontend.analytics_redundancy_is_mapping_based', appSource.includes('analyticsTopicSubtopicRedundant({ questionIndex: state.meta.questionTaxonomy'));
+check('frontend.analytics_mobile_layout', stylesSource.includes('.analytics-primary-metrics { grid-template-columns: 1fr; }') && stylesSource.includes('.analytics-breakdown-row > summary { grid-template-columns: 1fr; }'));
 check('frontend.analytics_single_status_two_actions', appSource.includes('data-analytics-status') && appSource.includes('Review Questions') && appSource.includes('Start Test') && !appSource.includes("['All attempted', [...value.all]"));
 check('frontend.mapping_based_taxonomy_cascade', appSource.includes('resolveTaxonomyCascade(state.meta.questionTaxonomy'));
 check('frontend.hidden_taxonomy_rows_not_displayed', /row\.hidden = !visible;[\s\S]*row\.style\.display = visible \? '' : 'none'/.test(appSource));
@@ -159,8 +180,8 @@ check('browser.taxonomy_dom_regression_installed', appSource.includes('runTaxono
   && domRegressionSource.includes('mixedUnion')
   && domRegressionSource.includes('invalidChildPruning')
   && domRegressionSource.includes('zeroCountLabelsHidden'));
-check('frontend.cascade_modules_cache_busted', appSource.includes("./validation.js?v=20260831-analytics")
-  && readFileSync(resolve(root, 'index.html'), 'utf8').includes('./app/app.js?v=20260831-analytics'));
+check('frontend.cascade_modules_cache_busted', appSource.includes("./validation.js?v=20260831-analytics-ux")
+  && readFileSync(resolve(root, 'index.html'), 'utf8').includes('./app/app.js?v=20260831-analytics-ux'));
 const importerTests = spawnSync('python3', ['-m', 'unittest', 'scripts.tests.test_qbank_import'], { cwd: root, encoding: 'utf8' });
 check('importer.fixture_and_scale_tests', importerTests.status === 0, (importerTests.stderr || importerTests.stdout || '').trim().split('\n').slice(-1)[0] || 'python unittest');
 check('importer.dry_run_default_is_read_only', /database_modified["']?:?\s*False/.test(importerSource) && /--confirm-import/.test(importerSource));

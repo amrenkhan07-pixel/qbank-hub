@@ -179,6 +179,28 @@ export function deriveAnalyticsPopulations({ questionIds = [], attempts = [], le
   };
 }
 
+export function analyticsTopicSubtopicRedundant({ questionIndex = [], topics = [], subtopics = [], questionIds = [] }) {
+  const allowed = new Set(stringIds(questionIds));
+  const names = (items) => new Map((items || []).map((item) => [String(item.id), String(item.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '')]));
+  const topicNames = names(topics); const subtopicNames = names(subtopics);
+  const signatures = (field, itemNames) => {
+    const grouped = new Map();
+    questionIndex.filter((question) => allowed.has(String(question.id))).forEach((question) => {
+      (question[field] || []).forEach((id) => { const key = String(id); if (!grouped.has(key)) grouped.set(key, new Set()); grouped.get(key).add(String(question.id)); });
+    });
+    const result = new Map(); let invalid = false;
+    grouped.forEach((members, id) => {
+      const name = itemNames.get(id);
+      if (!name || result.has(name)) invalid = true;
+      else result.set(name, [...members].sort().join('|'));
+    });
+    return { result, invalid };
+  };
+  const topicGroups = signatures('topic_ids', topicNames); const subtopicGroups = signatures('subtopic_ids', subtopicNames);
+  if (topicGroups.invalid || subtopicGroups.invalid || !topicGroups.result.size || topicGroups.result.size !== subtopicGroups.result.size) return false;
+  return [...topicGroups.result].every(([name, members]) => subtopicGroups.result.get(name) === members);
+}
+
 export function validateAnalyticsDrilldown({ questionIds = [], attempts = [], learning = [], populations = {}, breakdowns = {} }) {
   const expected = deriveAnalyticsPopulations({ questionIds, attempts, learning });
   const samePopulation = (left, right) => stringIds(left).sort().join('|') === stringIds(right).sort().join('|');
