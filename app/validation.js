@@ -12,7 +12,38 @@ export function buildTaxonomyIndex(questionRows = []) {
     system_id: String(question.system_id || ''),
     topic_ids: stringIds((question.question_topics || question.topic_ids || []).map((item) => item?.topic_id ?? item)),
     subtopic_ids: stringIds((question.question_subtopics || question.subtopic_ids || []).map((item) => item?.subtopic_id ?? item)),
+    is_pyq: question.is_pyq === true,
+    exams: stringIds([...(question.is_inicet ? ['inicet'] : []), ...(question.is_neet_pg ? ['neet_pg'] : []), ...(question.exam_tags || [])].map((value) => String(value).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, ''))),
+    exam_year: question.exam_year == null ? '' : String(question.exam_year),
+    exam_session: String(question.exam_shift || ''),
   })).filter((question) => question.id && question.platform_id && question.subject_id);
+}
+
+export function filterAnalyticsPopulation(questionIndex = [], filters = {}) {
+  const allowed = {
+    pyq: String(filters.pyq || ''), exams: new Set(stringIds(filters.exams)),
+    years: new Set(stringIds(filters.years)), sessions: new Set(stringIds(filters.sessions)),
+  };
+  return questionIndex.filter((question) => {
+    if (allowed.pyq === 'yes' && !question.is_pyq) return false;
+    if (allowed.pyq === 'no' && question.is_pyq) return false;
+    if (allowed.exams.size && !(question.exams || []).some((exam) => allowed.exams.has(exam))) return false;
+    if (allowed.years.size && !allowed.years.has(String(question.exam_year))) return false;
+    if (allowed.sessions.size && !allowed.sessions.has(String(question.exam_session))) return false;
+    return true;
+  }).map((question) => question.id);
+}
+
+export function analyticsMetadataCapabilities(questionIndex = [], questionIds = null) {
+  const constrained = Array.isArray(questionIds);
+  const allowed = new Set(stringIds(questionIds || []));
+  const rows = constrained ? questionIndex.filter((question) => allowed.has(String(question.id))) : questionIndex;
+  return {
+    hasPyq: rows.some((question) => question.is_pyq),
+    exams: [...new Set(rows.flatMap((question) => question.exams))].sort(),
+    years: [...new Set(rows.map((question) => question.exam_year).filter(Boolean))].sort((a, b) => Number(b) - Number(a)),
+    sessions: [...new Set(rows.map((question) => question.exam_session).filter(Boolean))].sort(),
+  };
 }
 
 export function resolveTaxonomyCascade(questionIndex = [], selection = {}) {
@@ -73,11 +104,19 @@ export function validateGeneratedQuestionSet({
   const subjects = asSet((filters.subjects || []).map(String));
   const systems = asSet((filters.systems || []).map(String));
   const statuses = asSet(filters.statuses || []);
+  const exams = asSet((filters.exams || []).map(String));
+  const years = asSet((filters.years || []).map(String));
+  const sessions = asSet((filters.sessions || []).map(String));
   for (const question of questions) {
     if (platforms.size && !platforms.has(String(question.platform_id))) directFailures.push(`${question.id}:platform`);
     if (subjects.size && !subjects.has(String(question.subject_id))) directFailures.push(`${question.id}:subject`);
     if (systems.size && !systems.has(String(question.system_id))) directFailures.push(`${question.id}:system`);
     if (filters.pyq === 'yes' && question.is_pyq !== true) directFailures.push(`${question.id}:pyq`);
+    if (filters.pyq === 'no' && question.is_pyq === true) directFailures.push(`${question.id}:non_pyq`);
+    const questionExams = new Set([...(question.is_inicet ? ['inicet'] : []), ...(question.is_neet_pg ? ['neet_pg'] : []), ...(question.exam_tags || [])].map((value) => String(value).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')));
+    if (exams.size && ![...exams].some((exam) => questionExams.has(exam))) directFailures.push(`${question.id}:exam`);
+    if (years.size && !years.has(String(question.exam_year ?? ''))) directFailures.push(`${question.id}:exam_year`);
+    if (sessions.size && !sessions.has(String(question.exam_shift || ''))) directFailures.push(`${question.id}:exam_session`);
     if (filters.year && Number(question.exam_year) !== Number(filters.year)) directFailures.push(`${question.id}:year`);
     if (filters.search && !String(question.question_text || '').toLowerCase().includes(String(filters.search).toLowerCase())) directFailures.push(`${question.id}:search`);
     if (filters.source && !String(question.source_reference || '').toLowerCase().includes(String(filters.source).toLowerCase())) directFailures.push(`${question.id}:source`);

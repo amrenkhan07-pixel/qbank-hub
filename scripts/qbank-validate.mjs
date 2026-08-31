@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { analyticsTopicSubtopicRedundant, buildTaxonomyIndex, deriveAnalyticsPopulations, resolveTaxonomyCascade, validateAnalyticsDrilldown, validateGeneratedQuestionSet, validateQuestionSetLifecycle, validateQuestionStateBindings, validateResumeSnapshot } from '../app/validation.js';
+import { analyticsMetadataCapabilities, analyticsTopicSubtopicRedundant, buildTaxonomyIndex, deriveAnalyticsPopulations, filterAnalyticsPopulation, resolveTaxonomyCascade, validateAnalyticsDrilldown, validateGeneratedQuestionSet, validateQuestionSetLifecycle, validateQuestionStateBindings, validateResumeSnapshot } from '../app/validation.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
@@ -80,6 +80,30 @@ check('analytics.genuine_subtopic_breakdown_preserved', !analyticsTopicSubtopicR
   ], questionIds: ['q-1', 'q-2'], topics: [{ id: 'topic-limb', name: 'Limbs' }],
   subtopics: [{ id: 'subtopic-upper', name: 'Upper Limb' }, { id: 'subtopic-lower', name: 'Lower Limb' }],
 }));
+const pyqTaxonomy = buildTaxonomyIndex([
+  { id: 'pyq-i-path', platform_id: 'prepladder', subject_id: 'pathology', is_pyq: true, is_inicet: true, exam_year: 2025, exam_shift: 'May', question_topics: [{ topic_id: 'path-topic' }], question_subtopics: [{ subtopic_id: 'path-subtopic' }] },
+  { id: 'pyq-n-path', platform_id: 'cerebellum', subject_id: 'pathology', is_pyq: true, is_neet_pg: true, exam_year: 2024, exam_shift: 'August', question_topics: [{ topic_id: 'path-topic' }], question_subtopics: [{ subtopic_id: 'path-subtopic' }] },
+  { id: 'pyq-i-anes', platform_id: 'cerebellum', subject_id: 'anesthesia', is_pyq: true, is_inicet: true, exam_year: 2024, exam_shift: 'May', question_topics: [{ topic_id: 'local-topic' }], question_subtopics: [{ subtopic_id: 'local-subtopic' }] },
+  { id: 'non-pyq', platform_id: 'cerebellum', subject_id: 'anesthesia', is_pyq: false, question_topics: [{ topic_id: 'regional-topic' }], question_subtopics: [{ subtopic_id: 'regional-subtopic' }] },
+]);
+const sameIds = (actual, expected) => [...actual].sort().join('|') === [...expected].sort().join('|');
+check('analytics.pyq_only', sameIds(filterAnalyticsPopulation(pyqTaxonomy, { pyq: 'yes' }), ['pyq-i-path', 'pyq-n-path', 'pyq-i-anes']));
+check('analytics.non_pyq_only', sameIds(filterAnalyticsPopulation(pyqTaxonomy, { pyq: 'no' }), ['non-pyq']));
+check('analytics.inicet_only', sameIds(filterAnalyticsPopulation(pyqTaxonomy, { exams: ['inicet'] }), ['pyq-i-path', 'pyq-i-anes']));
+check('analytics.neet_pg_only', sameIds(filterAnalyticsPopulation(pyqTaxonomy, { exams: ['neet_pg'] }), ['pyq-n-path']));
+check('analytics.multiple_exam_union', sameIds(filterAnalyticsPopulation(pyqTaxonomy, { exams: ['inicet', 'neet_pg'] }), ['pyq-i-path', 'pyq-n-path', 'pyq-i-anes']));
+const pathologyPopulation = resolveTaxonomyCascade(pyqTaxonomy, { subjects: ['pathology'] }).matchingQuestionIds;
+check('analytics.exam_plus_subject', sameIds(filterAnalyticsPopulation(pyqTaxonomy.filter((row) => pathologyPopulation.includes(row.id)), { exams: ['inicet'] }), ['pyq-i-path']));
+const localPopulation = resolveTaxonomyCascade(pyqTaxonomy, { topics: ['local-topic'], subtopics: ['local-subtopic'] }).matchingQuestionIds;
+check('analytics.exam_plus_topic_subtopic', sameIds(filterAnalyticsPopulation(pyqTaxonomy.filter((row) => localPopulation.includes(row.id)), { exams: ['inicet'] }), ['pyq-i-anes']));
+check('analytics.year_filter', sameIds(filterAnalyticsPopulation(pyqTaxonomy, { years: ['2024'] }), ['pyq-n-path', 'pyq-i-anes']));
+check('analytics.session_filter', sameIds(filterAnalyticsPopulation(pyqTaxonomy, { sessions: ['May'] }), ['pyq-i-path', 'pyq-i-anes']));
+const pyqCapabilities = analyticsMetadataCapabilities(pyqTaxonomy);
+check('analytics.exam_year_session_capabilities', sameIds(pyqCapabilities.exams, ['inicet', 'neet_pg']) && sameIds(pyqCapabilities.years, ['2024', '2025']) && sameIds(pyqCapabilities.sessions, ['August', 'May']));
+check('analytics.zero_population_has_no_metadata_leakage', analyticsMetadataCapabilities(pyqTaxonomy, []).exams.length === 0);
+const pyqState = deriveAnalyticsPopulations({ questionIds: ['pyq-i-path', 'pyq-i-anes'], attempts: [{ question_id: 'pyq-i-path', is_correct: false, answered_at: '2026-01-01' }], learning: [{ question_id: 'pyq-i-anes', bookmarked: true }] });
+check('analytics.exam_plus_incorrect', sameIds(pyqState.incorrect, ['pyq-i-path']));
+check('analytics.exam_plus_bookmark', sameIds(pyqState.bookmarked, ['pyq-i-anes']));
 
 const taxonomy = buildTaxonomyIndex([
   { id: 'qa-1', platform_id: 'cerebellum', subject_id: 'anatomy', system_id: 'anatomy-system', question_topics: [{ topic_id: 'anatomy-topic' }], question_subtopics: [{ subtopic_id: 'anatomy-subtopic' }] },
@@ -163,11 +187,18 @@ check('frontend.analytics_dependent_multiselect', appSource.includes('id="analyt
 check('frontend.analytics_simplified_default', appSource.includes('<h1>Overall performance</h1>') && appSource.includes('analytics-primary-metrics') && appSource.includes('Questions attempted') && appSource.includes('Currently incorrect') && appSource.includes('Average time'));
 check('frontend.analytics_secondary_and_more_details', appSource.includes('analytics-secondary') && appSource.includes('Marked for Review') && appSource.includes('Recall Due') && appSource.includes('analytics-more-details') && appSource.includes('Total attempts'));
 check('frontend.analytics_one_breakdown_at_a_time', appSource.includes('select-analytics-breakdown') && appSource.includes('id="analytics-breakdown-selected"') && !appSource.includes('load-analytics-breakdown'));
-check('frontend.analytics_breakdowns_lazy_and_paged', appSource.includes('slice(0, page * 100)') && appSource.includes('Show next'));
+check('frontend.analytics_breakdowns_lazy_and_paged', appSource.includes('slice(0, page * 50)') && appSource.includes('Show next'));
 check('frontend.analytics_row_actions_progressively_disclosed', appSource.includes('<details class="analytics-breakdown-row">') && appSource.includes('<div class="analytics-row-detail">'));
 check('frontend.analytics_redundancy_is_mapping_based', appSource.includes('analyticsTopicSubtopicRedundant({ questionIndex: state.meta.questionTaxonomy'));
 check('frontend.analytics_mobile_layout', stylesSource.includes('.analytics-primary-metrics { grid-template-columns: 1fr; }') && stylesSource.includes('.analytics-breakdown-row > summary { grid-template-columns: 1fr; }'));
-check('frontend.analytics_single_status_two_actions', appSource.includes('data-analytics-status') && appSource.includes('Review Questions') && appSource.includes('Start Test') && !appSource.includes("['All attempted', [...value.all]"));
+check('frontend.analytics_status_defines_population', appSource.includes('analyticsStatusPicker()') && appSource.includes('analyticsStatusIds(metadataIds, normalizedFilters.statuses') && !appSource.includes('data-analytics-status'));
+check('frontend.analytics_single_universal_action_pair', appSource.includes('Review Questions') && appSource.includes('Start Test') && /function analyticsPopulationControls\(population\)[\s\S]*analyticsActionButtons\(population\)/.test(appSource));
+check('frontend.analytics_pyq_non_pyq_architecture', appSource.includes('<option value="yes">PYQ only</option>') && appSource.includes('<option value="no">Non-PYQ</option>') && appSource.includes("is_inicet") && appSource.includes("is_neet_pg"));
+check('frontend.analytics_exam_year_session_contextual', appSource.includes("multiPicker('exams'") && appSource.includes("multiPicker('years'") && appSource.includes("multiPicker('sessions'") && appSource.includes("['exam', 'Exam']") && appSource.includes("['year_session', 'Year / session']"));
+check('frontend.analytics_srm_readiness_without_scheduler', appSource.includes('analytics-srm-ready') && appSource.includes('Available when SRM state exists') && !appSource.includes('START SRM'));
+check('frontend.analytics_context_aware_breakdowns', appSource.includes('analyticsGroups(level).length > 1') && appSource.includes('This selection has no useful multi-group breakdown'));
+check('frontend.analytics_no_default_breakdown_rows', appSource.includes('No rows are rendered by default.') && !/if \(!state\.analyticsBreakdown\) renderAnalyticsBreakdown/.test(appSource));
+check('frontend.analytics_lightweight_taxonomy_metadata', appSource.includes("select('id,platform_id,subject_id,system_id,is_pyq,is_inicet,is_neet_pg,exam_tags,exam_year,exam_shift,question_topics(topic_id),question_subtopics(subtopic_id)')"));
 check('frontend.mapping_based_taxonomy_cascade', appSource.includes('resolveTaxonomyCascade(state.meta.questionTaxonomy'));
 check('frontend.hidden_taxonomy_rows_not_displayed', /row\.hidden = !visible;[\s\S]*row\.style\.display = visible \? '' : 'none'/.test(appSource));
 check('frontend.hidden_attribute_overrides_check_row_display', /html\s+\[hidden\]\s*\{\s*display:\s*none\s*!important;?\s*\}/.test(stylesSource));
@@ -180,8 +211,8 @@ check('browser.taxonomy_dom_regression_installed', appSource.includes('runTaxono
   && domRegressionSource.includes('mixedUnion')
   && domRegressionSource.includes('invalidChildPruning')
   && domRegressionSource.includes('zeroCountLabelsHidden'));
-check('frontend.cascade_modules_cache_busted', appSource.includes("./validation.js?v=20260831-analytics-ux")
-  && readFileSync(resolve(root, 'index.html'), 'utf8').includes('./app/app.js?v=20260831-analytics-ux'));
+check('frontend.cascade_modules_cache_busted', appSource.includes("./validation.js?v=20260831-analytics-final")
+  && readFileSync(resolve(root, 'index.html'), 'utf8').includes('./app/app.js?v=20260831-analytics-final'));
 const importerTests = spawnSync('python3', ['-m', 'unittest', 'scripts.tests.test_qbank_import'], { cwd: root, encoding: 'utf8' });
 check('importer.fixture_and_scale_tests', importerTests.status === 0, (importerTests.stderr || importerTests.stdout || '').trim().split('\n').slice(-1)[0] || 'python unittest');
 check('importer.dry_run_default_is_read_only', /database_modified["']?:?\s*False/.test(importerSource) && /--confirm-import/.test(importerSource));

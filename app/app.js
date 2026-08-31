@@ -1,5 +1,5 @@
 import { db, initError, isMissingTable, requireUser, withAuthTimeout } from './supabase.js';
-import { analyticsTopicSubtopicRedundant, assertValidation, buildTaxonomyIndex, resolveTaxonomyCascade, validateGeneratedQuestionSet, validateQuestionStateBindings, validateResumeSnapshot } from './validation.js?v=20260831-analytics-ux';
+import { analyticsMetadataCapabilities, analyticsTopicSubtopicRedundant, assertValidation, buildTaxonomyIndex, filterAnalyticsPopulation, resolveTaxonomyCascade, validateGeneratedQuestionSet, validateQuestionStateBindings, validateResumeSnapshot } from './validation.js?v=20260831-analytics-final';
 import { runTaxonomyDomRegression } from './taxonomy-dom-regression.js?v=20260828-dom-regression';
 
 const root = document.querySelector('#app');
@@ -16,9 +16,7 @@ const state = {
   lastBuilder: null,
   reviewFilters: null,
   analyticsFilters: null,
-  analyticsStatus: 'all',
   analyticsBreakdown: null,
-  analyticsPopulations: new Map(),
   analyticsView: null,
   timer: null,
   filterTimer: null,
@@ -108,7 +106,7 @@ async function loadMeta(force = false) {
     optional(db.from('topics').select('id,name,platform_subject_id,system_id,parent_topic_id').order('sort_order').order('name')),
     optional(db.from('subtopics').select('id,name,topic_id').order('sort_order').order('name'), 'subtopics'),
     optional(db.from('tags').select('id,name').order('name')),
-    paged(() => db.from('questions').select('id,platform_id,subject_id,system_id,question_topics(topic_id),question_subtopics(subtopic_id)')),
+    paged(() => db.from('questions').select('id,platform_id,subject_id,system_id,is_pyq,is_inicet,is_neet_pg,exam_tags,exam_year,exam_shift,question_topics(topic_id),question_subtopics(subtopic_id)')),
   ]);
   if (subjects.error) throw subjects.error;
   if (platforms.error) throw platforms.error;
@@ -150,7 +148,8 @@ function readFilters(form) {
   return {
     platforms: readMulti(form, 'platforms'), subjects: readMulti(form, 'subjects'), systems: readMulti(form, 'systems'),
     topics: readMulti(form, 'topics'), subtopics: readMulti(form, 'subtopics'), statuses: readMulti(form, 'statuses'),
-    pyq: raw.pyq || '', year: raw.year || '', search: raw.search?.trim() || '', source: raw.source?.trim() || '',
+    exams: readMulti(form, 'exams'), years: readMulti(form, 'years'), sessions: readMulti(form, 'sessions'),
+    pyq: raw.pyq || '', srm: raw.srm || '', year: raw.year || '', search: raw.search?.trim() || '', source: raw.source?.trim() || '',
   };
 }
 
@@ -202,6 +201,7 @@ async function statusCandidateIds(filters) {
   const statuses = new Set(filters.statuses || []);
   if (!statuses.size || statuses.has('all') || statuses.has('my_content')) return null;
   const union = new Set(); const add = (values) => values.forEach((value) => union.add(value));
+  if (statuses.has('attempted')) add(unique(await paged(() => db.from('question_attempts').select('question_id').eq('user_id', state.user.id))));
   if (statuses.has('bookmarked')) add(unique(await paged(() => db.from('user_question_state').select('question_id').eq('user_id', state.user.id).eq('bookmarked', true))));
   const needsLearning = ['marked', 'incorrect', 'correct', 'recall_due', 'difficult', 'confident_wrong', 'slow'].some((value) => statuses.has(value));
   if (needsLearning) {
@@ -231,6 +231,20 @@ async function candidateIds(filters) {
   if (filters.subtopics?.length) {
     const result = await optional(db.from('question_subtopics').select('question_id').in('subtopic_id', filters.subtopics), 'subtopics');
     candidate = intersect(candidate, new Set(unique(result.data)));
+  }
+  if (filters.exams?.length) {
+    const examIds = new Set();
+    for (const exam of filters.exams) {
+      const rows = await paged(() => {
+        let query = db.from('questions').select('id');
+        if (exam === 'inicet') query = query.eq('is_inicet', true);
+        else if (exam === 'neet_pg') query = query.eq('is_neet_pg', true);
+        else query = query.contains('exam_tags', [exam]);
+        return query;
+      });
+      rows.forEach((row) => examIds.add(row.id));
+    }
+    candidate = intersect(candidate, examIds);
   }
   const status = await statusCandidateIds(filters);
   if (status) candidate = intersect(candidate, status);
@@ -291,6 +305,9 @@ function applyDirectFilters(query, filters) {
   if (filters.subjects?.length) query = query.in('subject_id', filters.subjects);
   if (filters.systems?.length) query = query.in('system_id', filters.systems);
   if (filters.pyq === 'yes') query = query.eq('is_pyq', true);
+  if (filters.pyq === 'no') query = query.eq('is_pyq', false);
+  if (filters.years?.length) query = query.in('exam_year', filters.years.map(Number));
+  if (filters.sessions?.length) query = query.in('exam_shift', filters.sessions);
   if (filters.year) query = query.eq('exam_year', Number(filters.year));
   if (filters.search) query = query.ilike('question_text', `%${filters.search}%`);
   if (filters.source) query = query.ilike('source_reference', `%${filters.source}%`);
@@ -820,6 +837,16 @@ async function review() {
 }
 
 const ANALYTICS_STATUSES = [['all', 'All'], ['attempted', 'Attempted'], ['incorrect', 'Incorrect'], ['correct', 'Correct'], ['bookmarked', 'Bookmarked'], ['marked', 'Marked for Review'], ['recall_due', 'Recall Due']];
+const ANALYTICS_EXAM_LABELS = { inicet: 'INI-CET', neet_pg: 'NEET PG' };
+
+function analyticsStatusPicker() {
+  return `<fieldset class="field wide status-field"><legend>Question status</legend><div class="chip-checks">${ANALYTICS_STATUSES.map(([value, label]) => `<label><input type="checkbox" name="statuses" value="${value}" ${value === 'all' ? 'checked' : ''} /> <span>${e(label)}</span></label>`).join('')}</div></fieldset>`;
+}
+
+function analyticsMetadataFields(capabilities) {
+  const examItems = capabilities.exams.map((id) => ({ id, name: ANALYTICS_EXAM_LABELS[id] || id.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()) }));
+  return `<div class="field"><label>PYQ</label><select name="pyq"><option value="">All questions</option><option value="yes">PYQ only</option><option value="no">Non-PYQ</option></select></div>${examItems.length ? multiPicker('exams', 'Exams', examItems) : ''}${capabilities.years.length ? multiPicker('years', 'Exam years', capabilities.years.map((value) => ({ id: value, name: value }))) : ''}${capabilities.sessions.length ? multiPicker('sessions', 'Exam sessions', capabilities.sessions.map((value) => ({ id: value, name: value }))) : ''}<div class="field analytics-srm-ready"><label>SRM</label><select name="srm" disabled><option value="">Available when SRM state exists</option></select></div>`;
+}
 
 async function fetchAnalyticsModel(questionIds) {
   const attempts = []; const learning = [];
@@ -858,26 +885,27 @@ function analyticsMetric(questionIds, model) {
   const timed = attempts.filter((row) => row.time_spent_seconds != null);
   const slow = ids.filter((id) => Number(model.learning.get(id)?.last_time_seconds) > TARGET_SECONDS);
   const repeatedIncorrect = ids.filter((id) => (model.attemptsByQuestion.get(id) || []).filter((row) => row.is_correct === false).length >= 2);
-  return { ids, attempted, correct, incorrect, bookmarked, marked, recallDue, attempts: attempts.length, latestAccuracy: pct(correct.length, attempted.length), attemptAccuracy: pct(attempts.filter((row) => row.is_correct).length, attempts.length), averageTime: timed.length ? Math.round(timed.reduce((sum, row) => sum + Number(row.time_spent_seconds || 0), 0) / timed.length) : null, slow, repeatedIncorrect };
+  const mapping = new Map(state.meta.questionTaxonomy.map((question) => [String(question.id), question]));
+  const pyq = ids.filter((id) => mapping.get(id)?.is_pyq === true);
+  return { ids, attempted, correct, incorrect, bookmarked, marked, recallDue, attempts: attempts.length, latestAccuracy: pct(correct.length, attempted.length), attemptAccuracy: pct(attempts.filter((row) => row.is_correct).length, attempts.length), averageTime: timed.length ? Math.round(timed.reduce((sum, row) => sum + Number(row.time_spent_seconds || 0), 0) / timed.length) : null, slow, repeatedIncorrect, pyq };
 }
 
-function analyticsStatusIds(questionIds, status, model) {
+function analyticsStatusIds(questionIds, statuses, model) {
   const metric = analyticsMetric(questionIds, model);
-  return ({ all: metric.ids, attempted: metric.attempted, incorrect: metric.incorrect, correct: metric.correct, bookmarked: metric.bookmarked, marked: metric.marked, recall_due: metric.recallDue })[status] || metric.ids;
+  const selected = new Set(statuses || []); if (!selected.size || selected.has('all')) return metric.ids;
+  const populations = { attempted: metric.attempted, incorrect: metric.incorrect, correct: metric.correct, bookmarked: metric.bookmarked, marked: metric.marked, recall_due: metric.recallDue };
+  return metric.ids.filter((id) => [...selected].some((status) => (populations[status] || []).includes(id)));
 }
 
-function analyticsActionButtons(population, status) {
-  const ids = analyticsStatusIds(population.questionIds, status, state.analyticsView.model);
-  if (!ids.length) return '<span class="subtle">No questions match this status.</span>';
-  const label = ANALYTICS_STATUSES.find(([value]) => value === status)?.[1] || 'All';
-  const token = registerActionSet({ mode: 'test', preset: 'analytics', title: `${population.title} · ${label}`, filters: { ...population.filters, statuses: ['all'] }, questionIds: ids, origin: '#/analytics' });
+function analyticsActionButtons(population) {
+  const ids = [...new Set(population.questionIds.map(String))];
+  if (!ids.length) return '<span class="subtle">No questions match this selection.</span>';
+  const token = registerActionSet({ mode: 'test', preset: 'analytics', title: population.title, filters: { ...population.filters, statuses: ['all'] }, questionIds: ids, origin: '#/analytics' });
   return `<button class="button secondary compact" data-action="open-action-set" data-set="${e(token)}">Review Questions</button><button class="button compact" data-action="preview-action-set" data-set="${e(token)}">Start Test</button>`;
 }
 
-function analyticsPopulationControls(population, status = state.analyticsStatus) {
-  const token = `analytics-${Date.now()}-${state.analyticsPopulations.size + 1}`;
-  state.analyticsPopulations.set(token, population);
-  return `<div class="analytics-population-controls"><label>Status <select data-analytics-status data-population="${e(token)}">${ANALYTICS_STATUSES.map(([value, label]) => `<option value="${value}" ${value === status ? 'selected' : ''}>${e(label)}</option>`).join('')}</select></label><div class="row" data-analytics-actions>${analyticsActionButtons(population, status)}</div></div>`;
+function analyticsPopulationControls(population) {
+  return `<div class="analytics-population-controls"><div class="row">${analyticsActionButtons(population)}</div></div>`;
 }
 
 function analyticsGroups(level) {
@@ -886,9 +914,19 @@ function analyticsGroups(level) {
     platform: ['platform_id', state.meta.platforms, false], subject: ['subject_id', state.meta.subjects, false],
     topic: ['topic_ids', state.meta.topics, true], subtopic: ['subtopic_ids', state.meta.subtopics, true],
   }[level];
+  const groups = new Map(); const mapping = new Map(state.meta.questionTaxonomy.map((question) => [question.id, question]));
+  if (level === 'exam') {
+    view.questionIds.forEach((questionId) => (mapping.get(String(questionId))?.exams || []).forEach((key) => { if (!groups.has(key)) groups.set(key, []); groups.get(key).push(String(questionId)); }));
+    const result = [...groups].map(([id, questionIds]) => ({ id, name: ANALYTICS_EXAM_LABELS[id] || id.replace(/_/g, ' '), questionIds, metric: analyticsMetric(questionIds, view.model) })).sort((a, b) => a.name.localeCompare(b.name));
+    view.groups.set(level, result); return result;
+  }
+  if (level === 'year_session') {
+    view.questionIds.forEach((questionId) => { const row = mapping.get(String(questionId)); if (!row?.exam_year && !row?.exam_session) return; const key = `${row.exam_year || 'Unknown year'}${row.exam_session ? ` · ${row.exam_session}` : ''}`; if (!groups.has(key)) groups.set(key, []); groups.get(key).push(String(questionId)); });
+    const result = [...groups].map(([id, questionIds]) => ({ id, name: id, questionIds, metric: analyticsMetric(questionIds, view.model) })).sort((a, b) => b.name.localeCompare(a.name));
+    view.groups.set(level, result); return result;
+  }
   if (!definition) return [];
-  const [field, items, nested] = definition; const names = byId(items); const groups = new Map();
-  const mapping = new Map(state.meta.questionTaxonomy.map((question) => [question.id, question]));
+  const [field, items, nested] = definition; const names = byId(items);
   view.questionIds.forEach((questionId) => {
     const raw = mapping.get(String(questionId))?.[field]; const keys = nested ? raw || [] : [raw];
     keys.filter(Boolean).forEach((key) => { if (!groups.has(key)) groups.set(key, []); groups.get(key).push(String(questionId)); });
@@ -899,27 +937,42 @@ function analyticsGroups(level) {
 
 function renderAnalyticsBreakdown(level, page = 1) {
   const holder = document.querySelector('#analytics-breakdown-selected'); if (!holder || !state.analyticsView) return;
-  const groups = analyticsGroups(level); const visible = groups.slice(0, page * 100);
+  const groups = analyticsGroups(level); const visible = groups.slice(0, page * 50);
   holder.innerHTML = visible.length ? visible.map((group) => {
     const metric = group.metric; const weak = metric.attempted.length >= 2 && metric.correct.length / metric.attempted.length < .6;
-    return `<details class="analytics-breakdown-row"><summary><span><b>${e(group.name)}</b>${weak ? '<span class="pill weak-pill">Weak</span>' : ''}</span><span class="breakdown-performance"><b>${metric.latestAccuracy}</b><small>${metric.attempted.length} / ${metric.ids.length} attempted · ${metric.incorrect.length} incorrect · ${metric.averageTime == null ? '—' : `${metric.averageTime}s`} avg</small></span></summary><div class="analytics-row-detail"><div class="compact-stats"><span>Bookmarked <b>${metric.bookmarked.length}</b></span><span>Total attempts <b>${metric.attempts}</b></span><span>Repeatedly incorrect <b>${metric.repeatedIncorrect.length}</b></span><span>Slow &gt;50s <b>${metric.slow.length}</b></span></div>${analyticsPopulationControls({ title: group.name, questionIds: group.questionIds, filters: state.analyticsView.filters })}</div></details>`;
-  }).join('') + (visible.length < groups.length ? `<button class="button secondary" data-action="analytics-more" data-level="${e(level)}" data-page="${page + 1}">Show next ${Math.min(100, groups.length - visible.length)}</button>` : '') : '<div class="empty">No mapped entries in this population.</div>';
+    return `<details class="analytics-breakdown-row"><summary><span><b>${e(group.name)}</b>${weak ? '<span class="pill weak-pill">Weak</span>' : ''}</span><span class="breakdown-performance"><b>${metric.latestAccuracy}</b><small>${metric.attempted.length} / ${metric.ids.length} attempted · ${metric.incorrect.length} incorrect · ${metric.averageTime == null ? '—' : `${metric.averageTime}s`} avg</small></span></summary><div class="analytics-row-detail"><div class="compact-stats"><span>Total attempts <b>${metric.attempts}</b></span><span>Bookmarked <b>${metric.bookmarked.length}</b></span><span>Marked <b>${metric.marked.length}</b></span><span>Repeatedly incorrect <b>${metric.repeatedIncorrect.length}</b></span>${metric.pyq.length ? `<span>PYQ <b>${metric.pyq.length}</b></span>` : ''}</div>${analyticsPopulationControls({ title: group.name, questionIds: group.questionIds, filters: state.analyticsView.filters })}</div></details>`;
+  }).join('') + (visible.length < groups.length ? `<button class="button secondary" data-action="analytics-more" data-level="${e(level)}" data-page="${page + 1}">Show next ${Math.min(50, groups.length - visible.length)}</button>` : '') : '<div class="empty">No mapped entries in this population.</div>';
 }
 
 async function analytics() {
-  loading('Calculating selected analytics…'); state.analyticsPopulations.clear();
-  const filters = state.analyticsFilters || { platforms: [], subjects: [], systems: [], topics: [], subtopics: [] };
+  loading('Calculating selected analytics…');
+  const filters = state.analyticsFilters || { platforms: [], subjects: [], systems: [], topics: [], subtopics: [], statuses: ['all'], exams: [], years: [], sessions: [], pyq: '', srm: '' };
   const cascade = resolveTaxonomyCascade(state.meta.questionTaxonomy, filters);
-  const normalizedFilters = { ...filters, ...cascade.selected, statuses: ['all'], pyq: '', year: '', search: '', source: '' };
-  const questionIds = cascade.matchingQuestionIds; const model = await fetchAnalyticsModel(questionIds); const metric = analyticsMetric(questionIds, model);
+  const capabilities = analyticsMetadataCapabilities(state.meta.questionTaxonomy, cascade.matchingQuestionIds);
+  const normalizedFilters = {
+    ...filters, ...cascade.selected,
+    statuses: filters.statuses?.length ? filters.statuses : ['all'],
+    exams: (filters.exams || []).filter((value) => capabilities.exams.includes(String(value))),
+    years: (filters.years || []).filter((value) => capabilities.years.includes(String(value))),
+    sessions: (filters.sessions || []).filter((value) => capabilities.sessions.includes(String(value))),
+    year: '', search: '', source: '',
+  };
+  const taxonomyIds = new Set(cascade.matchingQuestionIds);
+  const metadataIds = filterAnalyticsPopulation(state.meta.questionTaxonomy.filter((question) => taxonomyIds.has(question.id)), normalizedFilters);
+  const model = await fetchAnalyticsModel(metadataIds);
+  const questionIds = analyticsStatusIds(metadataIds, normalizedFilters.statuses, model);
+  const metric = analyticsMetric(questionIds, model);
   const topicSubtopicRedundant = analyticsTopicSubtopicRedundant({ questionIndex: state.meta.questionTaxonomy, topics: state.meta.topics, subtopics: state.meta.subtopics, questionIds });
-  state.analyticsView = { questionIds, model, filters: normalizedFilters, groups: new Map(), topicSubtopicRedundant };
-  if (state.analyticsBreakdown === 'subtopic' && topicSubtopicRedundant) state.analyticsBreakdown = 'topic';
+  state.analyticsView = { questionIds, model, filters: normalizedFilters, groups: new Map(), topicSubtopicRedundant, capabilities };
   const combined = { title: 'Selected analytics population', questionIds, filters: normalizedFilters };
-  const breakdowns = [['platform', 'Platform'], ['subject', 'Subject'], ['topic', topicSubtopicRedundant ? 'Topic / Subtopic' : 'Topic'], ...(!topicSubtopicRedundant ? [['subtopic', 'Subtopic']] : [])];
-  layout(`<div class="page-heading"><span class="eyebrow">ANALYTICS</span><h1>Overall performance</h1><p>Start broad, then choose exactly what you want to analyse.</p></div><section class="card builder-card"><form id="analytics-filter-form" class="stack"><div class="filters">${multiPicker('platforms', 'Platforms', state.meta.platforms)}${multiPicker('subjects', 'Subjects', state.meta.subjects)}${multiPicker('systems', 'Systems (optional)', state.meta.systems)}${multiPicker('topics', 'Topics', state.meta.topics)}${multiPicker('subtopics', 'Subtopics', state.meta.subtopics)}</div><div class="row"><button class="button">Apply analytics filters</button><button type="button" class="button ghost" data-action="clear-analytics-filters">Clear</button></div></form></section><section class="card analytics-summary"><div class="section-heading"><div><span class="eyebrow">SELECTED POPULATION</span><h2>${metric.ids.length} questions available</h2><p class="subtle">Primary accuracy uses the newest answer for each attempted question.</p></div>${analyticsPopulationControls(combined)}</div><div class="analytics-primary-metrics"><div><span>Overall accuracy</span><b>${metric.latestAccuracy}</b><small>latest answers</small></div><div><span>Questions attempted</span><b>${metric.attempted.length} / ${metric.ids.length}</b><small>unique questions</small></div><div><span>Currently incorrect</span><b>${metric.incorrect.length}</b><small>latest answer</small></div><div><span>Average time</span><b>${metric.averageTime == null ? '—' : `${metric.averageTime}s`}</b><small>across attempts</small></div></div><div class="analytics-secondary"><span>Bookmarked <b>${metric.bookmarked.length}</b></span><span>Marked for Review <b>${metric.marked.length}</b></span><span>Recall Due <b>${metric.recallDue.length}</b></span></div><details class="analytics-more-details"><summary>More details</summary><div class="compact-stats"><span>Total attempts <b>${metric.attempts}</b></span><span>Unique correct <b>${metric.correct.length}</b></span><span>Attempt accuracy <b>${metric.attemptAccuracy}</b></span><span>Slow &gt;50s <b>${metric.slow.length}</b></span><span>Repeatedly incorrect <b>${metric.repeatedIncorrect.length}</b></span></div><p class="analytics-rule">Weak area = at least 2 unique attempted questions and latest-answer accuracy below 60%. Repeatedly incorrect = at least 2 incorrect attempts on the same question.</p></details></section><section class="card detailed-analytics"><div class="section-heading"><div><span class="eyebrow">DETAILED ANALYTICS</span><h2>Choose one breakdown</h2></div>${topicSubtopicRedundant ? '<span class="subtle">Topic and Subtopic are currently equivalent, so one combined view is shown.</span>' : ''}</div><div class="breakdown-selector">${breakdowns.map(([level, label]) => `<button class="button ${state.analyticsBreakdown === level ? '' : 'secondary'}" data-action="select-analytics-breakdown" data-level="${level}">By ${e(label)}</button>`).join('')}</div><div id="analytics-breakdown-selected" class="analytics-breakdown-content">${state.analyticsBreakdown ? '' : '<div class="empty">Choose a breakdown to see detailed performance.</div>'}</div></section>`);
+  const candidates = [['platform', 'Platform'], ['subject', 'Subject'], ['topic', topicSubtopicRedundant ? 'Topic / Subtopic' : 'Topic'], ...(!topicSubtopicRedundant ? [['subtopic', 'Subtopic']] : []), ['exam', 'Exam'], ['year_session', 'Year / session']];
+  const breakdowns = candidates.filter(([level]) => analyticsGroups(level).length > 1);
+  if (!breakdowns.some(([level]) => level === state.analyticsBreakdown)) state.analyticsBreakdown = null;
+  layout(`<div class="page-heading"><span class="eyebrow">ANALYTICS</span><h1>Overall performance</h1><p>First select the question population. Analytics then summarizes exactly that selection.</p></div><section class="card builder-card"><form id="analytics-filter-form" class="stack"><div class="filters analytics-query-filters">${multiPicker('platforms', 'Platforms', state.meta.platforms)}${multiPicker('subjects', 'Subjects', state.meta.subjects)}${multiPicker('systems', 'Systems (optional)', state.meta.systems)}${multiPicker('topics', 'Topics', state.meta.topics)}${multiPicker('subtopics', 'Subtopics', state.meta.subtopics)}${analyticsStatusPicker()}${analyticsMetadataFields(capabilities)}</div><div class="builder-footer"><div><b>${metric.ids.length.toLocaleString()} questions selected</b><div class="subtle">No fallback questions are substituted when a combination has zero matches.</div></div><div class="row"><button class="button">Apply analytics filters</button><button type="button" class="button ghost" data-action="clear-analytics-filters">Clear</button></div></div></form></section><section class="card analytics-summary"><div class="section-heading"><div><span class="eyebrow">SELECTED POPULATION</span><h2>${metric.ids.length} questions available</h2><p class="subtle">Primary accuracy uses the newest answer for each attempted question.</p></div>${analyticsPopulationControls(combined)}</div><div class="analytics-primary-metrics"><div><span>Mastery accuracy</span><b>${metric.latestAccuracy}</b><small>latest answers</small></div><div><span>Questions attempted</span><b>${metric.attempted.length} / ${metric.ids.length}</b><small>unique questions</small></div><div><span>Currently incorrect</span><b>${metric.incorrect.length}</b><small>latest answer</small></div><div><span>Average time</span><b>${metric.averageTime == null ? '—' : `${metric.averageTime}s`}</b><small>across attempts</small></div></div><div class="analytics-secondary"><span>Bookmarked <b>${metric.bookmarked.length}</b></span><span>Marked for Review <b>${metric.marked.length}</b></span><span>Recall Due <b>${metric.recallDue.length}</b></span>${metric.pyq.length ? `<span>PYQ <b>${metric.pyq.length}</b></span>` : ''}</div><details class="analytics-more-details"><summary>More details</summary><div class="compact-stats"><span>Total attempts <b>${metric.attempts}</b></span><span>Unique correct <b>${metric.correct.length}</b></span><span>Attempt accuracy <b>${metric.attemptAccuracy}</b></span><span>Slow &gt;50s <b>${metric.slow.length}</b></span><span>Repeatedly incorrect <b>${metric.repeatedIncorrect.length}</b></span></div><p class="analytics-rule">Weak area = at least 2 unique attempted questions and latest-answer accuracy below 60%. Repeatedly incorrect = at least 2 incorrect attempts on the same question.</p></details></section><section class="card detailed-analytics"><div class="section-heading"><div><span class="eyebrow">BREAK DOWN THIS SELECTION BY</span><h2>Optional detailed analysis</h2></div>${topicSubtopicRedundant && analyticsGroups('topic').length > 1 ? '<span class="subtle">Topic and Subtopic are equivalent in this selection, so one combined view is shown.</span>' : ''}</div>${breakdowns.length ? `<div class="breakdown-selector">${breakdowns.map(([level, label]) => `<button class="button ${state.analyticsBreakdown === level ? '' : 'secondary'}" data-action="select-analytics-breakdown" data-level="${level}">By ${e(label)}</button>`).join('')}</div><div id="analytics-breakdown-selected" class="analytics-breakdown-content">${state.analyticsBreakdown ? '' : '<div class="empty">Choose one useful breakdown. No rows are rendered by default.</div>'}</div>` : '<div id="analytics-breakdown-selected" class="empty">This selection has no useful multi-group breakdown.</div>'}</section>`);
   const form = document.querySelector('#analytics-filter-form');
-  for (const level of ['platforms', 'subjects', 'systems', 'topics', 'subtopics']) (normalizedFilters[level] || []).forEach((id) => { const input = form.querySelector(`input[name="${level}"][value="${CSS.escape(String(id))}"]`); if (input) input.checked = true; });
+  form.querySelectorAll('input[name="statuses"]').forEach((input) => { input.checked = false; });
+  for (const level of ['platforms', 'subjects', 'systems', 'topics', 'subtopics', 'statuses', 'exams', 'years', 'sessions']) (normalizedFilters[level] || []).forEach((id) => { const input = form.querySelector(`input[name="${level}"][value="${CSS.escape(String(id))}"]`); if (input) input.checked = true; });
+  form.elements.pyq.value = normalizedFilters.pyq || '';
   setupDependentFilters(form);
   form.onsubmit = (event) => { event.preventDefault(); state.analyticsFilters = readFilters(form); analytics(); };
   if (state.analyticsBreakdown) renderAnalyticsBreakdown(state.analyticsBreakdown, 1);
@@ -1039,21 +1092,13 @@ document.addEventListener('click', async (event) => {
     if (action === 'open-action-set') await openQuestionSet(definition); else await createSession(definition);
   }
   if (action === 'clear-review-filters') { state.reviewFilters = null; await review(); }
-  if (action === 'clear-analytics-filters') { state.analyticsFilters = null; state.analyticsStatus = 'all'; await analytics(); }
+  if (action === 'clear-analytics-filters') { state.analyticsFilters = null; state.analyticsBreakdown = null; await analytics(); }
   if (action === 'select-analytics-breakdown') { state.analyticsBreakdown = target.dataset.level; document.querySelectorAll('[data-action="select-analytics-breakdown"]').forEach((button) => { button.classList.toggle('secondary', button !== target); }); renderAnalyticsBreakdown(state.analyticsBreakdown, 1); }
   if (action === 'analytics-more') renderAnalyticsBreakdown(target.dataset.level, Number(target.dataset.page) || 1);
   if (action === 'review-result') { state.active.index = 0; state.active.completedReview = true; state.active.questionStartedAt = Date.now(); renderActive(); }
   if (action === 'review-mistakes') { const questions = state.active.questions.filter((q) => state.active.answers[q.id]?.selected_option && selectedKey(state.active.answers[q.id]) !== correctKey(q)); if (!questions.length) return toast('No incorrect questions in this session.'); state.active = { ...state.active, questions, index: 0, completedReview: true, questionStartedAt: Date.now() }; renderActive(); }
   if (action === 'retake') await createSession({ mode: state.active.kind, preset: state.active.preset || 'retake', title: `${state.active.title || 'Test'} retake`, filters: state.active.filters || {}, questionIds: state.active.questions.map((question) => question.id), requested: state.active.questions.length, autoSubmit: state.active.kind === 'test', origin: '#/history' });
   if (action === 'my-bank-tab') showMyBankTab(target.dataset.tab);
-});
-
-document.addEventListener('change', (event) => {
-  const select = event.target.closest('[data-analytics-status]'); if (!select) return;
-  const population = state.analyticsPopulations.get(select.dataset.population); if (!population || !state.analyticsView) return;
-  state.analyticsStatus = select.value;
-  const actions = select.closest('.analytics-population-controls')?.querySelector('[data-analytics-actions]');
-  if (actions) actions.innerHTML = analyticsActionButtons(population, select.value);
 });
 
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape') document.querySelector('#modal')?.remove(); });
