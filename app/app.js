@@ -1,5 +1,5 @@
 import { db, initError, isMissingTable, requireUser, withAuthTimeout } from './supabase.js';
-import { assertValidation, buildTaxonomyIndex, resolveTaxonomyCascade, validateGeneratedQuestionSet, validateQuestionStateBindings, validateResumeSnapshot } from './validation.js?v=20260828-learning-flow';
+import { assertValidation, buildTaxonomyIndex, resolveTaxonomyCascade, validateGeneratedQuestionSet, validateQuestionStateBindings, validateResumeSnapshot } from './validation.js?v=20260831-analytics';
 import { runTaxonomyDomRegression } from './taxonomy-dom-regression.js?v=20260828-dom-regression';
 
 const root = document.querySelector('#app');
@@ -15,6 +15,10 @@ const state = {
   actionSets: new Map(),
   lastBuilder: null,
   reviewFilters: null,
+  analyticsFilters: null,
+  analyticsStatus: 'all',
+  analyticsPopulations: new Map(),
+  analyticsView: null,
   timer: null,
   filterTimer: null,
   features: { learning: true, subtopics: true, sessions: true, personal: true },
@@ -814,24 +818,106 @@ async function review() {
   form.onsubmit = (event) => { event.preventDefault(); const filters = readFilters(form); state.reviewFilters = filters; review(); };
 }
 
+const ANALYTICS_STATUSES = [['all', 'All'], ['attempted', 'Attempted'], ['incorrect', 'Incorrect'], ['correct', 'Correct'], ['bookmarked', 'Bookmarked'], ['marked', 'Marked for Review'], ['recall_due', 'Recall Due']];
+
+async function fetchAnalyticsModel(questionIds) {
+  const attempts = []; const learning = [];
+  const allowed = new Set(questionIds.map(String));
+  if (questionIds.length > 1000) {
+    let attemptRows;
+    try { attemptRows = await paged(() => db.from('question_attempts').select('question_id,is_correct,answered_at,time_spent_seconds,confidence').eq('user_id', state.user.id).order('answered_at', { ascending: false })); }
+    catch { attemptRows = await paged(() => db.from('question_attempts').select('question_id,is_correct,answered_at').eq('user_id', state.user.id).order('answered_at', { ascending: false })); }
+    attempts.push(...attemptRows.filter((row) => allowed.has(String(row.question_id))));
+    const stateRows = await optional(paged(() => db.from('user_question_state').select('question_id,bookmarked,marked_for_review,revision,recall_due_at,last_time_seconds,last_confidence').eq('user_id', state.user.id)), 'learning');
+    learning.push(...(stateRows.data || stateRows || []).filter((row) => allowed.has(String(row.question_id))));
+  }
+  for (let index = 0; index < questionIds.length && questionIds.length <= 1000; index += 200) {
+    const chunk = questionIds.slice(index, index + 200);
+    let attemptRows;
+    try { attemptRows = await paged(() => db.from('question_attempts').select('question_id,is_correct,answered_at,time_spent_seconds,confidence').eq('user_id', state.user.id).in('question_id', chunk).order('answered_at', { ascending: false })); }
+    catch { attemptRows = await paged(() => db.from('question_attempts').select('question_id,is_correct,answered_at').eq('user_id', state.user.id).in('question_id', chunk).order('answered_at', { ascending: false })); }
+    attempts.push(...attemptRows);
+    const stateRows = await optional(db.from('user_question_state').select('question_id,bookmarked,marked_for_review,revision,recall_due_at,last_time_seconds,last_confidence').eq('user_id', state.user.id).in('question_id', chunk), 'learning');
+    learning.push(...(stateRows.data || []));
+  }
+  attempts.sort((a, b) => new Date(b.answered_at || 0) - new Date(a.answered_at || 0));
+  const latest = new Map(); const attemptsByQuestion = new Map();
+  attempts.forEach((row) => { const id = String(row.question_id); if (!latest.has(id)) latest.set(id, row); if (!attemptsByQuestion.has(id)) attemptsByQuestion.set(id, []); attemptsByQuestion.get(id).push(row); });
+  return { attempts, latest, attemptsByQuestion, learning: new Map(learning.map((row) => [String(row.question_id), row])) };
+}
+
+function analyticsMetric(questionIds, model) {
+  const ids = [...new Set(questionIds.map(String))]; const attempts = ids.flatMap((id) => model.attemptsByQuestion.get(id) || []);
+  const attempted = ids.filter((id) => model.latest.has(id));
+  const correct = attempted.filter((id) => model.latest.get(id)?.is_correct === true);
+  const incorrect = attempted.filter((id) => model.latest.get(id)?.is_correct === false);
+  const bookmarked = ids.filter((id) => model.learning.get(id)?.bookmarked === true);
+  const marked = ids.filter((id) => model.learning.get(id)?.marked_for_review === true || model.learning.get(id)?.revision === true);
+  const now = Date.now(); const recallDue = ids.filter((id) => { const due = model.learning.get(id)?.recall_due_at; return due && new Date(due).getTime() <= now; });
+  const timed = attempts.filter((row) => row.time_spent_seconds != null);
+  const slow = ids.filter((id) => Number(model.learning.get(id)?.last_time_seconds) > TARGET_SECONDS);
+  const repeatedIncorrect = ids.filter((id) => (model.attemptsByQuestion.get(id) || []).filter((row) => row.is_correct === false).length >= 2);
+  return { ids, attempted, correct, incorrect, bookmarked, marked, recallDue, attempts: attempts.length, latestAccuracy: pct(correct.length, attempted.length), attemptAccuracy: pct(attempts.filter((row) => row.is_correct).length, attempts.length), averageTime: timed.length ? Math.round(timed.reduce((sum, row) => sum + Number(row.time_spent_seconds || 0), 0) / timed.length) : null, slow, repeatedIncorrect };
+}
+
+function analyticsStatusIds(questionIds, status, model) {
+  const metric = analyticsMetric(questionIds, model);
+  return ({ all: metric.ids, attempted: metric.attempted, incorrect: metric.incorrect, correct: metric.correct, bookmarked: metric.bookmarked, marked: metric.marked, recall_due: metric.recallDue })[status] || metric.ids;
+}
+
+function analyticsActionButtons(population, status) {
+  const ids = analyticsStatusIds(population.questionIds, status, state.analyticsView.model);
+  if (!ids.length) return '<span class="subtle">No questions match this status.</span>';
+  const label = ANALYTICS_STATUSES.find(([value]) => value === status)?.[1] || 'All';
+  const token = registerActionSet({ mode: 'test', preset: 'analytics', title: `${population.title} · ${label}`, filters: { ...population.filters, statuses: ['all'] }, questionIds: ids, origin: '#/analytics' });
+  return `<button class="button secondary compact" data-action="open-action-set" data-set="${e(token)}">Review Questions</button><button class="button compact" data-action="preview-action-set" data-set="${e(token)}">Start Test</button>`;
+}
+
+function analyticsPopulationControls(population, status = state.analyticsStatus) {
+  const token = `analytics-${Date.now()}-${state.analyticsPopulations.size + 1}`;
+  state.analyticsPopulations.set(token, population);
+  return `<div class="analytics-population-controls"><label>Status <select data-analytics-status data-population="${e(token)}">${ANALYTICS_STATUSES.map(([value, label]) => `<option value="${value}" ${value === status ? 'selected' : ''}>${e(label)}</option>`).join('')}</select></label><div class="row" data-analytics-actions>${analyticsActionButtons(population, status)}</div></div>`;
+}
+
+function analyticsGroups(level) {
+  const view = state.analyticsView; if (view.groups.has(level)) return view.groups.get(level);
+  const definition = {
+    platform: ['platform_id', state.meta.platforms, false], subject: ['subject_id', state.meta.subjects, false],
+    topic: ['topic_ids', state.meta.topics, true], subtopic: ['subtopic_ids', state.meta.subtopics, true],
+  }[level];
+  if (!definition) return [];
+  const [field, items, nested] = definition; const names = byId(items); const groups = new Map();
+  const mapping = new Map(state.meta.questionTaxonomy.map((question) => [question.id, question]));
+  view.questionIds.forEach((questionId) => {
+    const raw = mapping.get(String(questionId))?.[field]; const keys = nested ? raw || [] : [raw];
+    keys.filter(Boolean).forEach((key) => { if (!groups.has(key)) groups.set(key, []); groups.get(key).push(String(questionId)); });
+  });
+  const result = [...groups].map(([id, questionIds]) => ({ id, name: names.get(String(id))?.name || 'Unclassified', questionIds, metric: analyticsMetric(questionIds, view.model) })).sort((a, b) => a.name.localeCompare(b.name));
+  view.groups.set(level, result); return result;
+}
+
+function renderAnalyticsBreakdown(level, page = 1) {
+  const holder = document.querySelector(`#analytics-breakdown-${level}`); if (!holder || !state.analyticsView) return;
+  const groups = analyticsGroups(level); const visible = groups.slice(0, page * 100);
+  holder.innerHTML = visible.length ? visible.map((group) => {
+    const metric = group.metric; const weak = metric.attempted.length >= 2 && metric.correct.length / metric.attempted.length < .6;
+    return `<article class="analytics-breakdown-row"><div><b>${e(group.name)}</b>${weak ? '<span class="pill weak-pill">Weak</span>' : ''}<small>${metric.ids.length} questions · ${metric.attempted.length} attempted · ${metric.attempts} attempts · ${metric.latestAccuracy} latest accuracy · ${metric.incorrect.length} incorrect · ${metric.bookmarked.length} bookmarked · ${metric.averageTime == null ? '—' : `${metric.averageTime}s`} avg</small></div>${analyticsPopulationControls({ title: group.name, questionIds: group.questionIds, filters: state.analyticsView.filters })}</article>`;
+  }).join('') + (visible.length < groups.length ? `<button class="button secondary" data-action="analytics-more" data-level="${e(level)}" data-page="${page + 1}">Show next ${Math.min(100, groups.length - visible.length)}</button>` : '') : '<div class="empty">No mapped entries in this population.</div>';
+}
+
 async function analytics() {
-  let attempts;
-  try { attempts = await paged(() => db.from('question_attempts').select('question_id,is_correct,answered_at,time_spent_seconds,confidence').eq('user_id', state.user.id).order('answered_at', { ascending: false })); }
-  catch { attempts = await paged(() => db.from('question_attempts').select('question_id,is_correct,answered_at').eq('user_id', state.user.id).order('answered_at', { ascending: false })); }
-  const questionIds = [...new Set(attempts.map((row) => String(row.question_id)))];
-  const qMap = new Map(state.meta.questionTaxonomy.map((question) => [question.id, question]));
-  const aggregate = (field, nested = false) => {
-    const result = new Map();
-    attempts.forEach((attempt) => { const raw = qMap.get(String(attempt.question_id))?.[field]; const keys = nested ? raw || [] : [raw]; keys.forEach((key) => { if (!key) return; const value = result.get(key) || { correct: 0, total: 0, time: 0, timed: 0, all: new Set(), correctIds: new Set(), incorrectIds: new Set() }; value.total++; value.correct += attempt.is_correct ? 1 : 0; value.all.add(String(attempt.question_id)); (attempt.is_correct ? value.correctIds : value.incorrectIds).add(String(attempt.question_id)); if (attempt.time_spent_seconds != null) { value.time += attempt.time_spent_seconds; value.timed++; } result.set(key, value); }); });
-    return result;
-  };
-  const renderRows = (data, names, type) => data.size ? `<div class="analytics-actions">${[...data].sort((a, b) => a[1].correct / a[1].total - b[1].correct / b[1].total).map(([id, value]) => {
-    const label = names.get(String(id))?.name || 'Unclassified'; const filters = { platforms: [], subjects: [], systems: [], topics: [], subtopics: [], statuses: ['all'], pyq: '', year: '', search: '', source: '' };
-    const buttons = [['All attempted', [...value.all]], ['Incorrect', [...value.incorrectIds]], ['Correct', [...value.correctIds]]].map(([name, ids]) => ids.length ? actionSetButtons({ mode: 'test', preset: 'analytics', title: `${label} · ${name}`, filters, questionIds: ids }, name === 'Incorrect' ? 'Start revision test' : `Test ${name.toLowerCase()}`) : '').join('');
-    return `<article class="analytics-action-row"><div><b>${e(label)}</b><small>${value.total} attempts · ${pct(value.correct, value.total)} · ${value.timed ? Math.round(value.time / value.timed) : '—'}s avg</small></div><div class="analytics-drills">${buttons}</div></article>`;
-  }).join('')}</div>` : '<div class="empty">No data yet.</div>';
-  const correct = attempts.filter((x) => x.is_correct).length; const timed = attempts.filter((x) => x.time_spent_seconds != null);
-  layout(`<div class="page-heading"><span class="eyebrow">ANALYTICS</span><h1>Performance that leads to exact questions</h1><p>Every drilldown preserves the question IDs that produced its metric.</p></div><section class="result-grid"><div class="card metric"><span>Overall accuracy</span><b>${pct(correct, attempts.length)}</b></div><div class="card metric"><span>Coverage</span><b>${questionIds.length}</b><small>unique questions</small></div><div class="card metric"><span>Average time</span><b>${timed.length ? `${Math.round(timed.reduce((s, x) => s + (x.time_spent_seconds || 0), 0) / timed.length)}s` : '—'}</b></div><div class="card metric"><span>All attempts</span><b>${attempts.length}</b></div></section><section class="analytics-grid"><div class="card"><h2>Subject analytics</h2>${renderRows(aggregate('subject_id'), byId(state.meta.subjects), 'subject')}</div><div class="card"><h2>Platform analytics</h2>${renderRows(aggregate('platform_id'), byId(state.meta.platforms), 'platform')}</div><div class="card"><h2>Topic analytics</h2>${renderRows(aggregate('topic_ids', true), byId(state.meta.topics), 'topic')}</div><div class="card"><h2>Subtopic analytics</h2>${renderRows(aggregate('subtopic_ids', true), byId(state.meta.subtopics), 'subtopic')}</div></section>`);
+  loading('Calculating selected analytics…'); state.analyticsPopulations.clear();
+  const filters = state.analyticsFilters || { platforms: [], subjects: [], systems: [], topics: [], subtopics: [] };
+  const cascade = resolveTaxonomyCascade(state.meta.questionTaxonomy, filters);
+  const normalizedFilters = { ...filters, ...cascade.selected, statuses: ['all'], pyq: '', year: '', search: '', source: '' };
+  const questionIds = cascade.matchingQuestionIds; const model = await fetchAnalyticsModel(questionIds); const metric = analyticsMetric(questionIds, model);
+  state.analyticsView = { questionIds, model, filters: normalizedFilters, groups: new Map() };
+  const combined = { title: 'Selected analytics population', questionIds, filters: normalizedFilters };
+  layout(`<div class="page-heading"><span class="eyebrow">ANALYTICS</span><h1>Clear, filtered learning analytics</h1><p>Latest-answer mastery is separated from total attempt activity.</p></div><section class="card builder-card"><form id="analytics-filter-form" class="stack"><div class="filters">${multiPicker('platforms', 'Platforms', state.meta.platforms)}${multiPicker('subjects', 'Subjects', state.meta.subjects)}${multiPicker('systems', 'Systems (optional)', state.meta.systems)}${multiPicker('topics', 'Topics', state.meta.topics)}${multiPicker('subtopics', 'Subtopics', state.meta.subtopics)}</div><div class="row"><button class="button">Apply analytics filters</button><button type="button" class="button ghost" data-action="clear-analytics-filters">Clear</button></div></form></section><section class="card analytics-summary"><div class="section-heading"><div><span class="eyebrow">COMBINED SELECTED POPULATION</span><h2>${metric.ids.length} questions</h2><p class="subtle">Latest accuracy uses each attempted question's newest answer. Attempt accuracy uses every attempt.</p></div>${analyticsPopulationControls(combined)}</div><div class="analytics-metrics"><div><span>Total questions</span><b>${metric.ids.length}</b></div><div><span>Unique attempted</span><b>${metric.attempted.length}</b></div><div><span>Total attempts</span><b>${metric.attempts}</b></div><div><span>Unique correct</span><b>${metric.correct.length}</b></div><div><span>Unique incorrect</span><b>${metric.incorrect.length}</b></div><div><span>Latest-answer accuracy</span><b>${metric.latestAccuracy}</b></div><div><span>Attempt accuracy</span><b>${metric.attemptAccuracy}</b></div><div><span>Bookmarked</span><b>${metric.bookmarked.length}</b></div><div><span>Marked</span><b>${metric.marked.length}</b></div><div><span>Recall due</span><b>${metric.recallDue.length}</b></div><div><span>Average response</span><b>${metric.averageTime == null ? '—' : `${metric.averageTime}s`}</b></div><div><span>Slow &gt;50s</span><b>${metric.slow.length}</b></div><div><span>Repeatedly incorrect</span><b>${metric.repeatedIncorrect.length}</b></div></div><p class="analytics-rule">Weak area = at least 2 unique attempted questions and latest-answer accuracy below 60%. Repeatedly incorrect = at least 2 incorrect attempts on the same question.</p></section><section class="analytics-breakdowns">${[['platform', 'Platform'], ['subject', 'Subject'], ['topic', 'Topic'], ['subtopic', 'Subtopic']].map(([level, label]) => `<details class="card"><summary data-action="load-analytics-breakdown" data-level="${level}">By ${label}<span>Expand to load</span></summary><div id="analytics-breakdown-${level}" class="analytics-breakdown-content"></div></details>`).join('')}</section>`);
+  const form = document.querySelector('#analytics-filter-form');
+  for (const level of ['platforms', 'subjects', 'systems', 'topics', 'subtopics']) (normalizedFilters[level] || []).forEach((id) => { const input = form.querySelector(`input[name="${level}"][value="${CSS.escape(String(id))}"]`); if (input) input.checked = true; });
+  setupDependentFilters(form);
+  form.onsubmit = (event) => { event.preventDefault(); state.analyticsFilters = readFilters(form); analytics(); };
 }
 
 function taxonomyOptions(items, first) { return `<option value="">${e(first)}</option>${items.map((item) => `<option value="${e(item.id)}">${e(item.name)}</option>`).join('')}`; }
@@ -948,10 +1034,21 @@ document.addEventListener('click', async (event) => {
     if (action === 'open-action-set') await openQuestionSet(definition); else await createSession(definition);
   }
   if (action === 'clear-review-filters') { state.reviewFilters = null; await review(); }
+  if (action === 'clear-analytics-filters') { state.analyticsFilters = null; state.analyticsStatus = 'all'; await analytics(); }
+  if (action === 'load-analytics-breakdown') renderAnalyticsBreakdown(target.dataset.level, 1);
+  if (action === 'analytics-more') renderAnalyticsBreakdown(target.dataset.level, Number(target.dataset.page) || 1);
   if (action === 'review-result') { state.active.index = 0; state.active.completedReview = true; state.active.questionStartedAt = Date.now(); renderActive(); }
   if (action === 'review-mistakes') { const questions = state.active.questions.filter((q) => state.active.answers[q.id]?.selected_option && selectedKey(state.active.answers[q.id]) !== correctKey(q)); if (!questions.length) return toast('No incorrect questions in this session.'); state.active = { ...state.active, questions, index: 0, completedReview: true, questionStartedAt: Date.now() }; renderActive(); }
   if (action === 'retake') await createSession({ mode: state.active.kind, preset: state.active.preset || 'retake', title: `${state.active.title || 'Test'} retake`, filters: state.active.filters || {}, questionIds: state.active.questions.map((question) => question.id), requested: state.active.questions.length, autoSubmit: state.active.kind === 'test', origin: '#/history' });
   if (action === 'my-bank-tab') showMyBankTab(target.dataset.tab);
+});
+
+document.addEventListener('change', (event) => {
+  const select = event.target.closest('[data-analytics-status]'); if (!select) return;
+  const population = state.analyticsPopulations.get(select.dataset.population); if (!population || !state.analyticsView) return;
+  state.analyticsStatus = select.value;
+  const actions = select.closest('.analytics-population-controls')?.querySelector('[data-analytics-actions]');
+  if (actions) actions.innerHTML = analyticsActionButtons(population, select.value);
 });
 
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape') document.querySelector('#modal')?.remove(); });

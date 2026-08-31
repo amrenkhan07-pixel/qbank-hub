@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { buildTaxonomyIndex, resolveTaxonomyCascade, validateAnalyticsDrilldown, validateGeneratedQuestionSet, validateQuestionSetLifecycle, validateQuestionStateBindings, validateResumeSnapshot } from '../app/validation.js';
+import { buildTaxonomyIndex, deriveAnalyticsPopulations, resolveTaxonomyCascade, validateAnalyticsDrilldown, validateGeneratedQuestionSet, validateQuestionSetLifecycle, validateQuestionStateBindings, validateResumeSnapshot } from '../app/validation.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
@@ -51,10 +51,19 @@ const prematurePreview = validateQuestionSetLifecycle({ sourceQuestionIds: lifec
 check('lifecycle.premature_preview_side_effect_detected', prematurePreview.status === 'FAIL');
 const browseSideEffect = validateQuestionSetLifecycle({ sourceQuestionIds: lifecycleIds, browseQuestionIds: lifecycleIds, previewQuestionIds: lifecycleIds, sessionQuestionIds: lifecycleIds, browseAttemptWrites: 1, browseTimerCount: 1, targetSeconds: 150 });
 check('lifecycle.browse_side_effect_detected', browseSideEffect.status === 'FAIL');
-const analyticsPopulation = validateAnalyticsDrilldown({ attempts: [{ question_id: 'q-1', is_correct: false }, { question_id: 'q-1', is_correct: true }, { question_id: 'q-2', is_correct: false }], allQuestionIds: ['q-1', 'q-2'], correctQuestionIds: ['q-1'], incorrectQuestionIds: ['q-1', 'q-2'] });
+const analyticsFixtureAttempts = [
+  { question_id: 'q-1', is_correct: false, answered_at: '2026-01-03T00:00:00Z' },
+  { question_id: 'q-1', is_correct: true, answered_at: '2026-01-01T00:00:00Z' },
+  { question_id: 'q-2', is_correct: true, answered_at: '2026-01-02T00:00:00Z' },
+];
+const analyticsFixtureLearning = [{ question_id: 'q-1', marked_for_review: true }, { question_id: 'q-3', bookmarked: true, recall_due_at: '2020-01-01T00:00:00Z' }];
+const analyticsFixturePopulations = { all: ['q-1', 'q-2', 'q-3'], attempted: ['q-1', 'q-2'], correct: ['q-2'], incorrect: ['q-1'], bookmarked: ['q-3'], marked: ['q-1'], recall_due: ['q-3'] };
+const analyticsPopulation = validateAnalyticsDrilldown({ questionIds: ['q-1', 'q-2', 'q-3'], attempts: analyticsFixtureAttempts, learning: analyticsFixtureLearning, populations: analyticsFixturePopulations, breakdowns: { platform: { 'p-1': ['q-1', 'q-2', 'q-3'] }, subject: { 's-1': ['q-1', 'q-2', 'q-3'] } } });
 check('analytics.exact_contributing_populations', analyticsPopulation.status === 'PASS');
-const analyticsLeak = validateAnalyticsDrilldown({ attempts: [{ question_id: 'q-1', is_correct: false }], allQuestionIds: ['q-1'], correctQuestionIds: [], incorrectQuestionIds: ['q-1', 'q-2'] });
+const analyticsLeak = validateAnalyticsDrilldown({ questionIds: ['q-1'], attempts: [{ question_id: 'q-1', is_correct: false }], populations: { all: ['q-1'], attempted: ['q-1'], correct: [], incorrect: ['q-1', 'q-2'], bookmarked: [], marked: [], recall_due: [] } });
 check('analytics.unrelated_question_detected', analyticsLeak.status === 'FAIL');
+const derivedAnalytics = deriveAnalyticsPopulations({ questionIds: ['q-1', 'q-2', 'q-3'], attempts: analyticsFixtureAttempts, learning: analyticsFixtureLearning });
+check('analytics.latest_answer_not_attempt_accuracy', derivedAnalytics.incorrect.join() === 'q-1' && derivedAnalytics.correct.join() === 'q-2' && derivedAnalytics.totalAttempts === 3);
 
 const taxonomy = buildTaxonomyIndex([
   { id: 'qa-1', platform_id: 'cerebellum', subject_id: 'anatomy', system_id: 'anatomy-system', question_topics: [{ topic_id: 'anatomy-topic' }], question_subtopics: [{ subtopic_id: 'anatomy-subtopic' }] },
@@ -89,6 +98,19 @@ cascadeResult = cascade({ platforms: ['cerebellum'], subjects: ['anesthesia'] })
 check('regression.cerebellum_anesthesia_excludes_anatomy', !cascadeResult.valid.topics.has('anatomy-topic') && !cascadeResult.valid.subtopics.has('anatomy-subtopic'));
 cascadeResult = cascade({ platforms: ['cerebellum'], subjects: ['anatomy'] });
 check('regression.cerebellum_anatomy_excludes_anesthesia', !cascadeResult.valid.topics.has('anesthesia-topic') && !cascadeResult.valid.subtopics.has('anesthesia-subtopic'));
+check('analytics.filter_platform_only', equals(cascade({ platforms: ['cerebellum'] }).matchingQuestionIds, ['qa-1', 'qn-1', 'qn-2']));
+check('analytics.filter_subject_only', equals(cascade({ subjects: ['anatomy'] }).matchingQuestionIds, ['qa-1', 'qa-2']));
+check('analytics.filter_topic_only', equals(cascade({ topics: ['anesthesia-topic'] }).matchingQuestionIds, ['qn-1']));
+check('analytics.filter_multiple_topics_union', equals(cascade({ topics: ['anatomy-topic', 'anesthesia-topic'] }).matchingQuestionIds, ['qa-1', 'qn-1']));
+check('analytics.filter_subtopic_only', equals(cascade({ subtopics: ['anesthesia-subtopic-2'] }).matchingQuestionIds, ['qn-2']));
+check('analytics.filter_multiple_subtopics_union', equals(cascade({ subtopics: ['anatomy-subtopic', 'anesthesia-subtopic'] }).matchingQuestionIds, ['qa-1', 'qn-1']));
+check('analytics.invalid_child_pruned_without_leakage', cascade({ platforms: ['cerebellum'], subjects: ['anatomy'], topics: ['anesthesia-topic'] }).matchingQuestionIds.length === 1 && cascade({ platforms: ['cerebellum'], subjects: ['anatomy'], topics: ['anesthesia-topic'] }).selected.topics.length === 0);
+check('analytics.zero_status_result_preserved', deriveAnalyticsPopulations({ questionIds: ['qa-1'], attempts: [], learning: [] }).bookmarked.length === 0);
+for (const [caseName, selection] of Object.entries({ platform: { platforms: ['cerebellum'] }, subject: { subjects: ['anesthesia'] }, topic: { topics: ['anesthesia-topic'] }, subtopic: { subtopics: ['anesthesia-subtopic'] } })) {
+  const selectedIds = cascade(selection).matchingQuestionIds;
+  const fixture = deriveAnalyticsPopulations({ questionIds: selectedIds, attempts: selectedIds.map((id, index) => ({ question_id: id, is_correct: index % 2 === 0, answered_at: `2026-01-0${index + 1}T00:00:00Z` })), learning: selectedIds.map((id, index) => ({ question_id: id, bookmarked: index === 0, marked_for_review: index === 1, recall_due_at: index === 0 ? '2020-01-01T00:00:00Z' : null })) });
+  for (const status of ['all', 'attempted', 'incorrect', 'correct', 'bookmarked', 'marked', 'recall_due']) check(`analytics.status_${status}_within_${caseName}`, fixture[status].every((id) => selectedIds.includes(id)));
+}
 const largeTaxonomy = buildTaxonomyIndex(Array.from({ length: 60000 }, (_, index) => ({
   id: `large-${index}`, platform_id: `p-${index % 3}`, subject_id: `s-${index % 19}`,
   system_id: `sys-${index % 7}`, question_topics: [{ topic_id: `topic-${index % 200}` }],
@@ -113,14 +135,18 @@ check('frontend.ui_count_uses_database_count', /updateMatchCount[\s\S]*matchingC
 check('frontend.stale_filter_counts_cannot_overwrite_current_count', appSource.includes('filterCountRequests.get(form) !== requestId'));
 check('frontend.live_taxonomy_columns', !/subtopics'\)\.select\('id,name,subject_id,topic_id'\)|order\('display_order'\)/.test(appSource), 'expected platform_subject_id/sort_order');
 check('frontend.session_persists_subtopic_filters', /test_sessions'\)\.insert\([\s\S]*filters/.test(appSource));
-check('frontend.analytics_preserves_subtopic_context', appSource.includes("aggregate('subtopic_ids', true)"));
+check('frontend.analytics_preserves_subtopic_context', appSource.includes("subtopic: ['subtopic_ids'"));
 check('frontend.retake_preserves_filter_context', /preset: state\.active\.preset[\s\S]*filters: state\.active\.filters/.test(appSource));
 check('frontend.ready_defers_session_creation', /function readyScreen[\s\S]*start-pending-test[\s\S]*async function createSession[\s\S]*readyScreen\(await prepareQuestionSet[\s\S]*async function startPendingSession[\s\S]*test_sessions'\)\.insert/.test(appSource));
 check('frontend.browse_has_no_timer_or_session', /kind: 'browse'[\s\S]*questionStartedAt: null[\s\S]*if \(!browsing\) startQuestionTimer\(\)/.test(appSource));
 check('frontend.shared_exact_question_set_actions', appSource.includes('prepareQuestionSet') && appSource.includes('actionSetButtons') && appSource.includes('questionIds: selectedIds'));
 check('frontend.same_hash_origin_rerenders', /const goToHash = \(target\) => \{ if \(location\.hash === target\) render\(\)/.test(appSource));
 check('frontend.review_taxonomy_multiselect', appSource.includes('id="review-filter-form"') && appSource.includes("multiPicker('subtopics'"));
-check('frontend.analytics_exact_drilldowns', appSource.includes('value.incorrectIds') && appSource.includes('value.correctIds') && appSource.includes("aggregate('subtopic_ids', true)"));
+check('frontend.analytics_exact_drilldowns', appSource.includes('analyticsStatusIds') && appSource.includes('questionIds: ids') && appSource.includes('Review Questions') && appSource.includes('Start Test'));
+check('frontend.analytics_dependent_multiselect', appSource.includes('id="analytics-filter-form"') && appSource.includes("setupDependentFilters(form)"));
+check('frontend.analytics_combined_summary', appSource.includes('COMBINED SELECTED POPULATION') && appSource.includes('Latest-answer accuracy') && appSource.includes('Total attempts'));
+check('frontend.analytics_breakdowns_lazy_and_paged', appSource.includes('load-analytics-breakdown') && appSource.includes('slice(0, page * 100)') && appSource.includes('Show next'));
+check('frontend.analytics_single_status_two_actions', appSource.includes('data-analytics-status') && appSource.includes('Review Questions') && appSource.includes('Start Test') && !appSource.includes("['All attempted', [...value.all]"));
 check('frontend.mapping_based_taxonomy_cascade', appSource.includes('resolveTaxonomyCascade(state.meta.questionTaxonomy'));
 check('frontend.hidden_taxonomy_rows_not_displayed', /row\.hidden = !visible;[\s\S]*row\.style\.display = visible \? '' : 'none'/.test(appSource));
 check('frontend.hidden_attribute_overrides_check_row_display', /html\s+\[hidden\]\s*\{\s*display:\s*none\s*!important;?\s*\}/.test(stylesSource));
@@ -133,8 +159,8 @@ check('browser.taxonomy_dom_regression_installed', appSource.includes('runTaxono
   && domRegressionSource.includes('mixedUnion')
   && domRegressionSource.includes('invalidChildPruning')
   && domRegressionSource.includes('zeroCountLabelsHidden'));
-check('frontend.cascade_modules_cache_busted', appSource.includes("./validation.js?v=20260828-learning-flow")
-  && readFileSync(resolve(root, 'index.html'), 'utf8').includes('./app/app.js?v=20260831-learning-flow-2'));
+check('frontend.cascade_modules_cache_busted', appSource.includes("./validation.js?v=20260831-analytics")
+  && readFileSync(resolve(root, 'index.html'), 'utf8').includes('./app/app.js?v=20260831-analytics'));
 const importerTests = spawnSync('python3', ['-m', 'unittest', 'scripts.tests.test_qbank_import'], { cwd: root, encoding: 'utf8' });
 check('importer.fixture_and_scale_tests', importerTests.status === 0, (importerTests.stderr || importerTests.stdout || '').trim().split('\n').slice(-1)[0] || 'python unittest');
 check('importer.dry_run_default_is_read_only', /database_modified["']?:?\s*False/.test(importerSource) && /--confirm-import/.test(importerSource));

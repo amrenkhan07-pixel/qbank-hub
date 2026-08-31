@@ -159,16 +159,42 @@ export function validateQuestionSetLifecycle({
   return { status: checks.every((check) => check.status === 'PASS') ? 'PASS' : 'FAIL', checks };
 }
 
-export function validateAnalyticsDrilldown({ attempts = [], allQuestionIds = [], correctQuestionIds = [], incorrectQuestionIds = [] }) {
-  const expectedAll = stringIds(attempts.map((row) => row.question_id));
-  const expectedCorrect = stringIds(attempts.filter((row) => row.is_correct === true).map((row) => row.question_id));
-  const expectedIncorrect = stringIds(attempts.filter((row) => row.is_correct === false).map((row) => row.question_id));
+export function deriveAnalyticsPopulations({ questionIds = [], attempts = [], learning = [] }) {
+  const all = stringIds(questionIds); const allowed = new Set(all);
+  const ordered = attempts.map((row, index) => ({ ...row, _index: index })).filter((row) => allowed.has(String(row.question_id))).sort((a, b) => {
+    const time = new Date(b.answered_at || 0) - new Date(a.answered_at || 0); return time || a._index - b._index;
+  });
+  const latest = new Map(); ordered.forEach((row) => { const id = String(row.question_id); if (!latest.has(id)) latest.set(id, row); });
+  const stateByQuestion = new Map(learning.filter((row) => allowed.has(String(row.question_id))).map((row) => [String(row.question_id), row]));
+  const attempted = all.filter((id) => latest.has(id));
+  const now = Date.now();
+  return {
+    all, attempted,
+    correct: attempted.filter((id) => latest.get(id)?.is_correct === true),
+    incorrect: attempted.filter((id) => latest.get(id)?.is_correct === false),
+    bookmarked: all.filter((id) => stateByQuestion.get(id)?.bookmarked === true),
+    marked: all.filter((id) => stateByQuestion.get(id)?.marked_for_review === true || stateByQuestion.get(id)?.revision === true),
+    recall_due: all.filter((id) => { const due = stateByQuestion.get(id)?.recall_due_at; return due && new Date(due).getTime() <= now; }),
+    totalAttempts: ordered.length,
+  };
+}
+
+export function validateAnalyticsDrilldown({ questionIds = [], attempts = [], learning = [], populations = {}, breakdowns = {} }) {
+  const expected = deriveAnalyticsPopulations({ questionIds, attempts, learning });
   const samePopulation = (left, right) => stringIds(left).sort().join('|') === stringIds(right).sort().join('|');
   const checks = [
-    result('analytics.all_reproduces_metric_population', samePopulation(expectedAll, allQuestionIds) ? [] : ['all population differs']),
-    result('analytics.correct_contains_only_contributors', samePopulation(expectedCorrect, correctQuestionIds) ? [] : ['correct population differs']),
-    result('analytics.incorrect_contains_only_contributors', samePopulation(expectedIncorrect, incorrectQuestionIds) ? [] : ['incorrect population differs']),
+    result('analytics.population_has_no_duplicates', expected.all.length === questionIds.length ? [] : ['duplicate source IDs']),
+    result('analytics.total_attempts_reconciles', expected.totalAttempts === attempts.filter((row) => expected.all.includes(String(row.question_id))).length ? [] : ['attempt total differs']),
+    ...['all', 'attempted', 'correct', 'incorrect', 'bookmarked', 'marked', 'recall_due'].map((status) => result(`analytics.${status}_population_reconciles`, samePopulation(expected[status], populations[status] || []) ? [] : [`${status} population differs`])),
   ];
+  for (const [level, groups] of Object.entries(breakdowns)) {
+    const leaked = Object.entries(groups || {}).flatMap(([group, ids]) => ids.filter((id) => !expected.all.includes(String(id))).map((id) => `${level}:${group}:${id}`));
+    checks.push(result(`analytics.${level}_breakdown_has_no_leakage`, leaked));
+    if (level === 'platform' || level === 'subject') {
+      const union = stringIds(Object.values(groups || {}).flat());
+      checks.push(result(`analytics.${level}_breakdown_reconciles`, samePopulation(expected.all, union) ? [] : [`${level} union differs`]));
+    }
+  }
   return { status: checks.every((check) => check.status === 'PASS') ? 'PASS' : 'FAIL', checks };
 }
 

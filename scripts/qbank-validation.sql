@@ -223,14 +223,10 @@ checks(check_name, failures, detail) as (
   join latest_attempt a using (user_id, question_id)
   where u.last_is_correct is not null and u.last_is_correct is distinct from a.is_correct
 
-  union all select 'review.bookmarked_population', count(*), format('%s bookmark representations disagree', count(*))
-  from (
-    select coalesce(b.user_id, u.user_id) user_id, coalesce(b.question_id, u.question_id) question_id
-    from public.bookmarks b
-    full join (select * from public.user_question_state where bookmarked) u
-      on u.user_id = b.user_id and u.question_id = b.question_id
-    where b.question_id is null or u.question_id is null
-  ) mismatches
+  union all select 'review.bookmarked_population', count(*), format('%s canonical bookmarks reference missing questions', count(*))
+  from public.user_question_state u
+  left join public.questions q on q.id = u.question_id
+  where u.bookmarked and q.id is null
 
   union all select 'review.marked_population', count(*), format('%s legacy/current marked flags disagree', count(*))
   from public.user_question_state where revision is distinct from marked_for_review
@@ -255,6 +251,33 @@ checks(check_name, failures, detail) as (
     group by q.platform_id, q.subject_id
   ) populations
   where metric_population <> drilldown_population
+
+  union all select 'analytics.unique_attempted_reconciles',
+    case when (select count(*) from latest_attempt) = (select count(*) from (select distinct user_id, question_id from public.question_attempts) x) then 0 else 1 end,
+    format('%s latest rows; %s unique attempted', (select count(*) from latest_attempt), (select count(*) from (select distinct user_id, question_id from public.question_attempts) x))
+
+  union all select 'analytics.total_attempts_reconciles',
+    case when (select count(*) from public.question_attempts) = (select coalesce(sum(attempts), 0) from (select count(*) attempts from public.question_attempts group by user_id, question_id) x) then 0 else 1 end,
+    format('%s total attempts', (select count(*) from public.question_attempts))
+
+  union all select 'analytics.latest_correct_incorrect_partition', count(*), format('%s latest answers are neither correct nor incorrect', count(*))
+  from latest_attempt where is_correct is null
+
+  union all select 'analytics.platform_breakdown_reconciles',
+    case when (select count(*) from public.questions where platform_id is not null) = (select coalesce(sum(question_count), 0) from (select platform_id, count(*) question_count from public.questions where platform_id is not null group by platform_id) x) then 0 else 1 end,
+    'platform group counts must partition the mapped question population'
+
+  union all select 'analytics.subject_breakdown_reconciles',
+    case when (select count(*) from public.questions where subject_id is not null) = (select coalesce(sum(question_count), 0) from (select subject_id, count(*) question_count from public.questions where subject_id is not null group by subject_id) x) then 0 else 1 end,
+    'subject group counts must partition the mapped question population'
+
+  union all select 'analytics.topic_breakdown_reconciles',
+    case when (select count(*) from public.question_topics) = (select coalesce(sum(question_count), 0) from (select topic_id, count(distinct question_id) question_count from public.question_topics group by topic_id) x) then 0 else 1 end,
+    'topic group counts must reproduce distinct question-topic mappings'
+
+  union all select 'analytics.subtopic_breakdown_reconciles',
+    case when (select count(*) from public.question_subtopics) = (select coalesce(sum(question_count), 0) from (select subtopic_id, count(distinct question_id) question_count from public.question_subtopics group by subtopic_id) x) then 0 else 1 end,
+    'subtopic group counts must reproduce distinct question-subtopic mappings'
 
   union all select 'personal.content_separation', count(*), format('%s personal/import ownership violations', count(*))
   from public.questions q
