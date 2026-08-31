@@ -24,6 +24,7 @@ const e = (value) => String(value ?? '').replace(/[&<>'"]/g, (c) => ({ '&': '&am
 const date = (value) => value ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(value)) : '—';
 const pct = (a, b) => b ? `${Math.round((a / b) * 100)}%` : '—';
 const route = () => location.hash.replace(/^#\/?/, '').split('?')[0] || 'home';
+const goToHash = (target) => { if (location.hash === target) render(); else location.hash = target; };
 const unique = (rows, key = 'question_id') => [...new Set((rows || []).map((row) => row[key]).filter(Boolean))];
 const byId = (rows) => new Map((rows || []).map((row) => [String(row.id), row]));
 const correctKey = (question) => String(question.correct_answer || '').trim().charAt(0).toUpperCase();
@@ -434,7 +435,7 @@ function readyScreen(questionSet) {
 
 async function createSession(definition) {
   try { readyScreen(await prepareQuestionSet(definition)); }
-  catch (error) { toast(error.message || 'Could not build question set.', 'error'); location.hash = definition.origin || '#/qbank'; }
+  catch (error) { toast(error.message || 'Could not build question set.', 'error'); goToHash(definition.origin || '#/qbank'); }
 }
 
 async function openQuestionSet(definition) {
@@ -450,7 +451,7 @@ async function openQuestionSet(definition) {
     recent.forEach((answer) => { if (!answers[answer.question_id]) answers[answer.question_id] = answer; });
     state.active = { ...questionSet, kind: 'browse', testMode: definition.mode === 'practice' ? 'practice' : 'test', index: 0, answers, bookmarks: personal.bookmarks, marked: personal.marked, learning: personal.learning, questionStartedAt: null, explanationOpen: false, completedReview: true };
     renderActive();
-  } catch (error) { toast(error.message || 'Could not open questions.', 'error'); location.hash = definition.origin || '#/qbank'; }
+  } catch (error) { toast(error.message || 'Could not open questions.', 'error'); goToHash(definition.origin || '#/qbank'); }
 }
 
 async function loadPersonalState(questionIds) {
@@ -932,15 +933,15 @@ document.addEventListener('click', async (event) => {
   if (action === 'signout') await db.auth.signOut(); if (action === 'signup') await signUp(); if (action === 'reset-password') await resetPassword(); if (action === 'retry') render();
   if (action === 'choose-preset') showTestBuilder(target.dataset.preset); if (action === 'close-builder') document.querySelector('#test-builder-slot').innerHTML = '';
   if (action === 'answer') await selectAnswer(target.dataset.key); if (action === 'previous') await navigateActive(state.active.index - 1);
-  if (action === 'next') { if (state.active.index === state.active.questions.length - 1) { if (state.active.kind === 'browse') { location.hash = state.active.origin || '#/qbank'; return; } if (state.active.completedReview) return resultScreen(); return submitActive(false); } await navigateActive(state.active.index + 1); }
+  if (action === 'next') { if (state.active.index === state.active.questions.length - 1) { if (state.active.kind === 'browse') { goToHash(state.active.origin || '#/qbank'); return; } if (state.active.completedReview) return resultScreen(); return submitActive(false); } await navigateActive(state.active.index + 1); }
   if (action === 'jump') await navigateActive(Number(target.dataset.index)); if (action === 'bookmark') await toggleBookmark(); if (action === 'mark') await toggleMark();
   if (action === 'toggle-explanation') { state.active.explanationOpen = !state.active.explanationOpen; renderActive(); }
   if (action === 'confidence') await updateAnswerMetadata('confidence', target.dataset.value); if (action === 'error-reason') await updateAnswerMetadata('error_reason', target.dataset.value);
   if (action === 'recall-response') await recordRecallResponse(target.dataset.value);
   if (action === 'note') await noteModal(); if (action === 'report') reportModal(); if (action === 'close-modal') document.querySelector('#modal')?.remove(); if (action === 'submit') await submitActive(false); if (action === 'resume') await resumeSession(target.dataset.id);
   if (action === 'start-pending-test') await startPendingSession();
-  if (action === 'cancel-question-set') { const origin = state.pendingSet?.origin || '#/qbank'; state.pendingSet = null; location.hash = origin; }
-  if (action === 'back-to-origin') location.hash = state.active?.origin || '#/qbank';
+  if (action === 'cancel-question-set') { const origin = state.pendingSet?.origin || '#/qbank'; state.pendingSet = null; goToHash(origin); }
+  if (action === 'back-to-origin') goToHash(state.active?.origin || '#/qbank');
   if (action === 'preview-browsed-set') await createSession({ mode: state.active.testMode || 'test', preset: state.active.preset, title: state.active.title, filters: state.active.filters, questionIds: state.active.questionIds, requested: state.active.questionIds.length, autoSubmit: state.active.testMode !== 'practice', origin: state.active.origin });
   if (action === 'open-action-set' || action === 'preview-action-set') {
     const definition = state.actionSets.get(target.dataset.set); if (!definition) return toast('That question set expired. Please reopen this page.', 'error');
