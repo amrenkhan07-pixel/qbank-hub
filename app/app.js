@@ -1,6 +1,6 @@
 import { db, initError, isMissingTable, requireUser, withAuthTimeout } from './supabase.js';
-import { analyticsMetadataCapabilities, analyticsTopicSubtopicRedundant, assertValidation, buildTaxonomyIndex, filterAnalyticsPopulation, resolveTaxonomyCascade, validateGeneratedQuestionSet, validateQuestionStateBindings, validateResumeSnapshot } from './validation.js?v=20260901-prepladder-hybrid';
-import { runTaxonomyDomRegression } from './taxonomy-dom-regression.js?v=20260828-dom-regression';
+import { analyticsMetadataCapabilities, analyticsTopicSubtopicRedundant, assertValidation, buildTaxonomyIndex, filterAnalyticsPopulation, resolveTaxonomyCascade, validateGeneratedQuestionSet, validateQuestionStateBindings, validateResumeSnapshot } from './validation.js?v=20260902-pilot-analytics';
+import { runTaxonomyDomRegression } from './taxonomy-dom-regression.js?v=20260902-canonical-subject';
 
 const root = document.querySelector('#app');
 const TARGET_SECONDS = 50;
@@ -103,7 +103,7 @@ async function optional(query, feature) {
 
 async function loadMeta(force = false) {
   if (!force && state.meta.subjects.length && state.meta.platforms.length) return;
-  const [subjects, platforms, platformSubjects, systems, topics, subtopics, sourceTests, tags, questionTaxonomy] = await Promise.all([
+  const [subjects, platforms, platformSubjects, systems, topics, subtopics, sourceTests, sourceOccurrences, tags, questionTaxonomy] = await Promise.all([
     db.from('subjects').select('id,name').order('name'),
     db.from('platforms').select('id,name').order('name'),
     db.from('platform_subjects').select('id,subject_id'),
@@ -111,8 +111,9 @@ async function loadMeta(force = false) {
     optional(db.from('topics').select('id,name,platform_subject_id,system_id,parent_topic_id').order('sort_order').order('name')),
     optional(db.from('subtopics').select('id,name,topic_id').order('sort_order').order('name'), 'subtopics'),
     optional(db.from('qbank_source_tests').select('id,title,platform_id,subject_id,sequence,declared_question_count,is_pyq').order('sequence'), 'hybrid'),
+    optional(paged(() => db.from('qbank_source_occurrences').select('question_id,source_test_id,is_pyq').eq('is_current', true)), 'hybrid'),
     optional(db.from('tags').select('id,name').order('name')),
-    paged(() => db.from('questions').select('id,platform_id,subject_id,system_id,is_pyq,is_inicet,is_neet_pg,exam_tags,exam_year,exam_shift,question_topics(topic_id),question_subtopics(subtopic_id)')),
+    paged(() => db.from('questions').select('id,platform_id,subject_id,system_id,is_usable,is_pyq,is_inicet,is_neet_pg,exam_tags,exam_year,exam_shift,question_topics(topic_id),question_subtopics(subtopic_id)').eq('is_usable', true)),
   ]);
   if (subjects.error) throw subjects.error;
   if (platforms.error) throw platforms.error;
@@ -120,6 +121,16 @@ async function loadMeta(force = false) {
   const subjectByPlatformSubject = new Map((platformSubjects.data || []).map((row) => [row.id, row.subject_id]));
   const hydratedTopics = (topics.data || []).map((topic) => ({ ...topic, subject_id: subjectByPlatformSubject.get(topic.platform_subject_id) || '' }));
   const topicById = new Map(hydratedTopics.map((topic) => [topic.id, topic]));
+  const occurrencesByQuestion = new Map();
+  (sourceOccurrences.data || sourceOccurrences || []).forEach((row) => {
+    const id = String(row.question_id); if (!occurrencesByQuestion.has(id)) occurrencesByQuestion.set(id, { all: [], pyq: [], nonPyq: [] });
+    const group = occurrencesByQuestion.get(id); group.all.push(String(row.source_test_id));
+    (row.is_pyq ? group.pyq : group.nonPyq).push(String(row.source_test_id));
+  });
+  const hydratedQuestionTaxonomy = (questionTaxonomy || []).map((question) => {
+    const occurrences = occurrencesByQuestion.get(String(question.id)) || { all: [], pyq: [], nonPyq: [] };
+    return { ...question, source_test_ids: occurrences.all, pyq_source_test_ids: occurrences.pyq, non_pyq_source_test_ids: occurrences.nonPyq };
+  });
   state.meta = {
     subjects: subjects.data || [], platforms: platforms.data || [],
     systems: (systems.data || []).map((system) => ({ ...system, subject_id: subjectByPlatformSubject.get(system.platform_subject_id) || '' })),
@@ -127,7 +138,7 @@ async function loadMeta(force = false) {
     subtopics: (subtopics.data || []).map((subtopic) => ({ ...subtopic, subject_id: topicById.get(subtopic.topic_id)?.subject_id || '' })),
     sourceTests: (sourceTests.data || []).map((test) => ({ ...test, name: test.title })),
     tags: tags.data || [],
-    questionTaxonomy: buildTaxonomyIndex(questionTaxonomy),
+    questionTaxonomy: buildTaxonomyIndex(hydratedQuestionTaxonomy),
   };
 }
 
@@ -143,7 +154,7 @@ function statusPicker(revision = false) {
 }
 
 function filterFields({ revision = false, sourceTests = false } = {}) {
-  return `${multiPicker('platforms', 'Platforms', state.meta.platforms)}${multiPicker('subjects', 'Subjects', state.meta.subjects)}${multiPicker('systems', 'Systems (optional)', state.meta.systems)}${multiPicker('topics', 'Topics', state.meta.topics, 'Choose a subject first')}${multiPicker('subtopics', 'Subtopics', state.meta.subtopics, 'Choose a topic first')}${sourceTests && state.meta.sourceTests.length ? multiPicker('source_tests', 'Source Tests (optional)', state.meta.sourceTests) : ''}${statusPicker(revision)}<div class="field"><label>PYQ</label><select name="pyq"><option value="">All questions</option><option value="yes">PYQ only</option></select></div><div class="field"><label>Exam year/session</label><input name="year" type="number" min="1950" max="2100" placeholder="e.g. 2024" /></div><div class="field wide"><label>Search question text</label><input name="search" placeholder="e.g. thyroid, ECG, nephrotic" /></div><div class="field wide"><label>Source / collection</label><input name="source" placeholder="Cerebellum, Marrow, PrepLadder, BTR…" /></div>`;
+  return `${multiPicker('platforms', 'Platforms', state.meta.platforms)}${multiPicker('subjects', 'Subjects', state.meta.subjects)}${multiPicker('systems', 'Systems (optional)', state.meta.systems)}${multiPicker('topics', 'Topics', state.meta.topics, 'Choose a subject first')}${multiPicker('subtopics', 'Subtopics', state.meta.subtopics, 'Choose a topic first')}${sourceTests && state.meta.sourceTests.length ? multiPicker('source_tests', 'Source Tests (optional)', state.meta.sourceTests) : ''}${statusPicker(revision)}<div class="field"><label>PYQ</label><select name="pyq"><option value="">All questions</option><option value="yes">PYQ only</option><option value="no">Non-PYQ</option></select></div><div class="field"><label>Exam year/session</label><input name="year" type="number" min="1950" max="2100" placeholder="e.g. 2024" /></div><div class="field wide"><label>Search question text</label><input name="search" placeholder="e.g. thyroid, ECG, nephrotic" /></div><div class="field wide"><label>Source / collection</label><input name="source" placeholder="Cerebellum, Marrow, PrepLadder, BTR…" /></div>`;
 }
 
 function readMulti(form, name) {
@@ -177,11 +188,10 @@ function setupDependentFilters(form) {
         input.checked = visible && selected.has(input.value);
       });
     }
-    const selectedPlatforms = new Set(cascade.selected.platforms); const selectedSubjects = new Set(cascade.selected.subjects);
+    const matchingQuestions = state.meta.questionTaxonomy.filter((question) => cascade.matchingQuestionIds.includes(question.id));
+    const validSourceTests = new Set(matchingQuestions.flatMap((question) => question.source_test_ids || []));
     form.querySelectorAll('[data-multi-field="source_tests"] input').forEach((input) => {
-      const item = state.meta.sourceTests.find((test) => String(test.id) === input.value);
-      const visible = Boolean(item) && (!selectedPlatforms.size || selectedPlatforms.has(String(item.platform_id)))
-        && (!selectedSubjects.size || selectedSubjects.has(String(item.subject_id))) && Number(item.declared_question_count) > 0;
+      const visible = validSourceTests.has(input.value);
       const row = input.closest('.check-row'); row.hidden = !visible; row.style.display = visible ? '' : 'none';
       if (!visible) input.checked = false;
     });
@@ -232,23 +242,22 @@ async function statusCandidateIds(filters) {
   }
   if (statuses.has('new')) {
     const attempted = new Set(unique(await paged(() => db.from('question_attempts').select('question_id').eq('user_id', state.user.id))));
-    add((await paged(() => db.from('questions').select('id'))).filter((q) => !attempted.has(q.id)).map((q) => q.id));
+    add((await paged(() => db.from('questions').select('id').eq('is_usable', true))).filter((q) => !attempted.has(q.id)).map((q) => q.id));
   }
   return union;
 }
 
 async function candidateIds(filters) {
   let candidate = null;
+  if (filters.source_tests?.length || filters.pyq === 'yes' || filters.pyq === 'no') {
+    candidate = intersect(candidate, new Set(filterAnalyticsPopulation(state.meta.questionTaxonomy, filters)));
+  }
   if (filters.topics?.length) {
     const result = await db.from('question_topics').select('question_id').in('topic_id', filters.topics);
     if (result.error) throw result.error; candidate = intersect(candidate, new Set(unique(result.data)));
   }
   if (filters.subtopics?.length) {
     const result = await optional(db.from('question_subtopics').select('question_id').in('subtopic_id', filters.subtopics), 'subtopics');
-    candidate = intersect(candidate, new Set(unique(result.data)));
-  }
-  if (filters.source_tests?.length) {
-    const result = await optional(db.from('qbank_source_occurrences').select('question_id').in('source_test_id', filters.source_tests).eq('is_current', true), 'hybrid');
     candidate = intersect(candidate, new Set(unique(result.data)));
   }
   if (filters.exams?.length) {
@@ -282,6 +291,9 @@ async function rowsForQuestionIds(table, columns, questionIds, configure = (quer
 
 async function validationMembership(filters, questions) {
   const questionIds = questions.map((question) => question.id);
+  const indexed = state.meta.questionTaxonomy.filter((question) => questionIds.includes(question.id));
+  const pyqQuestionIds = filterAnalyticsPopulation(indexed, { ...filters, pyq: 'yes' });
+  const nonPyqQuestionIds = filterAnalyticsPopulation(indexed, { ...filters, pyq: 'no' });
   const topicQuestionIds = (filters.topics || []).length
     ? unique(await rowsForQuestionIds('question_topics', 'question_id', questionIds, (query) => query.in('topic_id', filters.topics)))
     : questionIds;
@@ -289,7 +301,7 @@ async function validationMembership(filters, questions) {
     ? unique(await rowsForQuestionIds('question_subtopics', 'question_id', questionIds, (query) => query.in('subtopic_id', filters.subtopics)))
     : questionIds;
   const statuses = new Set(filters.statuses || []);
-  if (!statuses.size || statuses.has('all')) return { topicQuestionIds, subtopicQuestionIds, statusQuestionIds: questionIds };
+  if (!statuses.size || statuses.has('all')) return { topicQuestionIds, subtopicQuestionIds, statusQuestionIds: questionIds, pyqQuestionIds, nonPyqQuestionIds };
 
   const statusQuestionIds = new Set();
   if (statuses.has('my_content')) questions.filter((question) => question.content_origin === 'user' && question.created_by === state.user.id).forEach((question) => statusQuestionIds.add(question.id));
@@ -316,15 +328,14 @@ async function validationMembership(filters, questions) {
     const attempted = new Set(unique(await rowsForQuestionIds('question_attempts', 'question_id', questionIds, (query) => query.eq('user_id', state.user.id))));
     questionIds.filter((questionId) => !attempted.has(questionId)).forEach((questionId) => statusQuestionIds.add(questionId));
   }
-  return { topicQuestionIds, subtopicQuestionIds, statusQuestionIds: [...statusQuestionIds] };
+  return { topicQuestionIds, subtopicQuestionIds, statusQuestionIds: [...statusQuestionIds], pyqQuestionIds, nonPyqQuestionIds };
 }
 
 function applyDirectFilters(query, filters) {
+  query = query.eq('is_usable', true);
   if (filters.platforms?.length) query = query.in('platform_id', filters.platforms);
   if (filters.subjects?.length) query = query.in('subject_id', filters.subjects);
   if (filters.systems?.length) query = query.in('system_id', filters.systems);
-  if (filters.pyq === 'yes') query = query.eq('is_pyq', true);
-  if (filters.pyq === 'no') query = query.eq('is_pyq', false);
   if (filters.years?.length) query = query.in('exam_year', filters.years.map(Number));
   if (filters.sessions?.length) query = query.in('exam_shift', filters.sessions);
   if (filters.year) query = query.eq('exam_year', Number(filters.year));
@@ -335,11 +346,7 @@ function applyDirectFilters(query, filters) {
 }
 
 async function matchingCount(filters) {
-  const candidate = await candidateIds(filters);
-  if (candidate && !candidate.size) return 0;
-  let query = applyDirectFilters(db.from('questions').select('*', { count: 'exact', head: true }), filters);
-  if (candidate) query = query.in('id', [...candidate]);
-  const { count, error } = await query; if (error) throw error; return count || 0;
+  return (await matchingQuestionIds(filters)).length;
 }
 
 async function updateMatchCount(form) {
@@ -461,7 +468,7 @@ async function loadQuestionsByIds(questionIds, filters = {}) {
   const ordered = [...new Set((questionIds || []).map(String).filter(Boolean))];
   const rows = [];
   for (let index = 0; index < ordered.length; index += 200) {
-    const result = await db.from('questions').select('*').in('id', ordered.slice(index, index + 200));
+    const result = await db.from('questions').select('*').in('id', ordered.slice(index, index + 200)).eq('is_usable', true);
     if (result.error) throw result.error;
     rows.push(...(result.data || []));
   }
@@ -479,12 +486,17 @@ async function loadQuestionsByIds(questionIds, filters = {}) {
 async function matchingQuestionIds(filters) {
   const candidate = await candidateIds(filters);
   if (candidate && !candidate.size) return [];
+  let rows;
   if (candidate && candidate.size <= 400) {
-    const query = applyDirectFilters(db.from('questions').select('id'), filters).in('id', [...candidate]);
-    const { data, error } = await query; if (error) throw error;
-    return (data || []).map((row) => row.id);
+    rows = [];
+    const values = [...candidate];
+    for (let index = 0; index < values.length; index += 100) {
+      const query = applyDirectFilters(db.from('questions').select('id'), filters).in('id', values.slice(index, index + 100));
+      const { data, error } = await query; if (error) throw error; rows.push(...(data || []));
+    }
+  } else {
+    rows = await paged(() => applyDirectFilters(db.from('questions').select('id'), filters));
   }
-  const rows = await paged(() => applyDirectFilters(db.from('questions').select('id'), filters));
   const valid = new Set(rows.map((row) => row.id).filter((id) => !candidate || candidate.has(id)));
   if (filters.source_tests?.length) {
     const occurrences = await optional(db.from('qbank_source_occurrences').select('question_id,question_position,qbank_source_tests!inner(sequence)').in('source_test_id', filters.source_tests).eq('is_current', true).order('question_position'), 'hybrid');
@@ -913,8 +925,8 @@ async function review() {
   const now = new Date().toISOString();
   const learning = await optional(db.from('user_question_state').select('*').eq('user_id', state.user.id), 'learning');
   const rows = learning.data || [];
-  const selected = state.reviewFilters || { platforms: [], subjects: [], systems: [], topics: [], subtopics: [] };
-  const validIds = new Set(resolveTaxonomyCascade(state.meta.questionTaxonomy, selected).matchingQuestionIds);
+  const selected = state.reviewFilters || { platforms: [], subjects: [], systems: [], topics: [], subtopics: [], source_tests: [], pyq: '' };
+  const validIds = new Set(await matchingQuestionIds({ ...selected, statuses: ['all'], year: '', search: '', source: '' }));
   const categories = [
     ['incorrect', 'Incorrect', rows.filter((x) => x.last_is_correct === false || x.wrong), 'Questions whose current learning state is incorrect.'],
     ['correct', 'Correct', rows.filter((x) => x.last_is_correct === true), 'Questions whose current learning state is correct.'],
@@ -936,7 +948,9 @@ async function review() {
   }).join('');
   layout(`<div class="page-heading"><span class="eyebrow">REVIEW</span><h1>Everything worth revisiting</h1><p>Filter the review population, then browse or test the exact same question IDs.</p></div>${!state.features.learning ? featureNotice('Apply the learning-interface migration for accurate consolidated review counts.') : ''}<section class="card builder-card"><form id="review-filter-form" class="stack"><div class="filters">${multiPicker('platforms', 'Platforms', state.meta.platforms)}${multiPicker('subjects', 'Subjects', state.meta.subjects)}${multiPicker('systems', 'Systems (optional)', state.meta.systems)}${multiPicker('topics', 'Topics', state.meta.topics)}${multiPicker('subtopics', 'Subtopics', state.meta.subtopics)}</div><div class="row"><button class="button">Apply review filters</button><button type="button" class="button ghost" data-action="clear-review-filters">Clear</button></div></form></section><section class="review-stack">${cards}</section><section class="card section-card"><div class="section-heading"><h2>Test history</h2><a class="button secondary" href="#/history">Open history</a></div></section>`);
   const form = document.querySelector('#review-filter-form');
-  for (const level of ['platforms', 'subjects', 'systems', 'topics', 'subtopics']) (selected[level] || []).forEach((id) => { const input = form.querySelector(`input[name="${level}"][value="${CSS.escape(String(id))}"]`); if (input) input.checked = true; });
+  if (state.meta.sourceTests.length) form.querySelector('.filters')?.insertAdjacentHTML('beforeend', `${multiPicker('source_tests', 'Source Tests', state.meta.sourceTests)}<div class="field"><label>PYQ</label><select name="pyq"><option value="">All questions</option><option value="yes">PYQ only</option><option value="no">Non-PYQ</option></select></div>`);
+  for (const level of ['platforms', 'subjects', 'systems', 'topics', 'subtopics', 'source_tests']) (selected[level] || []).forEach((id) => { const input = form.querySelector(`input[name="${level}"][value="${CSS.escape(String(id))}"]`); if (input) input.checked = true; });
+  if (form.elements.pyq) form.elements.pyq.value = selected.pyq || '';
   setupDependentFilters(form);
   form.onsubmit = (event) => { event.preventDefault(); const filters = readFilters(form); state.reviewFilters = filters; review(); };
 }
@@ -1018,8 +1032,14 @@ function analyticsGroups(level) {
   const definition = {
     platform: ['platform_id', state.meta.platforms, false], subject: ['subject_id', state.meta.subjects, false],
     topic: ['topic_ids', state.meta.topics, true], subtopic: ['subtopic_ids', state.meta.subtopics, true],
+    source_test: ['source_test_ids', state.meta.sourceTests, true],
   }[level];
   const groups = new Map(); const mapping = new Map(state.meta.questionTaxonomy.map((question) => [question.id, question]));
+  if (level === 'pyq') {
+    view.questionIds.forEach((questionId) => { const row = mapping.get(String(questionId)); const key = row?.pyq_source_test_ids?.length || (row?.is_pyq && !row?.source_test_ids?.length) ? 'yes' : 'no'; if (!groups.has(key)) groups.set(key, []); groups.get(key).push(String(questionId)); });
+    const result = [...groups].map(([id, questionIds]) => ({ id, name: id === 'yes' ? 'PYQ' : 'Non-PYQ', questionIds, metric: analyticsMetric(questionIds, view.model) }));
+    view.groups.set(level, result); return result;
+  }
   if (level === 'exam') {
     view.questionIds.forEach((questionId) => (mapping.get(String(questionId))?.exams || []).forEach((key) => { if (!groups.has(key)) groups.set(key, []); groups.get(key).push(String(questionId)); }));
     const result = [...groups].map(([id, questionIds]) => ({ id, name: ANALYTICS_EXAM_LABELS[id] || id.replace(/_/g, ' '), questionIds, metric: analyticsMetric(questionIds, view.model) })).sort((a, b) => a.name.localeCompare(b.name));
@@ -1062,21 +1082,23 @@ async function analytics() {
     sessions: (filters.sessions || []).filter((value) => capabilities.sessions.includes(String(value))),
     year: '', search: '', source: '',
   };
-  const taxonomyIds = new Set(cascade.matchingQuestionIds);
-  const metadataIds = filterAnalyticsPopulation(state.meta.questionTaxonomy.filter((question) => taxonomyIds.has(question.id)), normalizedFilters);
-  const model = await fetchAnalyticsModel(metadataIds);
-  const questionIds = analyticsStatusIds(metadataIds, normalizedFilters.statuses, model);
+  const overallIds = await matchingQuestionIds({ platforms: [], subjects: [], systems: [], topics: [], subtopics: [], source_tests: [], statuses: ['all'], exams: [], years: [], sessions: [], pyq: '', year: '', search: '', source: '' });
+  const questionIds = await matchingQuestionIds(normalizedFilters);
+  const model = await fetchAnalyticsModel(overallIds);
+  const overallMetric = analyticsMetric(overallIds, model);
   const metric = analyticsMetric(questionIds, model);
   const topicSubtopicRedundant = analyticsTopicSubtopicRedundant({ questionIndex: state.meta.questionTaxonomy, topics: state.meta.topics, subtopics: state.meta.subtopics, questionIds });
   state.analyticsView = { questionIds, model, filters: normalizedFilters, groups: new Map(), topicSubtopicRedundant, capabilities };
   const combined = { title: 'Selected analytics population', questionIds, filters: normalizedFilters };
-  const candidates = [['platform', 'Platform'], ['subject', 'Subject'], ['topic', topicSubtopicRedundant ? 'Topic / Subtopic' : 'Topic'], ...(!topicSubtopicRedundant ? [['subtopic', 'Subtopic']] : []), ['exam', 'Exam'], ['year_session', 'Year / session']];
+  const candidates = [['platform', 'Platform'], ['subject', 'Subject'], ['topic', topicSubtopicRedundant ? 'Topic / Subtopic' : 'Topic'], ...(!topicSubtopicRedundant ? [['subtopic', 'Subtopic']] : []), ['source_test', 'Source Test'], ['pyq', 'PYQ']];
   const breakdowns = candidates.filter(([level]) => analyticsGroups(level).length > 1);
   if (!breakdowns.some(([level]) => level === state.analyticsBreakdown)) state.analyticsBreakdown = null;
   layout(`<div class="page-heading"><span class="eyebrow">ANALYTICS</span><h1>Overall performance</h1><p>First select the question population. Analytics then summarizes exactly that selection.</p></div><section class="card builder-card"><form id="analytics-filter-form" class="stack"><div class="filters analytics-query-filters">${multiPicker('platforms', 'Platforms', state.meta.platforms)}${multiPicker('subjects', 'Subjects', state.meta.subjects)}${multiPicker('systems', 'Systems (optional)', state.meta.systems)}${multiPicker('topics', 'Topics', state.meta.topics)}${multiPicker('subtopics', 'Subtopics', state.meta.subtopics)}${analyticsStatusPicker()}${analyticsMetadataFields(capabilities)}</div><div class="builder-footer"><div><b>${metric.ids.length.toLocaleString()} questions selected</b><div class="subtle">No fallback questions are substituted when a combination has zero matches.</div></div><div class="row"><button class="button">Apply analytics filters</button><button type="button" class="button ghost" data-action="clear-analytics-filters">Clear</button></div></div></form></section><section class="card analytics-summary"><div class="section-heading"><div><span class="eyebrow">SELECTED POPULATION</span><h2>${metric.ids.length} questions available</h2><p class="subtle">Primary accuracy uses the newest answer for each attempted question.</p></div>${analyticsPopulationControls(combined)}</div><div class="analytics-primary-metrics"><div><span>Mastery accuracy</span><b>${metric.latestAccuracy}</b><small>latest answers</small></div><div><span>Questions attempted</span><b>${metric.attempted.length} / ${metric.ids.length}</b><small>unique questions</small></div><div><span>Currently incorrect</span><b>${metric.incorrect.length}</b><small>latest answer</small></div><div><span>Average time</span><b>${metric.averageTime == null ? '—' : `${metric.averageTime}s`}</b><small>across attempts</small></div></div><div class="analytics-secondary"><span>Bookmarked <b>${metric.bookmarked.length}</b></span><span>Marked for Review <b>${metric.marked.length}</b></span><span>Recall Due <b>${metric.recallDue.length}</b></span>${metric.pyq.length ? `<span>PYQ <b>${metric.pyq.length}</b></span>` : ''}</div><details class="analytics-more-details"><summary>More details</summary><div class="compact-stats"><span>Total attempts <b>${metric.attempts}</b></span><span>Unique correct <b>${metric.correct.length}</b></span><span>Attempt accuracy <b>${metric.attemptAccuracy}</b></span><span>Slow &gt;50s <b>${metric.slow.length}</b></span><span>Repeatedly incorrect <b>${metric.repeatedIncorrect.length}</b></span></div><p class="analytics-rule">Weak area = at least 2 unique attempted questions and latest-answer accuracy below 60%. Repeatedly incorrect = at least 2 incorrect attempts on the same question.</p></details></section><section class="card detailed-analytics"><div class="section-heading"><div><span class="eyebrow">BREAK DOWN THIS SELECTION BY</span><h2>Optional detailed analysis</h2></div>${topicSubtopicRedundant && analyticsGroups('topic').length > 1 ? '<span class="subtle">Topic and Subtopic are equivalent in this selection, so one combined view is shown.</span>' : ''}</div>${breakdowns.length ? `<div class="breakdown-selector">${breakdowns.map(([level, label]) => `<button class="button ${state.analyticsBreakdown === level ? '' : 'secondary'}" data-action="select-analytics-breakdown" data-level="${level}">By ${e(label)}</button>`).join('')}</div><div id="analytics-breakdown-selected" class="analytics-breakdown-content">${state.analyticsBreakdown ? '' : '<div class="empty">Choose one useful breakdown. No rows are rendered by default.</div>'}</div>` : '<div id="analytics-breakdown-selected" class="empty">This selection has no useful multi-group breakdown.</div>'}</section>`);
   const form = document.querySelector('#analytics-filter-form');
+  document.querySelector('.builder-card')?.insertAdjacentHTML('beforebegin', `<section class="card analytics-summary" data-analytics-overall><div class="section-heading"><div><span class="eyebrow">OVERALL ANALYTICS</span><h2>${overallMetric.ids.length} usable questions</h2><p class="subtle">Always reflects the complete usable QBank, independent of the detailed filters below.</p></div></div><div class="analytics-primary-metrics"><div><span>Latest-answer accuracy</span><b>${overallMetric.latestAccuracy}</b><small>newest answer per attempted question</small></div><div><span>Unique attempted</span><b>${overallMetric.attempted.length}</b><small>of ${overallMetric.ids.length} available</small></div><div><span>Latest correct</span><b>${overallMetric.correct.length}</b><small>current question state</small></div><div><span>Latest incorrect</span><b>${overallMetric.incorrect.length}</b><small>current question state</small></div></div><div class="analytics-secondary"><span>Total attempts <b>${overallMetric.attempts}</b></span><span>Attempt accuracy <b>${overallMetric.attemptAccuracy}</b></span><span>Bookmarked <b>${overallMetric.bookmarked.length}</b></span><span>Marked for Review <b>${overallMetric.marked.length}</b></span><span>Recall Due <b>${overallMetric.recallDue.length}</b></span><span>Average time <b>${overallMetric.averageTime == null ? '—' : `${overallMetric.averageTime}s`}</b></span><span>Repeatedly incorrect <b>${overallMetric.repeatedIncorrect.length}</b></span></div></section>`);
+  if (state.meta.sourceTests.length) form.querySelector('.analytics-query-filters')?.insertAdjacentHTML('beforeend', multiPicker('source_tests', 'Source Tests', state.meta.sourceTests));
   form.querySelectorAll('input[name="statuses"]').forEach((input) => { input.checked = false; });
-  for (const level of ['platforms', 'subjects', 'systems', 'topics', 'subtopics', 'statuses', 'exams', 'years', 'sessions']) (normalizedFilters[level] || []).forEach((id) => { const input = form.querySelector(`input[name="${level}"][value="${CSS.escape(String(id))}"]`); if (input) input.checked = true; });
+  for (const level of ['platforms', 'subjects', 'systems', 'topics', 'subtopics', 'source_tests', 'statuses', 'exams', 'years', 'sessions']) (normalizedFilters[level] || []).forEach((id) => { const input = form.querySelector(`input[name="${level}"][value="${CSS.escape(String(id))}"]`); if (input) input.checked = true; });
   form.elements.pyq.value = normalizedFilters.pyq || '';
   setupDependentFilters(form);
   form.onsubmit = (event) => { event.preventDefault(); state.analyticsFilters = readFilters(form); analytics(); };

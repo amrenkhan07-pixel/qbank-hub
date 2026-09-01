@@ -8,6 +8,7 @@ from pathlib import Path
 
 from scripts.prepladder_import import (
     build_plan,
+    canonical_subject,
     canonical_payload,
     correct_keys,
     deterministic_uuid,
@@ -16,6 +17,7 @@ from scripts.prepladder_import import (
     import_preflight,
     iter_source_tests,
     sha256_bytes,
+    validate_question,
 )
 
 
@@ -134,6 +136,17 @@ class PrepLadderImporterTests(unittest.TestCase):
         plan = build_plan(self.source)
         self.assertFalse(plan.report["valid"])
         self.assertTrue(any("invalid option count" in error for error in plan.report["structural_errors"]))
+
+    def test_anaesthesia_aliases_share_one_canonical_identity(self):
+        for spelling in ("Anaesthesia", "Anesthesia", "Anaesthesiology", "Anesthesiology", "Anasthesia"):
+            self.assertEqual(canonical_subject(spelling), "Anaesthesia")
+        self.assertEqual(build_plan(self.source, "Anesthesia").manifest["subject"], "Anaesthesia")
+
+    def test_blank_required_option_is_rejected_before_commit(self):
+        row = question("broken")
+        row["options"][2]["text"] = "<span> </span>"
+        errors = validate_question(row, "fixture", 1)
+        self.assertTrue(any("blank required option content" in error for error in errors))
 
     def test_media_references_are_preserved_without_binary_download(self):
         row = question("media", question_images=["https://example.test/q.png"], explanation_images=["https://example.test/e.png"], audio={"url": "https://example.test/a.mp3"})

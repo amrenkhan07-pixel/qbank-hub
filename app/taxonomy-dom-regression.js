@@ -1,4 +1,4 @@
-import { resolveTaxonomyCascade } from './validation.js?v=20260828-cascade';
+import { resolveTaxonomyCascade } from './validation.js?v=20260902-pilot-analytics';
 
 const levels = ['platforms', 'subjects', 'systems', 'topics', 'subtopics'];
 const normalize = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
@@ -76,7 +76,7 @@ export async function runTaxonomyDomRegression({ form, questionIndex }) {
   const anesthesiaOnly = ['Pre Anesthesia Evaluation', 'Pre-Anesthesia Evaluation', 'Regional Anesthesia', 'Local Anesthetics', 'Pediatric and Obstetric Anesthesia'];
   const cases = {};
 
-  await choose(form, { platforms: ['Cerebellum'], subjects: ['Anesthesia'] });
+  await choose(form, { platforms: ['Cerebellum'], subjects: ['Anaesthesia'] });
   let active = selected(form);
   let valid = expected(questionIndex, active);
   const anesthesiaTopics = renderedIds(form, 'topics');
@@ -95,7 +95,7 @@ export async function runTaxonomyDomRegression({ form, questionIndex }) {
     && same(anatomySubtopics, valid.subtopics)
     && excludes([...labels(form, 'topics'), ...labels(form, 'subtopics')], anesthesiaOnly);
 
-  await choose(form, { platforms: ['Cerebellum'], subjects: ['Anatomy', 'Anesthesia'] });
+  await choose(form, { platforms: ['Cerebellum'], subjects: ['Anatomy', 'Anaesthesia'] });
   active = selected(form);
   valid = expected(questionIndex, active);
   const mixedTopics = renderedIds(form, 'topics');
@@ -105,7 +105,7 @@ export async function runTaxonomyDomRegression({ form, questionIndex }) {
     && same(mixedTopics, new Set([...anatomyTopics, ...anesthesiaTopics]))
     && same(mixedSubtopics, new Set([...anatomySubtopics, ...anesthesiaSubtopics]));
 
-  await choose(form, { platforms: ['Cerebellum'], subjects: ['Anesthesia'], subtopics: ['Local Anesthetics'] });
+  await choose(form, { platforms: ['Cerebellum'], subjects: ['Anaesthesia'], subtopics: ['Local Anesthetics'] });
   await choose(form, { platforms: ['Cerebellum'], subjects: ['Anatomy'], subtopics: ['Local Anesthetics'] });
   active = selected(form);
   const localRows = [...rows(form, 'topics'), ...rows(form, 'subtopics')].filter((item) => normalize(item.label) === normalize('Local Anesthetics'));
@@ -118,6 +118,21 @@ export async function runTaxonomyDomRegression({ form, questionIndex }) {
   active = selected(form);
   valid = expected(questionIndex, active);
   cases.zeroCountLabelsHidden = levels.every((level) => same(renderedIds(form, level), valid[level]));
+
+  await choose(form, { platforms: ['PrepLadder'], subjects: ['Anaesthesia'] });
+  const prepSourceRows = visible(form, 'source_tests');
+  cases.prepladderCanonicalSubject = selected(form).subjects.length === 1;
+  cases.sourceTestsSeparateFromTaxonomy = prepSourceRows.length === 30
+    && visible(form, 'topics').length === 0 && visible(form, 'subtopics').length === 0;
+  form.elements.pyq.value = 'yes'; form.elements.pyq.dispatchEvent(new Event('change', { bubbles: true })); await pause(400);
+  cases.prepladderPyq = await matchCount(form) === '147 questions match';
+  form.elements.pyq.value = 'no'; form.elements.pyq.dispatchEvent(new Event('change', { bubbles: true })); await pause(400);
+  cases.prepladderNonPyq = await matchCount(form) === '236 questions match';
+  form.elements.pyq.value = ''; form.elements.pyq.dispatchEvent(new Event('change', { bubbles: true }));
+  const firstSource = prepSourceRows[0]; firstSource.input.checked = true;
+  firstSource.input.dispatchEvent(new Event('change', { bubbles: true })); await pause(375);
+  await choose(form, { platforms: ['Cerebellum'], subjects: ['Anaesthesia'] });
+  cases.sourceTestParentPruning = !firstSource.input.checked && !isRendered(firstSource.row);
 
   await choose(form, {});
   const status = Object.values(cases).every(Boolean) ? 'PASS' : 'FAIL';

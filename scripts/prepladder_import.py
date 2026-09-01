@@ -35,6 +35,7 @@ VERSION = "1.0.0"
 SCHEMA_VERSION = 1
 PLATFORM = "PrepLadder"
 DEFAULT_SUBJECT = "Anaesthesia"
+ANAESTHESIA_ALIASES = {"anaesthesia", "anesthesia", "anaesthesiology", "anesthesiology", "anasthesia"}
 DEFAULT_URL = "https://flulljensjugfcxmeczu.supabase.co"
 BUCKET = "qbank-payloads"
 NAMESPACE = uuid.UUID("58a63f95-2078-4a4d-aa42-a8d660ef1317")
@@ -109,6 +110,11 @@ def clean_text(value: Any) -> str:
 def slug(value: str) -> str:
     text = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode().lower()
     return re.sub(r"[^a-z0-9]+", "-", text).strip("-") or "item"
+
+
+def canonical_subject(value: str) -> str:
+    normalized = re.sub(r"[^a-z]", "", unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode().casefold())
+    return DEFAULT_SUBJECT if normalized in ANAESTHESIA_ALIASES else str(value or "").strip()
 
 
 def _find_assignment(mapping: mmap.mmap, marker: bytes, occurrence: int = 1) -> int:
@@ -230,6 +236,8 @@ def validate_question(question: Dict[str, Any], test_id: str, position: int) -> 
         errors.append(f"invalid option count {len(options)}")
     if len(set(keys)) != len(keys) or any(not re.fullmatch(r"[A-H]", key or "") for key in keys):
         errors.append("invalid or duplicate option keys")
+    if any(not clean_text(option.get("text")) for option in options):
+        errors.append("blank required option content")
     answers = correct_keys(question)
     if not answers:
         errors.append("no correct option")
@@ -249,16 +257,17 @@ class PilotPlan:
 
 
 def build_plan(source: Path, subject: str = DEFAULT_SUBJECT) -> PilotPlan:
+    subject = canonical_subject(subject)
     source_hash = sha256_file(source)
     source_size = source.stat().st_size
     folder_tree = extract_folder_tree(source)
     folders = folder_tree.get("folders") or []
-    folder = next((item for item in folders if str(item.get("name") or "").casefold() == subject.casefold()), None)
+    folder = next((item for item in folders if canonical_subject(str(item.get("name") or "")) == subject), None)
     if not folder:
         raise ValueError(f"subject not found in FOLDER_TREE: {subject}")
     declared_tests = folder.get("tests") or []
     declared_by_id = {str(test.get("id")): test for test in declared_tests}
-    tests = [test for test in iter_source_tests(source) if source_subject(test).casefold() == subject.casefold()]
+    tests = [test for test in iter_source_tests(source) if canonical_subject(source_subject(test)) == subject]
     errors: List[str] = []
     warnings: List[str] = []
     unsupported = Counter()
@@ -543,7 +552,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--url", default=os.environ.get("SUPABASE_URL", DEFAULT_URL))
     args = parser.parse_args(argv)
     source = Path(args.source).expanduser().resolve()
-    if args.subject.casefold() != DEFAULT_SUBJECT.casefold():
+    if canonical_subject(args.subject) != DEFAULT_SUBJECT:
         parser.error("pilot safety boundary permits Anaesthesia only")
     try:
         validate_source_access(source)

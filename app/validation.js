@@ -12,21 +12,32 @@ export function buildTaxonomyIndex(questionRows = []) {
     system_id: String(question.system_id || ''),
     topic_ids: stringIds((question.question_topics || question.topic_ids || []).map((item) => item?.topic_id ?? item)),
     subtopic_ids: stringIds((question.question_subtopics || question.subtopic_ids || []).map((item) => item?.subtopic_id ?? item)),
+    source_test_ids: stringIds(question.source_test_ids),
+    pyq_source_test_ids: stringIds(question.pyq_source_test_ids),
+    non_pyq_source_test_ids: stringIds(question.non_pyq_source_test_ids),
+    is_usable: question.is_usable !== false,
     is_pyq: question.is_pyq === true,
     exams: stringIds([...(question.is_inicet ? ['inicet'] : []), ...(question.is_neet_pg ? ['neet_pg'] : []), ...(question.exam_tags || [])].map((value) => String(value).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, ''))),
     exam_year: question.exam_year == null ? '' : String(question.exam_year),
     exam_session: String(question.exam_shift || ''),
-  })).filter((question) => question.id && question.platform_id && question.subject_id);
+  })).filter((question) => question.id && question.platform_id && question.subject_id && question.is_usable);
 }
 
 export function filterAnalyticsPopulation(questionIndex = [], filters = {}) {
   const allowed = {
     pyq: String(filters.pyq || ''), exams: new Set(stringIds(filters.exams)),
     years: new Set(stringIds(filters.years)), sessions: new Set(stringIds(filters.sessions)),
+    sourceTests: new Set(stringIds(filters.source_tests)),
   };
   return questionIndex.filter((question) => {
-    if (allowed.pyq === 'yes' && !question.is_pyq) return false;
-    if (allowed.pyq === 'no' && question.is_pyq) return false;
+    const sourceTests = question.source_test_ids || [];
+    const scopedSourceTests = allowed.sourceTests.size ? sourceTests.filter((id) => allowed.sourceTests.has(id)) : sourceTests;
+    if (allowed.sourceTests.size && !scopedSourceTests.length) return false;
+    const pyqSourceTests = question.pyq_source_test_ids || [];
+    const nonPyqSourceTests = question.non_pyq_source_test_ids || [];
+    const matchesPyqSource = (ids) => allowed.sourceTests.size ? ids.some((id) => allowed.sourceTests.has(id)) : ids.length > 0;
+    if (allowed.pyq === 'yes' && !(matchesPyqSource(pyqSourceTests) || (!sourceTests.length && question.is_pyq))) return false;
+    if (allowed.pyq === 'no' && !(matchesPyqSource(nonPyqSourceTests) || (!sourceTests.length && !question.is_pyq))) return false;
     if (allowed.exams.size && !(question.exams || []).some((exam) => allowed.exams.has(exam))) return false;
     if (allowed.years.size && !allowed.years.has(String(question.exam_year))) return false;
     if (allowed.sessions.size && !allowed.sessions.has(String(question.exam_session))) return false;
@@ -87,7 +98,7 @@ function result(check, failures, details = '') {
 export function validateGeneratedQuestionSet({
   questions = [], filters = {}, requested = 0, matchingCount = 0,
   topicQuestionIds = [], subtopicQuestionIds = [], statusQuestionIds = [],
-  allowDuplicates = false,
+  pyqQuestionIds = [], nonPyqQuestionIds = [], allowDuplicates = false,
 }) {
   const checks = [];
   const questionIds = ids(questions);
@@ -107,12 +118,15 @@ export function validateGeneratedQuestionSet({
   const exams = asSet((filters.exams || []).map(String));
   const years = asSet((filters.years || []).map(String));
   const sessions = asSet((filters.sessions || []).map(String));
+  const pyqIds = asSet(pyqQuestionIds.map(String));
+  const nonPyqIds = asSet(nonPyqQuestionIds.map(String));
   for (const question of questions) {
     if (platforms.size && !platforms.has(String(question.platform_id))) directFailures.push(`${question.id}:platform`);
     if (subjects.size && !subjects.has(String(question.subject_id))) directFailures.push(`${question.id}:subject`);
     if (systems.size && !systems.has(String(question.system_id))) directFailures.push(`${question.id}:system`);
-    if (filters.pyq === 'yes' && question.is_pyq !== true) directFailures.push(`${question.id}:pyq`);
-    if (filters.pyq === 'no' && question.is_pyq === true) directFailures.push(`${question.id}:non_pyq`);
+    if (filters.pyq === 'yes' && !(pyqIds.size ? pyqIds.has(String(question.id)) : question.is_pyq === true)) directFailures.push(`${question.id}:pyq`);
+    if (filters.pyq === 'no' && !(nonPyqIds.size ? nonPyqIds.has(String(question.id)) : question.is_pyq !== true)) directFailures.push(`${question.id}:non_pyq`);
+    if (question.is_usable === false) directFailures.push(`${question.id}:unusable`);
     const questionExams = new Set([...(question.is_inicet ? ['inicet'] : []), ...(question.is_neet_pg ? ['neet_pg'] : []), ...(question.exam_tags || [])].map((value) => String(value).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')));
     if (exams.size && ![...exams].some((exam) => questionExams.has(exam))) directFailures.push(`${question.id}:exam`);
     if (years.size && !years.has(String(question.exam_year ?? ''))) directFailures.push(`${question.id}:exam_year`);

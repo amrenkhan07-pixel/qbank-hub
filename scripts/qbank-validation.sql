@@ -60,7 +60,7 @@ cerebellum_platform as (
   select id from public.platforms where lower(btrim(name)) = 'cerebellum'
 ),
 anesthesia_subject as (
-  select id from public.subjects where lower(btrim(name)) = 'anesthesia'
+  select id from public.subjects where lower(btrim(name)) = 'anaesthesia'
 ),
 anatomy_subject as (
   select id from public.subjects where lower(btrim(name)) = 'anatomy'
@@ -135,6 +135,52 @@ checks(check_name, failures, detail) as (
   where t.declared_question_count <> (
     select count(*) from public.qbank_source_occurrences o where o.source_test_id=t.id and o.is_current
   )
+
+  union all select 'prepladder.canonical_anaesthesia_subject',
+    case when count(*)=1 and min(name)='Anaesthesia' then 0 else 1 end,
+    format('%s Anaesthesia alias rows; canonical display must be Anaesthesia', count(*))
+  from public.subjects
+  where lower(btrim(name)) in ('anaesthesia','anesthesia','anaesthesiology','anesthesiology','anasthesia')
+
+  union all select 'prepladder.pilot_source_test_counts',
+    case when count(*)=30 and count(*) filter (where t.is_pyq)=14 then 0 else 1 end,
+    format('%s source tests; %s PYQ tests', count(*), count(*) filter (where t.is_pyq))
+  from public.qbank_source_tests t
+  join public.platforms p on p.id=t.platform_id
+  join public.subjects s on s.id=t.subject_id
+  where lower(p.name)='prepladder' and s.name='Anaesthesia'
+
+  union all select 'prepladder.pilot_occurrence_counts',
+    case when count(*)=402 and count(*) filter (where o.is_pyq)=162 then 0 else 1 end,
+    format('%s occurrences; %s PYQ occurrences', count(*), count(*) filter (where o.is_pyq))
+  from public.qbank_source_occurrences o
+  join public.qbank_source_tests t on t.id=o.source_test_id
+  join public.platforms p on p.id=t.platform_id
+  join public.subjects s on s.id=t.subject_id
+  where o.is_current and lower(p.name)='prepladder' and s.name='Anaesthesia'
+
+  union all select 'prepladder.four_broken_questions_quarantined',
+    case when count(distinct q.id)=4 then 0 else 1 end,
+    format('%s of 4 source-incomplete questions quarantined', count(distinct q.id))
+  from public.questions q
+  join public.qbank_source_occurrences o on o.question_id=q.id and o.is_current
+  where o.source_question_id in ('846800','846703','846768','846764')
+    and q.is_usable=false and q.unusable_reason='SOURCE_CONTENT_INCOMPLETE'
+
+  union all select 'prepladder.unusable_absent_from_study_state', count(*), format('%s study/session rows reference quarantined questions', count(*))
+  from (
+    select question_id from public.question_attempts
+    union all select question_id from public.user_question_state
+    union all select question_id from public.test_session_questions
+    union all select question_id from public.test_answers
+  ) study
+  join public.questions q on q.id=study.question_id
+  where not q.is_usable
+
+  union all select 'prepladder.usable_population_counts',
+    case when count(*) filter (where lower(p.name)='prepladder')=383 and count(*)=801 then 0 else 1 end,
+    format('%s total usable; %s PrepLadder usable', count(*), count(*) filter (where lower(p.name)='prepladder'))
+  from public.questions q join public.platforms p on p.id=q.platform_id where q.is_usable
 
   union all select 'hybrid.current_occurrence_positions_unique', count(*), format('%s duplicate current source-test positions', count(*))
   from (
