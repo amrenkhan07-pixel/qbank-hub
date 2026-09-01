@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -167,6 +167,8 @@ const stylesSource = readFileSync(resolve(root, 'app/styles.css'), 'utf8');
 const domRegressionSource = readFileSync(resolve(root, 'app/taxonomy-dom-regression.js'), 'utf8');
 const importerSource = readFileSync(resolve(root, 'scripts/qbank_import.py'), 'utf8');
 const importerMigration = readFileSync(resolve(root, 'supabase/migrations/202608280003_qbank_import_pipeline.sql'), 'utf8');
+const prepImporterSource = readFileSync(resolve(root, 'scripts/prepladder_import.py'), 'utf8');
+const prepImporterMigration = readFileSync(resolve(root, 'supabase/migrations/202609010001_prepladder_hybrid_import.sql'), 'utf8');
 check('frontend.canonical_learning_state_table', !appSource.includes("from('question_learning_state')"), 'expected user_question_state');
 check('frontend.live_session_total_columns', !/\bquestion_count\b|\bcorrect_count\b/.test(appSource), 'expected total_questions/total_correct');
 check('frontend.generated_set_guard_installed', appSource.includes('validateGeneratedQuestionSet'));
@@ -211,13 +213,23 @@ check('browser.taxonomy_dom_regression_installed', appSource.includes('runTaxono
   && domRegressionSource.includes('mixedUnion')
   && domRegressionSource.includes('invalidChildPruning')
   && domRegressionSource.includes('zeroCountLabelsHidden'));
-check('frontend.cascade_modules_cache_busted', appSource.includes("./validation.js?v=20260831-analytics-final")
-  && readFileSync(resolve(root, 'index.html'), 'utf8').includes('./app/app.js?v=20260831-analytics-final'));
+check('frontend.cascade_modules_cache_busted', appSource.includes("./validation.js?v=20260901-prepladder-hybrid")
+  && readFileSync(resolve(root, 'index.html'), 'utf8').includes('./app/app.js?v=20260901-prepladder-hybrid'));
 const importerTests = spawnSync('python3', ['-m', 'unittest', 'scripts.tests.test_qbank_import'], { cwd: root, encoding: 'utf8' });
 check('importer.fixture_and_scale_tests', importerTests.status === 0, (importerTests.stderr || importerTests.stdout || '').trim().split('\n').slice(-1)[0] || 'python unittest');
 check('importer.dry_run_default_is_read_only', /database_modified["']?:?\s*False/.test(importerSource) && /--confirm-import/.test(importerSource));
 check('importer.classifies_all_safety_states', ['NEW', 'EXACT EXISTING MATCH', 'POSSIBLE DUPLICATE', 'INVALID', 'CONFLICT'].every((value) => importerSource.includes(value)));
 check('importer.transactional_service_role_only_rpc', /security invoker/i.test(importerMigration) && /revoke all on function public\.qbank_import_batch\(jsonb\) from public, anon, authenticated/i.test(importerMigration) && /grant execute on function public\.qbank_import_batch\(jsonb\) to service_role/i.test(importerMigration));
+const prepImporterTests = spawnSync('python3', ['-m', 'unittest', 'scripts.tests.test_prepladder_import'], { cwd: root, encoding: 'utf8' });
+check('prepladder.fixture_structure_dedup_media_multicorrect', prepImporterTests.status === 0, (prepImporterTests.stderr || prepImporterTests.stdout || '').trim().split('\n').slice(-1)[0] || 'python unittest');
+check('prepladder.master_source_is_not_tracked', !existsSync(resolve(root, 'import-source/PREP_q_banks.html')) && readFileSync(resolve(root, '.gitignore'), 'utf8').split(/\r?\n/).includes('import-source/'));
+check('prepladder.dry_run_default_and_pilot_guard', /Dry-run is the default/i.test(prepImporterSource) && /pilot safety boundary permits Anaesthesia only/.test(prepImporterSource) && /SUPABASE_SERVICE_ROLE_KEY/.test(prepImporterSource));
+check('prepladder.hybrid_payload_hydration_installed', appSource.includes('hydrateHybridQuestions') && appSource.includes("storage.from('qbank-payloads').download") && appSource.includes('DecompressionStream'));
+check('prepladder.source_test_order_and_filter_installed', appSource.includes("multiPicker('source_tests'") && appSource.includes("from('qbank_source_occurrences')") && appSource.includes('question_position'));
+check('prepladder.multi_correct_rendering_installed', appSource.includes('correct_option_keys') && appSource.includes('submit-multi-answer') && appSource.includes('isAnswerCorrect'));
+check('prepladder.migration_is_additive_private_and_service_only', /create table if not exists public\.qbank_question_payloads/i.test(prepImporterMigration) && /values \('qbank-payloads','qbank-payloads',false/i.test(prepImporterMigration) && /grant execute on function public\.qbank_commit_prepladder_import\(jsonb\) to service_role/i.test(prepImporterMigration));
+check('prepladder.two_phase_storage_verification', prepImporterSource.includes('upload_and_verify') && prepImporterSource.includes('delete_objects') && prepImporterMigration.includes("payload object is missing or its stored byte count differs"));
+check('prepladder.import_run_table_does_not_collide', prepImporterMigration.includes('qbank_hybrid_import_runs') && !/create table if not exists public\.qbank_import_runs/.test(prepImporterMigration));
 check('importer.protected_study_state_guard', importerMigration.includes('protected learner state changed during import'));
 
 for (const row of rows) console.log(`${row.status} — ${row.name}${row.detail ? ` — ${row.detail}` : ''}`);

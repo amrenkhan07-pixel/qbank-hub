@@ -5,13 +5,15 @@
 with
 question_option_stats as (
   select q.id,
+         (p.question_id is not null) as is_hybrid,
          count(o.id) as option_count,
          count(distinct upper(btrim(o.option_key))) filter (where nullif(btrim(o.option_key), '') is not null) as distinct_keys,
          count(*) filter (where o.id is not null and nullif(btrim(o.option_text), '') is null) as blank_options,
          count(*) filter (where o.is_correct) as correct_options
   from public.questions q
   left join public.question_options o on o.question_id = q.id
-  group by q.id
+  left join public.qbank_question_payloads p on p.question_id = q.id
+  group by q.id, p.question_id
 ),
 latest_attempt as (
   select distinct on (user_id, question_id)
@@ -93,8 +95,8 @@ cerebellum_anatomy_subtopics as (
 ),
 checks(check_name, failures, detail) as (
   select 'content.imported_question_floor',
-         greatest(418 - count(*) filter (where content_origin = 'imported'), 0)::bigint,
-         format('%s imported; baseline 418', count(*) filter (where content_origin = 'imported'))
+         greatest(805 - count(*) filter (where content_origin = 'imported'), 0)::bigint,
+         format('%s imported; baseline 805 after verified PrepLadder Anaesthesia pilot', count(*) filter (where content_origin = 'imported'))
   from public.questions
 
   union all select 'content.usable_question_stems', count(*), format('%s blank stems', count(*))
@@ -104,15 +106,46 @@ checks(check_name, failures, detail) as (
   from public.question_options o left join public.questions q on q.id = o.question_id where q.id is null
 
   union all select 'options.expected_structure', count(*), format('%s malformed question option sets', count(*))
-  from question_option_stats where option_count < 2 or option_count <> distinct_keys or blank_options > 0 or correct_options <> 1
+  from question_option_stats where not is_hybrid and (option_count < 2 or option_count <> distinct_keys or blank_options > 0 or correct_options <> 1)
 
   union all select 'options.correct_answer_matches_option', count(*), format('%s answer-key mismatches', count(*))
-  from public.questions q where not exists (
+  from public.questions q where not exists (select 1 from public.qbank_question_payloads p where p.question_id=q.id) and not exists (
     select 1 from public.question_options o
     where o.question_id = q.id
       and upper(btrim(o.option_key)) = upper(left(btrim(coalesce(q.correct_answer, '')), 1))
       and o.is_correct
   )
+
+  union all select 'hybrid.payload_option_structure', count(*), format('%s malformed hybrid payload option sets', count(*))
+  from public.qbank_question_payloads p
+  where p.option_count < 2 or p.option_count > 8
+     or cardinality(p.correct_option_keys) < 1
+     or cardinality(p.correct_option_keys) > p.option_count
+     or p.is_multi_correct <> (cardinality(p.correct_option_keys) > 1)
+
+  union all select 'hybrid.payload_relationships', count(*), format('%s broken question/payload/object relationships', count(*))
+  from public.qbank_question_payloads p
+  left join public.questions q on q.id=p.question_id
+  left join public.qbank_payload_objects o on o.id=p.payload_object_id
+  where q.id is null or o.id is null or o.status <> 'committed'
+     or q.platform_id <> p.platform_id or q.subject_id <> p.subject_id
+
+  union all select 'hybrid.source_test_counts', count(*), format('%s source tests differ from declared occurrence counts', count(*))
+  from public.qbank_source_tests t
+  where t.declared_question_count <> (
+    select count(*) from public.qbank_source_occurrences o where o.source_test_id=t.id and o.is_current
+  )
+
+  union all select 'hybrid.current_occurrence_positions_unique', count(*), format('%s duplicate current source-test positions', count(*))
+  from (
+    select source_test_id,question_position from public.qbank_source_occurrences
+    where is_current group by source_test_id,question_position having count(*) > 1
+  ) duplicates
+
+  union all select 'hybrid.storage_objects_present', count(*), format('%s committed payload records lack matching Storage objects', count(*))
+  from public.qbank_payload_objects p
+  left join storage.objects o on o.bucket_id=p.bucket_id and o.name=p.object_path
+  where p.status='committed' and (o.id is null or coalesce((o.metadata->>'size')::bigint,-1) <> p.stored_bytes)
 
   union all select 'taxonomy.question_topic_scope', count(*), format('%s platform/subject mismatches', count(*))
   from public.question_topics qt

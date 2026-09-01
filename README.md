@@ -107,3 +107,22 @@ Subject, or failing preflight test refuses the import. The database RPC uses one
 transaction and checks question/option structure, taxonomy mappings, counts,
 and protected learner-state counts before commit. Afterward, verify the actual
 authenticated Platform → Subject → System → Topic → Subtopic UI cascade.
+
+The PrepLadder pilot importer performs its remote preflight before hashing or
+parsing the large source file. It verifies source readability/format, the exact
+Supabase project, a runtime-only service-role or secret credential, Data API
+access to every hybrid migration table, and the private payload bucket. It does
+not use or wait for a localhost browser session:
+
+```bash
+SUPABASE_URL='https://flulljensjugfcxmeczu.supabase.co' \
+SUPABASE_SERVICE_ROLE_KEY='runtime-only-secret' \
+python3 scripts/prepladder_import.py \
+  --source '/absolute/path/PREP_q_banks.html' \
+  --import --acknowledge 'IMPORT PREPLADDER ANAESTHESIA ONLY'
+```
+
+If any prerequisite is wrong, the command exits with `IMPORT PREFLIGHT FAILED
+before parsing` and does not generate payloads, upload objects, or change the
+database. Never save the secret in the repository, frontend, report, or shell
+history; supply it through a secure runtime secret mechanism.

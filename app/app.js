@@ -1,5 +1,5 @@
 import { db, initError, isMissingTable, requireUser, withAuthTimeout } from './supabase.js';
-import { analyticsMetadataCapabilities, analyticsTopicSubtopicRedundant, assertValidation, buildTaxonomyIndex, filterAnalyticsPopulation, resolveTaxonomyCascade, validateGeneratedQuestionSet, validateQuestionStateBindings, validateResumeSnapshot } from './validation.js?v=20260831-analytics-final';
+import { analyticsMetadataCapabilities, analyticsTopicSubtopicRedundant, assertValidation, buildTaxonomyIndex, filterAnalyticsPopulation, resolveTaxonomyCascade, validateGeneratedQuestionSet, validateQuestionStateBindings, validateResumeSnapshot } from './validation.js?v=20260901-prepladder-hybrid';
 import { runTaxonomyDomRegression } from './taxonomy-dom-regression.js?v=20260828-dom-regression';
 
 const root = document.querySelector('#app');
@@ -9,7 +9,7 @@ const filterCountRequests = new WeakMap();
 const state = {
   user: null,
   route: 'home',
-  meta: { subjects: [], platforms: [], systems: [], topics: [], subtopics: [], tags: [], questionTaxonomy: [] },
+  meta: { subjects: [], platforms: [], systems: [], topics: [], subtopics: [], sourceTests: [], tags: [], questionTaxonomy: [] },
   active: null,
   pendingSet: null,
   actionSets: new Map(),
@@ -18,6 +18,7 @@ const state = {
   analyticsFilters: null,
   analyticsBreakdown: null,
   analyticsView: null,
+  payloadCache: new Map(),
   timer: null,
   filterTimer: null,
   features: { learning: true, subtopics: true, sessions: true, personal: true },
@@ -30,8 +31,12 @@ const route = () => location.hash.replace(/^#\/?/, '').split('?')[0] || 'home';
 const goToHash = (target) => { if (location.hash === target) render(); else location.hash = target; };
 const unique = (rows, key = 'question_id') => [...new Set((rows || []).map((row) => row[key]).filter(Boolean))];
 const byId = (rows) => new Map((rows || []).map((row) => [String(row.id), row]));
-const correctKey = (question) => String(question.correct_answer || '').trim().charAt(0).toUpperCase();
+const keyList = (value) => [...new Set(String(value || '').toUpperCase().split(',').map((key) => key.trim()).filter(Boolean))].sort();
+const correctKeys = (question) => keyList(question.correct_option_keys?.join(',') || question.correct_answer);
+const correctKey = (question) => correctKeys(question)[0] || '';
 const selectedKey = (answer) => String(answer?.selected_option || '').toUpperCase();
+const selectedKeys = (answer) => keyList(answer?.selected_option);
+const isAnswerCorrect = (question, answer) => correctKeys(question).join(',') === selectedKeys(answer).join(',');
 const intersect = (left, right) => left == null ? new Set(right) : new Set([...left].filter((value) => right.has(value)));
 
 function toast(text, kind = '') {
@@ -98,13 +103,14 @@ async function optional(query, feature) {
 
 async function loadMeta(force = false) {
   if (!force && state.meta.subjects.length && state.meta.platforms.length) return;
-  const [subjects, platforms, platformSubjects, systems, topics, subtopics, tags, questionTaxonomy] = await Promise.all([
+  const [subjects, platforms, platformSubjects, systems, topics, subtopics, sourceTests, tags, questionTaxonomy] = await Promise.all([
     db.from('subjects').select('id,name').order('name'),
     db.from('platforms').select('id,name').order('name'),
     db.from('platform_subjects').select('id,subject_id'),
     optional(db.from('systems').select('id,name,platform_subject_id').order('sort_order').order('name')),
     optional(db.from('topics').select('id,name,platform_subject_id,system_id,parent_topic_id').order('sort_order').order('name')),
     optional(db.from('subtopics').select('id,name,topic_id').order('sort_order').order('name'), 'subtopics'),
+    optional(db.from('qbank_source_tests').select('id,title,platform_id,subject_id,sequence,declared_question_count,is_pyq').order('sequence'), 'hybrid'),
     optional(db.from('tags').select('id,name').order('name')),
     paged(() => db.from('questions').select('id,platform_id,subject_id,system_id,is_pyq,is_inicet,is_neet_pg,exam_tags,exam_year,exam_shift,question_topics(topic_id),question_subtopics(subtopic_id)')),
   ]);
@@ -119,6 +125,7 @@ async function loadMeta(force = false) {
     systems: (systems.data || []).map((system) => ({ ...system, subject_id: subjectByPlatformSubject.get(system.platform_subject_id) || '' })),
     topics: hydratedTopics.filter((topic) => !topic.parent_topic_id),
     subtopics: (subtopics.data || []).map((subtopic) => ({ ...subtopic, subject_id: topicById.get(subtopic.topic_id)?.subject_id || '' })),
+    sourceTests: (sourceTests.data || []).map((test) => ({ ...test, name: test.title })),
     tags: tags.data || [],
     questionTaxonomy: buildTaxonomyIndex(questionTaxonomy),
   };
@@ -135,8 +142,8 @@ function statusPicker(revision = false) {
   return `<fieldset class="field wide status-field"><legend>Question status</legend><div class="chip-checks"><label><input type="checkbox" name="statuses" value="all" checked /> <span>All</span></label>${values.map(([value, label]) => `<label><input type="checkbox" name="statuses" value="${value}" /> <span>${label}</span></label>`).join('')}</div></fieldset>`;
 }
 
-function filterFields({ revision = false } = {}) {
-  return `${multiPicker('platforms', 'Platforms', state.meta.platforms)}${multiPicker('subjects', 'Subjects', state.meta.subjects)}${multiPicker('systems', 'Systems (optional)', state.meta.systems)}${multiPicker('topics', 'Topics', state.meta.topics, 'Choose a subject first')}${multiPicker('subtopics', 'Subtopics', state.meta.subtopics, 'Choose a topic first')}${statusPicker(revision)}<div class="field"><label>PYQ</label><select name="pyq"><option value="">All questions</option><option value="yes">PYQ only</option></select></div><div class="field"><label>Exam year/session</label><input name="year" type="number" min="1950" max="2100" placeholder="e.g. 2024" /></div><div class="field wide"><label>Search question text</label><input name="search" placeholder="e.g. thyroid, ECG, nephrotic" /></div><div class="field wide"><label>Source / collection</label><input name="source" placeholder="Cerebellum, Marrow, PrepLadder, BTR…" /></div>`;
+function filterFields({ revision = false, sourceTests = false } = {}) {
+  return `${multiPicker('platforms', 'Platforms', state.meta.platforms)}${multiPicker('subjects', 'Subjects', state.meta.subjects)}${multiPicker('systems', 'Systems (optional)', state.meta.systems)}${multiPicker('topics', 'Topics', state.meta.topics, 'Choose a subject first')}${multiPicker('subtopics', 'Subtopics', state.meta.subtopics, 'Choose a topic first')}${sourceTests && state.meta.sourceTests.length ? multiPicker('source_tests', 'Source Tests (optional)', state.meta.sourceTests) : ''}${statusPicker(revision)}<div class="field"><label>PYQ</label><select name="pyq"><option value="">All questions</option><option value="yes">PYQ only</option></select></div><div class="field"><label>Exam year/session</label><input name="year" type="number" min="1950" max="2100" placeholder="e.g. 2024" /></div><div class="field wide"><label>Search question text</label><input name="search" placeholder="e.g. thyroid, ECG, nephrotic" /></div><div class="field wide"><label>Source / collection</label><input name="source" placeholder="Cerebellum, Marrow, PrepLadder, BTR…" /></div>`;
 }
 
 function readMulti(form, name) {
@@ -148,7 +155,7 @@ function readFilters(form) {
   return {
     platforms: readMulti(form, 'platforms'), subjects: readMulti(form, 'subjects'), systems: readMulti(form, 'systems'),
     topics: readMulti(form, 'topics'), subtopics: readMulti(form, 'subtopics'), statuses: readMulti(form, 'statuses'),
-    exams: readMulti(form, 'exams'), years: readMulti(form, 'years'), sessions: readMulti(form, 'sessions'),
+    source_tests: readMulti(form, 'source_tests'), exams: readMulti(form, 'exams'), years: readMulti(form, 'years'), sessions: readMulti(form, 'sessions'),
     pyq: raw.pyq || '', srm: raw.srm || '', year: raw.year || '', search: raw.search?.trim() || '', source: raw.source?.trim() || '',
   };
 }
@@ -170,6 +177,14 @@ function setupDependentFilters(form) {
         input.checked = visible && selected.has(input.value);
       });
     }
+    const selectedPlatforms = new Set(cascade.selected.platforms); const selectedSubjects = new Set(cascade.selected.subjects);
+    form.querySelectorAll('[data-multi-field="source_tests"] input').forEach((input) => {
+      const item = state.meta.sourceTests.find((test) => String(test.id) === input.value);
+      const visible = Boolean(item) && (!selectedPlatforms.size || selectedPlatforms.has(String(item.platform_id)))
+        && (!selectedSubjects.size || selectedSubjects.has(String(item.subject_id))) && Number(item.declared_question_count) > 0;
+      const row = input.closest('.check-row'); row.hidden = !visible; row.style.display = visible ? '' : 'none';
+      if (!visible) input.checked = false;
+    });
     form.querySelectorAll('[data-multi-field]').forEach((field) => {
       const checked = readMulti(form, field.dataset.multiField);
       field.querySelector('[data-multi-summary]').textContent = checked.length ? `${checked.length} selected` : `All ${field.dataset.multiField}`;
@@ -230,6 +245,10 @@ async function candidateIds(filters) {
   }
   if (filters.subtopics?.length) {
     const result = await optional(db.from('question_subtopics').select('question_id').in('subtopic_id', filters.subtopics), 'subtopics');
+    candidate = intersect(candidate, new Set(unique(result.data)));
+  }
+  if (filters.source_tests?.length) {
+    const result = await optional(db.from('qbank_source_occurrences').select('question_id').in('source_test_id', filters.source_tests).eq('is_current', true), 'hybrid');
     candidate = intersect(candidate, new Set(unique(result.data)));
   }
   if (filters.exams?.length) {
@@ -349,6 +368,72 @@ async function batchOptions(questionIds) {
   return grouped;
 }
 
+async function sha256Buffer(buffer) {
+  const digest = await crypto.subtle.digest('SHA-256', buffer);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function decodePayloadObject(object) {
+  if (state.payloadCache.has(object.object_path)) return state.payloadCache.get(object.object_path);
+  const downloaded = await db.storage.from('qbank-payloads').download(object.object_path);
+  if (downloaded.error) throw downloaded.error;
+  const compressed = await downloaded.data.arrayBuffer();
+  if (await sha256Buffer(compressed) !== object.sha256) throw new Error(`Payload checksum failed: ${object.object_path}`);
+  let decoded = compressed;
+  if (object.compression === 'gzip') {
+    if (typeof DecompressionStream !== 'function') throw new Error('This browser cannot decompress QBank payloads.');
+    decoded = await new Response(new Blob([compressed]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+  }
+  const payload = JSON.parse(new TextDecoder().decode(decoded));
+  if (payload.schema_version !== 1 || !Array.isArray(payload.questions)) throw new Error('Unsupported QBank payload schema.');
+  state.payloadCache.set(object.object_path, payload);
+  return payload;
+}
+
+async function sourceContext(questionIds, filters = {}) {
+  if (!questionIds.length) return new Map();
+  const rows = [];
+  for (let index = 0; index < questionIds.length; index += 200) {
+    let query = db.from('qbank_source_occurrences').select('question_id,question_position,source_question_id,source_test_id,qbank_source_tests(title,sequence,is_pyq)').in('question_id', questionIds.slice(index, index + 200)).eq('is_current', true);
+    if (filters.source_tests?.length) query = query.in('source_test_id', filters.source_tests);
+    const result = await optional(query, 'hybrid'); if (!result.error) rows.push(...(result.data || []));
+  }
+  rows.sort((left, right) => Number(left.qbank_source_tests?.sequence || 0) - Number(right.qbank_source_tests?.sequence || 0) || left.question_position - right.question_position);
+  const context = new Map(); rows.forEach((row) => { if (!context.has(String(row.question_id))) context.set(String(row.question_id), row); });
+  return context;
+}
+
+async function hydrateHybridQuestions(questions, options, filters = {}) {
+  const missingIds = questions.filter((question) => !(options.get(question.id) || []).length).map((question) => question.id);
+  if (!missingIds.length) return questions.map((question) => ({ ...question, options: options.get(question.id) || [] }));
+  const refs = [];
+  for (let index = 0; index < missingIds.length; index += 200) {
+    const result = await optional(db.from('qbank_question_payloads').select('question_id,payload_index,correct_option_keys,media_status,qbank_payload_objects!inner(object_path,sha256,compression)').in('question_id', missingIds.slice(index, index + 200)), 'hybrid');
+    if (!result.error) refs.push(...(result.data || []));
+  }
+  const context = await sourceContext(missingIds, filters); const byQuestion = new Map();
+  for (const ref of refs) {
+    const object = ref.qbank_payload_objects; const document = await decodePayloadObject(object);
+    const payload = document.questions[Number(ref.payload_index)];
+    if (!payload) throw new Error(`Payload index is missing for question ${ref.question_id}`);
+    const media = payload.media || []; const source = context.get(String(ref.question_id));
+    byQuestion.set(String(ref.question_id), {
+      question_text: payload.question_html,
+      explanation_html: payload.explanation_html,
+      correct_answer: (payload.correct_keys || ref.correct_option_keys || []).join(','),
+      correct_option_keys: payload.correct_keys || ref.correct_option_keys || [],
+      options: (payload.options || []).map((option, position) => ({ question_id: ref.question_id, option_key: option.key, option_text: option.html, is_correct: option.is_correct, sort_order: position })),
+      question_images: media.filter((item) => item.placement === 'question').map((item) => item.reference),
+      explanation_images: media.filter((item) => item.placement === 'explanation').map((item) => item.reference),
+      image_url: media.find((item) => item.placement === 'question')?.reference || '',
+      source_test_label: source?.qbank_source_tests?.title || document.source_test?.title || '',
+      source_question_id: source?.source_question_id || '', source_position: source?.question_position || null,
+      media_status: ref.media_status, audio: payload.audio || null, video_url: payload.video || '',
+    });
+  }
+  return questions.map((question) => ({ ...question, options: options.get(question.id) || [], ...(byQuestion.get(String(question.id)) || {}) }));
+}
+
 async function loadQuestions(filters, requested = 10) {
   const candidate = await candidateIds(filters); if (candidate && !candidate.size) return [];
   const limit = requested === 'all' ? null : Math.max(1, Number(requested) || 10);
@@ -364,14 +449,15 @@ async function loadQuestions(filters, requested = 10) {
   }
   rows.sort(() => Math.random() - .5); if (limit) rows = rows.slice(0, limit);
   const options = await batchOptions(rows.map((row) => row.id));
-  return Promise.all(rows.map(async (question) => {
+  const hydrated = await hydrateHybridQuestions(rows, options, filters);
+  return Promise.all(hydrated.map(async (question) => {
     let imageUrl = question.image_url || '';
     if (!imageUrl && question.image_path) { const signed = await db.storage.from('question-media').createSignedUrl(question.image_path, 3600); imageUrl = signed.data?.signedUrl || ''; }
-    return { ...question, image_url: imageUrl, options: options.get(question.id) || [] };
+    return { ...question, image_url: imageUrl };
   }));
 }
 
-async function loadQuestionsByIds(questionIds) {
+async function loadQuestionsByIds(questionIds, filters = {}) {
   const ordered = [...new Set((questionIds || []).map(String).filter(Boolean))];
   const rows = [];
   for (let index = 0; index < ordered.length; index += 200) {
@@ -382,10 +468,11 @@ async function loadQuestionsByIds(questionIds) {
   const byQuestion = new Map(rows.map((question) => [String(question.id), question]));
   const questions = ordered.map((id) => byQuestion.get(id)).filter(Boolean);
   const options = await batchOptions(questions.map((question) => question.id));
-  return Promise.all(questions.map(async (question) => {
+  const hydrated = await hydrateHybridQuestions(questions, options, filters);
+  return Promise.all(hydrated.map(async (question) => {
     let imageUrl = question.image_url || '';
     if (!imageUrl && question.image_path) { const signed = await db.storage.from('question-media').createSignedUrl(question.image_path, 3600); imageUrl = signed.data?.signedUrl || ''; }
-    return { ...question, image_url: imageUrl, options: options.get(question.id) || [] };
+    return { ...question, image_url: imageUrl };
   }));
 }
 
@@ -398,7 +485,13 @@ async function matchingQuestionIds(filters) {
     return (data || []).map((row) => row.id);
   }
   const rows = await paged(() => applyDirectFilters(db.from('questions').select('id'), filters));
-  return rows.map((row) => row.id).filter((id) => !candidate || candidate.has(id));
+  const valid = new Set(rows.map((row) => row.id).filter((id) => !candidate || candidate.has(id)));
+  if (filters.source_tests?.length) {
+    const occurrences = await optional(db.from('qbank_source_occurrences').select('question_id,question_position,qbank_source_tests!inner(sequence)').in('source_test_id', filters.source_tests).eq('is_current', true).order('question_position'), 'hybrid');
+    const ordered = (occurrences.data || []).sort((left, right) => Number(left.qbank_source_tests?.sequence || 0) - Number(right.qbank_source_tests?.sequence || 0) || left.question_position - right.question_position).map((row) => row.question_id);
+    return [...new Set(ordered.filter((id) => valid.has(id)))];
+  }
+  return [...valid];
 }
 
 function shuffled(values) {
@@ -416,7 +509,7 @@ async function prepareQuestionSet({ mode = 'test', preset = 'custom', title = 'Q
   const population = questionIds ? [...new Set(questionIds.map(String))] : await matchingQuestionIds(normalizedFilters);
   const requestedCount = requested === 'all' ? population.length : Math.min(population.length, Math.max(1, Number(requested) || 10));
   const selectedIds = questionIds ? population : shuffled(population).slice(0, requestedCount);
-  const questions = await loadQuestionsByIds(selectedIds);
+  const questions = await loadQuestionsByIds(selectedIds, normalizedFilters);
   const membership = await validationMembership(normalizedFilters, questions);
   assertValidation(validateGeneratedQuestionSet({ questions, filters: normalizedFilters, requested: selectedIds.length, matchingCount: questionIds ? selectedIds.length : population.length, ...membership }), 'Generated question set');
   if (!questions.length) throw new Error('No questions match those filters.');
@@ -506,7 +599,7 @@ async function startPendingSession() {
     session = created.data;
     const snapshots = questions.map((q, position) => ({
       session_id: session.id, question_id: q.id, position,
-      question_snapshot: { question_text: q.question_text, correct_answer: q.correct_answer, explanation_html: q.explanation_html, source_reference: q.source_reference, source_collection: q.source_collection, image_url: q.image_url, subject_id: q.subject_id, platform_id: q.platform_id, system_id: q.system_id, options: q.options },
+      question_snapshot: { question_text: q.question_text, correct_answer: q.correct_answer, correct_option_keys: q.correct_option_keys || correctKeys(q), explanation_html: q.explanation_html, source_reference: q.source_reference, source_collection: q.source_collection, source_test_label: q.source_test_label, source_position: q.source_position, media_status: q.media_status, image_url: q.image_url, subject_id: q.subject_id, platform_id: q.platform_id, system_id: q.system_id, options: q.options },
     }));
     for (let i = 0; i < snapshots.length; i += 100) {
       const result = await db.from('test_session_questions').insert(snapshots.slice(i, i + 100));
@@ -554,7 +647,7 @@ async function home() {
 }
 
 async function qbank() {
-  layout(`<div class="page-heading"><span class="eyebrow">QBANK</span><h1>Build a focused practice set</h1><p>Platform → Subject → Topic → Subtopic. Systems remain optional.</p></div><section class="card builder-card"><form id="practice-form" class="stack"><div class="filters">${filterFields()}</div><div class="builder-footer"><div><b data-match-count>Choose filters to count questions</b><div class="subtle">Browse without timers, or preview the same exact set before starting.</div></div><div class="row"><label class="inline-label">Questions <select name="count-mode"><option value="10">10</option><option value="20">20</option><option value="50">50</option><option value="100">100</option><option value="all">All matching</option><option value="custom">Custom</option></select></label><input class="custom-count hidden" name="custom-count" type="number" min="1" max="5000" value="30" aria-label="Custom question count" /><button class="button secondary" name="intent" value="browse">Open questions</button><button class="button" name="intent" value="test">Start practice</button></div></div></form></section>`);
+  layout(`<div class="page-heading"><span class="eyebrow">QBANK</span><h1>Build a focused practice set</h1><p>Platform → Subject → Topic → Subtopic. Systems remain optional.</p></div><section class="card builder-card"><form id="practice-form" class="stack"><div class="filters">${filterFields({ sourceTests: true })}</div><div class="builder-footer"><div><b data-match-count>Choose filters to count questions</b><div class="subtle">Browse without timers, or preview the same exact set before starting.</div></div><div class="row"><label class="inline-label">Questions <select name="count-mode"><option value="10">10</option><option value="20">20</option><option value="50">50</option><option value="100">100</option><option value="all">All matching</option><option value="custom">Custom</option></select></label><input class="custom-count hidden" name="custom-count" type="number" min="1" max="5000" value="30" aria-label="Custom question count" /><button class="button secondary" name="intent" value="browse">Open questions</button><button class="button" name="intent" value="test">Start practice</button></div></div></form></section>`);
   const form = document.querySelector('#practice-form'); setupDependentFilters(form);
   form.elements['count-mode'].onchange = () => form.querySelector('.custom-count').classList.toggle('hidden', form.elements['count-mode'].value !== 'custom');
   form.onsubmit = async (event) => {
@@ -625,18 +718,21 @@ function questionMeta(question) {
 }
 
 function explanationBlock(question, answer, open) {
-  const selected = selectedKey(answer); const right = Boolean(selected) && selected === correctKey(question);
-  const resultLabel = !selected ? `Correct answer: ${e(correctKey(question) || 'Not provided')}` : right ? 'Previously answered correctly' : `Previously answered incorrectly · Correct answer: ${e(correctKey(question) || 'Not provided')}`;
-  return `<div class="answer-panel ${right ? 'correct-panel' : 'wrong-panel'}"><div class="row"><b>${resultLabel}</b><button class="button ghost compact" data-action="toggle-explanation">${open ? 'Hide explanation' : 'View explanation'}</button></div>${open ? `<div class="rich-content">${question.explanation_html ? richHtml(question.explanation_html) : '<p>No explanation is available for this question.</p>'}</div>${question.source_reference || question.source_collection ? `<details class="question-info"><summary>Question info</summary><p>${e(question.source_collection || '')}${question.source_reference ? ` · ${e(question.source_reference)}` : ''}</p></details>` : ''}` : ''}</div>`;
+  const selected = selectedKeys(answer); const right = selected.length > 0 && isAnswerCorrect(question, answer);
+  const expected = correctKeys(question).join(', ') || 'Not provided';
+  const resultLabel = !selected.length ? `Correct answer: ${e(expected)}` : right ? 'Previously answered correctly' : `Previously answered incorrectly · Correct answer: ${e(expected)}`;
+  const info = [question.source_collection, question.source_test_label, question.source_position ? `Question ${question.source_position}` : '', question.media_status && question.media_status !== 'NO_MEDIA' ? question.media_status.replaceAll('_', ' ') : ''].filter(Boolean).join(' · ');
+  return `<div class="answer-panel ${right ? 'correct-panel' : 'wrong-panel'}"><div class="row"><b>${resultLabel}</b><button class="button ghost compact" data-action="toggle-explanation">${open ? 'Hide explanation' : 'View explanation'}</button></div>${open ? `<div class="rich-content">${question.explanation_html ? richHtml(question.explanation_html) : '<p>No explanation is available for this question.</p>'}</div>${info ? `<details class="question-info"><summary>Question info</summary><p>${e(info)}</p></details>` : ''}` : ''}</div>`;
 }
 
 function renderQuestion(question, answer, reveal) {
-  const correct = correctKey(question); const selected = selectedKey(answer);
-  return `<div class="question-stem rich-content">${richHtml(question.question_text)}</div>${question.image_url ? `<img class="question-image" src="${e(safeUrl(question.image_url, true))}" alt="Question illustration" />` : ''}<div class="options" role="group" aria-label="Answer choices">${question.options.map((option) => {
+  const correct = new Set(correctKeys(question)); const selected = new Set(selectedKeys(answer)); const multiple = correct.size > 1;
+  const mediaNotice = question.media_status && !['NO_MEDIA', 'MEDIA_REFERENCED'].includes(question.media_status) ? `<div class="notice">Referenced media is not available in this import.</div>` : '';
+  return `<div class="question-stem rich-content">${richHtml(question.question_text)}</div>${question.image_url ? `<img class="question-image" src="${e(safeUrl(question.image_url, true))}" alt="Question illustration" />` : ''}${mediaNotice}<div class="options" role="group" aria-label="Answer choices">${question.options.map((option) => {
     const key = String(option.option_key).toUpperCase(); const classes = ['option'];
-    if (selected === key) classes.push('selected'); if (reveal && key === correct) classes.push('correct'); if (reveal && selected === key && key !== correct) classes.push('wrong');
+    if (selected.has(key)) classes.push('selected'); if (reveal && correct.has(key)) classes.push('correct'); if (reveal && selected.has(key) && !correct.has(key)) classes.push('wrong');
     return `<button class="${classes.join(' ')}" data-action="answer" data-key="${e(key)}" ${reveal ? 'disabled' : ''}><b>${e(option.option_key)}.</b><span class="rich-content">${richHtml(option.option_text)}</span></button>`;
-  }).join('')}</div>${reveal ? explanationBlock(question, answer, state.active.explanationOpen) : ''}`;
+  }).join('')}</div>${multiple && !reveal && state.active.kind === 'practice' ? `<button class="button" data-action="submit-multi-answer" ${selected.size ? '' : 'disabled'}>Submit selected answers</button>` : ''}${reveal ? explanationBlock(question, answer, state.active.explanationOpen) : ''}`;
 }
 
 function feedbackControls(answer, reveal, wrong) {
@@ -647,7 +743,7 @@ function feedbackControls(answer, reveal, wrong) {
 
 function renderActive() {
   const active = state.active; const question = activeQuestion(); if (!active || !question) return;
-  const answer = active.answers[question.id]; const reveal = active.completedReview || active.kind === 'practice' && Boolean(answer?.selected_option);
+  const answer = active.answers[question.id]; const reveal = active.completedReview || active.kind === 'practice' && Boolean(answer?.selected_option) && (correctKeys(question).length === 1 || answer.submitted);
   const answered = Object.values(active.answers).filter((item) => item?.selected_option).length;
   const browsing = active.kind === 'browse';
   layout(`<section class="question-header"><div><span class="pill">${browsing ? 'Browse' : active.completedReview ? 'Review' : active.kind === 'test' ? e(TEST_PRESETS[active.preset]?.[0] || 'Test') : 'Practice'}</span><h1>${e(active.title || 'Question set')}</h1></div>${browsing ? `<div class="row"><button class="button" data-action="preview-browsed-set">Start test with these exact questions</button><button class="button secondary" data-action="back-to-origin">Back</button></div>` : `<div class="timer-cluster"><div><span>QUESTION TARGET</span><b id="question-timer">00:50</b></div><div><span>TOTAL TARGET</span><b>${timerText(active.questions.length * TARGET_SECONDS)}</b></div></div>`}</section><div class="question-layout"><section class="card question-card"><div class="question-topline"><span>Question ${active.index + 1} of ${active.questions.length}</span><span>${questionMeta(question)}</span></div><div class="progress"><i style="width:${((active.index + 1) / active.questions.length) * 100}%"></i></div>${renderQuestion(question, answer, reveal)}${browsing ? '' : feedbackControls(answer || {}, reveal, selectedKey(answer) !== correctKey(question))}<div class="question-actions"><div class="row"><button class="button ghost ${active.bookmarks.has(question.id) ? 'active-control' : ''}" data-action="bookmark" aria-pressed="${active.bookmarks.has(question.id)}">${active.bookmarks.has(question.id) ? '★ Bookmarked' : '☆ Bookmark'}</button><button class="button ghost ${active.marked.has(question.id) ? 'active-control' : ''}" data-action="mark" aria-pressed="${active.marked.has(question.id)}">${active.marked.has(question.id) ? '✓ Marked for review' : 'Mark for review'}</button><button class="button ghost" data-action="note">Note</button><button class="button ghost" data-action="report">Report</button></div><div class="row"><button class="button secondary" data-action="previous" ${active.index === 0 ? 'disabled' : ''}>Previous</button><button class="button" data-action="next">${active.index === active.questions.length - 1 ? (browsing ? 'Back' : active.completedReview ? 'Back to results' : 'Finish') : 'Next'}</button></div></div></section><aside class="card palette-card"><div class="section-heading"><h3>Question palette</h3><span>${answered}/${active.questions.length}</span></div><div class="palette">${active.questions.slice(0, 500).map((item, index) => `<button data-action="jump" data-index="${index}" class="${index === active.index ? 'current' : ''} ${active.answers[item.id]?.selected_option ? 'answered' : ''} ${active.marked.has(item.id) ? 'marked' : ''}" aria-label="Question ${index + 1}">${index + 1}</button>`).join('')}</div>${active.questions.length > 500 ? '<p class="subtle">Palette shows the first 500 positions; Previous/Next continues through all questions.</p>' : ''}${active.kind === 'test' && !active.completedReview ? `<p class="subtle">${active.questions.length - answered} unanswered</p><button class="button danger full" data-action="submit">Submit test</button>` : ''}</aside></div>`);
@@ -670,7 +766,7 @@ function startQuestionTimer() {
 function elapsedOnQuestion() { return Math.max(0, Math.floor((Date.now() - state.active.questionStartedAt) / 1000)); }
 
 async function recordAttempt(question, answer) {
-  const args = { p_question_id: question.id, p_selected_option: answer.selected_option, p_is_correct: selectedKey(answer) === correctKey(question), p_mode: state.active.kind === 'test' ? 'test' : 'qbank', p_test_session_id: state.active.id || null, p_time_spent_seconds: answer.time_spent_seconds || 0, p_confidence: answer.confidence || null, p_error_reason: answer.error_reason || null };
+  const args = { p_question_id: question.id, p_selected_option: answer.selected_option, p_is_correct: isAnswerCorrect(question, answer), p_mode: state.active.kind === 'test' ? 'test' : 'qbank', p_test_session_id: state.active.id || null, p_time_spent_seconds: answer.time_spent_seconds || 0, p_confidence: answer.confidence || null, p_error_reason: answer.error_reason || null };
   const result = await db.rpc('qbank_record_attempt', args);
   if (!result.error) return;
   if (isMissingTable(result.error) || /function .* does not exist|schema cache/i.test(result.error.message)) {
@@ -682,18 +778,27 @@ async function recordAttempt(question, answer) {
 async function saveActiveAnswer(questionId) {
   if (!state.active.id || !state.features.sessions) return;
   const answer = state.active.answers[questionId] || {}; const question = state.active.questions.find((q) => q.id === questionId);
-  const value = { session_id: state.active.id, question_id: questionId, selected_option: answer.selected_option || null, marked_for_review: state.active.marked.has(questionId), answered_at: answer.selected_option ? answer.answered_at || new Date().toISOString() : null, is_correct: answer.selected_option ? selectedKey(answer) === correctKey(question) : null, time_spent_seconds: answer.time_spent_seconds || 0, confidence: answer.confidence || null, error_reason: answer.error_reason || null };
+  const value = { session_id: state.active.id, question_id: questionId, selected_option: answer.selected_option || null, marked_for_review: state.active.marked.has(questionId), answered_at: answer.selected_option ? answer.answered_at || new Date().toISOString() : null, is_correct: answer.selected_option ? isAnswerCorrect(question, answer) : null, time_spent_seconds: answer.time_spent_seconds || 0, confidence: answer.confidence || null, error_reason: answer.error_reason || null };
   const saved = await optional(db.from('test_answers').upsert(value, { onConflict: 'session_id,question_id' }), 'sessions');
   if (!saved.error) await optional(db.from('test_sessions').update({ current_position: state.active.index, last_question_started_at: new Date(state.active.questionStartedAt).toISOString(), updated_at: new Date().toISOString() }).eq('id', state.active.id).eq('user_id', state.user.id), 'sessions');
 }
 
 async function selectAnswer(key) {
   const active = state.active; const question = activeQuestion(); if (!active || active.completedReview) return;
-  const existing = active.answers[question.id]; if (active.kind === 'practice' && existing?.selected_option) return;
-  const answer = { ...(existing || {}), selected_option: key, answered_at: new Date().toISOString(), time_spent_seconds: Math.max(existing?.time_spent_seconds || 0, elapsedOnQuestion()) };
+  const existing = active.answers[question.id]; const multiple = correctKeys(question).length > 1;
+  if (active.kind === 'practice' && existing?.selected_option && (!multiple || existing.submitted)) return;
+  const selection = new Set(selectedKeys(existing));
+  if (multiple) { if (selection.has(key)) selection.delete(key); else selection.add(key); }
+  const answer = { ...(existing || {}), selected_option: multiple ? [...selection].sort().join(',') : key, answered_at: new Date().toISOString(), time_spent_seconds: Math.max(existing?.time_spent_seconds || 0, elapsedOnQuestion()) };
   active.answers[question.id] = answer;
-  if (active.kind === 'practice' && !existing?.selected_option) await recordAttempt(question, answer);
+  if (active.kind === 'practice' && !multiple && !existing?.selected_option) await recordAttempt(question, answer);
   await saveActiveAnswer(question.id); active.explanationOpen = false; renderActive();
+}
+
+async function submitMultiAnswer() {
+  const question = activeQuestion(); const answer = state.active?.answers?.[question?.id];
+  if (!question || !answer?.selected_option || state.active.kind !== 'practice') return;
+  answer.submitted = true; await recordAttempt(question, answer); await saveActiveAnswer(question.id); state.active.explanationOpen = false; renderActive();
 }
 
 async function navigateActive(index) {
@@ -788,7 +893,7 @@ async function submitActive(timedOut = false) {
   if (active.id) { const result = await db.rpc('submit_test_session', { p_session_id: active.id, p_timed_out: timedOut }); if (result.error) return toast(result.error.message, 'error'); completed = result.data; }
   if (active.kind === 'test') for (const question of active.questions) { const answer = active.answers[question.id]; if (answer?.selected_option) await recordAttempt(question, answer); }
   if (Array.isArray(completed)) completed = completed[0] || null;
-  const totalCorrect = completed?.total_correct ?? active.questions.filter((q) => selectedKey(active.answers[q.id]) === correctKey(q)).length;
+  const totalCorrect = completed?.total_correct ?? active.questions.filter((q) => isAnswerCorrect(q, active.answers[q.id])).length;
   state.active = { ...active, ...(completed || {}), total_questions: completed?.total_questions ?? active.questions.length, total_correct: totalCorrect, incorrect_count: completed?.incorrect_count ?? answeredRows.length - totalCorrect, unanswered_count: completed?.unanswered_count ?? unanswered, total_time_seconds: completed?.total_time_seconds ?? Math.floor((Date.now() - new Date(active.started_at).getTime()) / 1000), timed_out: completed?.timed_out ?? timedOut, status: completed?.status ?? (timedOut ? 'timed_out' : 'completed'), completedReview: false };
   resultScreen();
 }
@@ -1076,7 +1181,7 @@ document.addEventListener('click', async (event) => {
   const target = event.target.closest('[data-action]'); if (!target) return; const action = target.dataset.action;
   if (action === 'signout') await db.auth.signOut(); if (action === 'signup') await signUp(); if (action === 'reset-password') await resetPassword(); if (action === 'retry') render();
   if (action === 'choose-preset') showTestBuilder(target.dataset.preset); if (action === 'close-builder') document.querySelector('#test-builder-slot').innerHTML = '';
-  if (action === 'answer') await selectAnswer(target.dataset.key); if (action === 'previous') await navigateActive(state.active.index - 1);
+  if (action === 'answer') await selectAnswer(target.dataset.key); if (action === 'submit-multi-answer') await submitMultiAnswer(); if (action === 'previous') await navigateActive(state.active.index - 1);
   if (action === 'next') { if (state.active.index === state.active.questions.length - 1) { if (state.active.kind === 'browse') { goToHash(state.active.origin || '#/qbank'); return; } if (state.active.completedReview) return resultScreen(); return submitActive(false); } await navigateActive(state.active.index + 1); }
   if (action === 'jump') await navigateActive(Number(target.dataset.index)); if (action === 'bookmark') await toggleBookmark(); if (action === 'mark') await toggleMark();
   if (action === 'toggle-explanation') { state.active.explanationOpen = !state.active.explanationOpen; renderActive(); }
@@ -1096,7 +1201,7 @@ document.addEventListener('click', async (event) => {
   if (action === 'select-analytics-breakdown') { state.analyticsBreakdown = target.dataset.level; document.querySelectorAll('[data-action="select-analytics-breakdown"]').forEach((button) => { button.classList.toggle('secondary', button !== target); }); renderAnalyticsBreakdown(state.analyticsBreakdown, 1); }
   if (action === 'analytics-more') renderAnalyticsBreakdown(target.dataset.level, Number(target.dataset.page) || 1);
   if (action === 'review-result') { state.active.index = 0; state.active.completedReview = true; state.active.questionStartedAt = Date.now(); renderActive(); }
-  if (action === 'review-mistakes') { const questions = state.active.questions.filter((q) => state.active.answers[q.id]?.selected_option && selectedKey(state.active.answers[q.id]) !== correctKey(q)); if (!questions.length) return toast('No incorrect questions in this session.'); state.active = { ...state.active, questions, index: 0, completedReview: true, questionStartedAt: Date.now() }; renderActive(); }
+  if (action === 'review-mistakes') { const questions = state.active.questions.filter((q) => state.active.answers[q.id]?.selected_option && !isAnswerCorrect(q, state.active.answers[q.id])); if (!questions.length) return toast('No incorrect questions in this session.'); state.active = { ...state.active, questions, index: 0, completedReview: true, questionStartedAt: Date.now() }; renderActive(); }
   if (action === 'retake') await createSession({ mode: state.active.kind, preset: state.active.preset || 'retake', title: `${state.active.title || 'Test'} retake`, filters: state.active.filters || {}, questionIds: state.active.questions.map((question) => question.id), requested: state.active.questions.length, autoSubmit: state.active.kind === 'test', origin: '#/history' });
   if (action === 'my-bank-tab') showMyBankTab(target.dataset.tab);
 });
