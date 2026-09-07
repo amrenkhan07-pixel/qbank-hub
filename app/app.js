@@ -602,7 +602,8 @@ async function startPendingSession() {
   state.active = {
     ...payload, ...(session || {}), kind: mode, questions, index: 0, answers: {},
     bookmarks: personal.bookmarks, marked: personal.marked, learning: personal.learning,
-    questionStartedAt: startedMs, totalTimeUsedMs: 0, totalTimerStartedAt: startedMs,
+    questionStartedAt: startedMs, questionTimeRemainingSeconds: null,
+    totalTimeUsedMs: 0, totalTimerStartedAt: startedMs,
     explanationOpen: false, completedReview: false,
   };
   state.pendingSet = null;
@@ -793,8 +794,10 @@ function renderActive() {
     ? `<button class="button ghost active-control" data-action="srm-remove">In Recall</button><button class="button ghost" data-action="srm-reset">Reset Recall</button>`
     : '<button class="button ghost" data-action="srm-add">Add to Recall</button>';
   const timerRunning = !browsing && active.kind !== 'recall' && !active.completedReview && active.status === 'in_progress';
+  const timerShouldTick = timerRunning && !answer?.selected_option && active.questionTimeRemainingSeconds !== 0;
   layout(`<section class="question-header"><div><span class="pill">${browsing ? 'Browse' : active.completedReview ? 'Review' : active.kind === 'recall' ? 'Recall' : active.kind === 'test' ? e(TEST_PRESETS[active.preset]?.[0] || 'Test') : 'Practice'}</span><h1>${e(active.title || 'Question set')}</h1></div>${browsing ? `<div class="row"><button class="button" data-action="preview-browsed-set">Start test with these exact questions</button><button class="button secondary" data-action="back-to-origin">Back</button></div>` : active.kind === 'recall' ? '<span class="pill">Priority order · no timer</span>' : timerRunning ? `<div class="timer-cluster"><div><span>QUESTION TIMER</span><b id="question-timer">00:50</b></div><div><span>TOTAL TIMER</span><b id="total-timer">${timerText(active.questions.length * TARGET_SECONDS)}</b></div></div>` : ''}</section><div class="question-layout"><section class="card question-card"><div class="question-topline"><span>Question ${active.index + 1} of ${active.questions.length}</span><span>${questionMeta(question)}</span></div><div class="progress"><i style="width:${((active.index + 1) / active.questions.length) * 100}%"></i></div>${renderQuestion(question, answer, reveal)}${browsing ? '' : feedbackControls(answer || {}, reveal, Boolean(answer?.selected_option) && !isAnswerCorrect(question, answer))}<div class="question-actions"><div class="row"><button class="button ghost ${active.bookmarks.has(question.id) ? 'active-control' : ''}" data-action="bookmark" aria-pressed="${active.bookmarks.has(question.id)}">${active.bookmarks.has(question.id) ? '★ Bookmarked' : '☆ Bookmark'}</button><button class="button ghost ${active.marked.has(question.id) ? 'active-control' : ''}" data-action="mark" aria-pressed="${active.marked.has(question.id)}">${active.marked.has(question.id) ? '✓ Marked for review' : 'Mark for review'}</button>${srmButton}<button class="button ghost" data-action="note">Note</button><button class="button ghost" data-action="report">Report</button></div><div class="row"><button class="button secondary" data-action="previous" ${active.index === 0 ? 'disabled' : ''}>Previous</button><button class="button" data-action="next">${active.index === active.questions.length - 1 ? (browsing ? 'Back' : active.completedReview ? 'Back to results' : 'Finish') : 'Next'}</button></div></div></section><aside class="card palette-card"><div class="section-heading"><h3>Question palette</h3><span>${answered}/${active.questions.length}</span></div><div class="palette">${active.questions.slice(0, 500).map((item, index) => `<button data-action="jump" data-index="${index}" class="${index === active.index ? 'current' : ''} ${active.answers[item.id]?.selected_option ? 'answered' : ''} ${active.marked.has(item.id) ? 'marked' : ''}" aria-label="Question ${index + 1}">${index + 1}</button>`).join('')}</div>${active.questions.length > 500 ? '<p class="subtle">Palette shows the first 500 positions; Previous/Next continues through all questions.</p>' : ''}${active.kind === 'test' && !active.completedReview ? `<p class="subtle">${active.questions.length - answered} unanswered</p><button class="button danger full" data-action="submit">Submit test</button>` : ''}</aside></div>`);
-  if (timerRunning) startActiveTimers(); else stopActiveTimer();
+  if (timerRunning) updateActiveTimerDisplay();
+  if (timerShouldTick) startActiveTimers(); else stopActiveTimer();
 }
 
 function stopActiveTimer() {
@@ -823,6 +826,34 @@ function resumeTotalTimer(active, at = Date.now()) {
   if (active.totalTimerStartedAt == null && totalTimeRemaining(active, at) > 0) active.totalTimerStartedAt = at;
 }
 
+function questionTimeRemaining(active, answer = null, at = Date.now()) {
+  if (active.questionTimeRemainingSeconds != null) return Math.max(0, Number(active.questionTimeRemainingSeconds) || 0);
+  if (answer?.selected_option) return Math.max(0, TARGET_SECONDS - Math.max(0, Number(answer.time_spent_seconds) || 0));
+  return Math.ceil(Math.max(0, active.questionStartedAt + TARGET_SECONDS * 1000 - at) / 1000);
+}
+
+function answeredQuestionTimeRemaining(answer) {
+  return Math.max(0, Number(answer?.question_time_remaining_seconds ?? (TARGET_SECONDS - Math.max(0, Number(answer?.time_spent_seconds) || 0))) || 0);
+}
+
+function pauseAttemptTimers(active, at = Date.now()) {
+  const deadline = active.questionStartedAt + TARGET_SECONDS * 1000;
+  active.questionTimeRemainingSeconds = questionTimeRemaining(active, null, at);
+  pauseTotalTimer(active, Math.min(at, deadline));
+  stopActiveTimer();
+}
+
+function updateActiveTimerDisplay(at = Date.now()) {
+  const active = state.active; const question = activeQuestion(); const answer = active?.answers?.[question?.id];
+  if (!active || !question) return;
+  const questionRemaining = questionTimeRemaining(active, answer, at);
+  const totalRemaining = totalTimeRemaining(active, at);
+  const questionNode = document.querySelector('#question-timer');
+  const totalNode = document.querySelector('#total-timer');
+  if (questionNode) { questionNode.textContent = timerText(questionRemaining); questionNode.classList.toggle('low', questionRemaining <= 10); questionNode.classList.toggle('expired', questionRemaining === 0); }
+  if (totalNode) { totalNode.textContent = timerText(totalRemaining); totalNode.classList.toggle('low', totalRemaining <= Math.min(60, TARGET_SECONDS)); totalNode.classList.toggle('expired', totalRemaining === 0); }
+}
+
 function startActiveTimers() {
   stopActiveTimer();
   const tick = () => {
@@ -830,13 +861,13 @@ function startActiveTimers() {
     if (!active || active.completedReview || active.status !== 'in_progress') return stopActiveTimer();
     const now = Date.now();
     const questionDeadline = active.questionStartedAt + TARGET_SECONDS * 1000;
-    const questionRemaining = Math.ceil(Math.max(0, questionDeadline - now) / 1000);
-    if (questionRemaining === 0) pauseTotalTimer(active, questionDeadline);
+    const questionRemaining = questionTimeRemaining(active, active.answers[activeQuestion()?.id], now);
+    if (questionRemaining === 0) {
+      active.questionTimeRemainingSeconds = 0;
+      pauseTotalTimer(active, questionDeadline);
+    }
     const totalRemaining = totalTimeRemaining(active, questionRemaining === 0 ? questionDeadline : now);
-    const questionNode = document.querySelector('#question-timer');
-    const totalNode = document.querySelector('#total-timer');
-    if (questionNode) { questionNode.textContent = timerText(questionRemaining); questionNode.classList.toggle('low', questionRemaining <= 10); questionNode.classList.toggle('expired', questionRemaining === 0); }
-    if (totalNode) { totalNode.textContent = timerText(totalRemaining); totalNode.classList.toggle('low', totalRemaining <= Math.min(60, TARGET_SECONDS)); totalNode.classList.toggle('expired', totalRemaining === 0); }
+    updateActiveTimerDisplay(questionRemaining === 0 ? questionDeadline : now);
     if (questionRemaining === 0) stopActiveTimer();
     if (totalRemaining === 0 && active.kind === 'test' && active.auto_submit) {
       stopActiveTimer();
@@ -844,10 +875,10 @@ function startActiveTimers() {
     }
   };
   tick();
-  if (state.active?.questionStartedAt + TARGET_SECONDS * 1000 > Date.now()) state.timer = setInterval(tick, 250);
+  if (state.active?.questionTimeRemainingSeconds == null && state.active?.questionStartedAt + TARGET_SECONDS * 1000 > Date.now()) state.timer = setInterval(tick, 250);
 }
 
-function elapsedOnQuestion() { return Math.max(0, Math.floor((Date.now() - state.active.questionStartedAt) / 1000)); }
+function elapsedOnQuestion(at = Date.now()) { return Math.min(TARGET_SECONDS, Math.max(0, Math.floor((at - state.active.questionStartedAt) / 1000))); }
 
 async function recordAttempt(question, answer) {
   if (!answer?.selected_option || answer.attemptRecorded) return answer?.srmFeedback || null;
@@ -888,9 +919,18 @@ async function selectAnswer(key) {
   const active = state.active; const question = activeQuestion(); if (!active || active.completedReview) return;
   const existing = active.answers[question.id]; const multiple = correctKeys(question).length > 1;
   if (active.kind === 'practice' && existing?.selected_option && (!multiple || existing.submitted)) return;
+  const selectedAt = Date.now();
   const selection = new Set(selectedKeys(existing));
   if (multiple) { if (selection.has(key)) selection.delete(key); else selection.add(key); }
-  const answer = { ...(existing || {}), client_event_id: existing?.client_event_id || crypto.randomUUID(), selected_option: multiple ? [...selection].sort().join(',') : key, answered_at: new Date().toISOString(), time_spent_seconds: Math.max(existing?.time_spent_seconds || 0, elapsedOnQuestion()) };
+  const selectedOption = multiple ? [...selection].sort().join(',') : key;
+  if (selectedOption && !existing?.selected_option) pauseAttemptTimers(active, selectedAt);
+  if (!selectedOption && existing?.selected_option) {
+    const remaining = questionTimeRemaining(active, existing, selectedAt);
+    active.questionTimeRemainingSeconds = null;
+    active.questionStartedAt = selectedAt - (TARGET_SECONDS - remaining) * 1000;
+    resumeTotalTimer(active, selectedAt);
+  }
+  const answer = { ...(existing || {}), client_event_id: existing?.client_event_id || crypto.randomUUID(), selected_option: selectedOption, answered_at: new Date(selectedAt).toISOString(), time_spent_seconds: existing?.selected_option ? existing.time_spent_seconds : elapsedOnQuestion(selectedAt), question_time_remaining_seconds: selectedOption ? questionTimeRemaining(active, null, selectedAt) : null };
   active.answers[question.id] = answer;
   if (['practice', 'recall'].includes(active.kind) && !multiple && !existing?.selected_option && !isAnswerCorrect(question, answer)) await recordAttempt(question, answer);
   await saveActiveAnswer(question.id); active.explanationOpen = false; renderActive();
@@ -904,9 +944,14 @@ async function submitMultiAnswer() {
 
 async function navigateActive(index) {
   const active = state.active; const current = activeQuestion();
-  if (current && active.kind !== 'browse') { const answer = active.answers[current.id] || {}; answer.time_spent_seconds = Math.max(answer.time_spent_seconds || 0, elapsedOnQuestion()); active.answers[current.id] = answer; await ensureAttemptRecorded(current, answer); await saveActiveAnswer(current.id); }
+  const navigationAt = Date.now();
+  if (active.kind !== 'browse') pauseTotalTimer(active, Math.min(navigationAt, active.questionStartedAt + TARGET_SECONDS * 1000));
+  stopActiveTimer();
+  if (current && active.kind !== 'browse') { const answer = active.answers[current.id] || {}; if (!answer.selected_option) answer.time_spent_seconds = Math.max(answer.time_spent_seconds || 0, elapsedOnQuestion(navigationAt)); active.answers[current.id] = answer; await ensureAttemptRecorded(current, answer); await saveActiveAnswer(current.id); }
   active.index = Math.max(0, Math.min(index, active.questions.length - 1)); active.questionStartedAt = active.kind === 'browse' ? null : Date.now();
-  if (active.kind !== 'browse') resumeTotalTimer(active, active.questionStartedAt);
+  const destinationAnswer = active.answers[active.questions[active.index]?.id];
+  active.questionTimeRemainingSeconds = destinationAnswer?.selected_option ? answeredQuestionTimeRemaining(destinationAnswer) : null;
+  if (active.kind !== 'browse' && !destinationAnswer?.selected_option) resumeTotalTimer(active, active.questionStartedAt);
   active.explanationOpen = false;
   if (active.id) await optional(db.from('test_sessions').update({ current_position: active.index, last_question_started_at: new Date().toISOString() }).eq('id', active.id).eq('user_id', state.user.id), 'sessions');
   renderActive();
@@ -998,15 +1043,21 @@ async function resumeSession(id) {
     const [itemsResult, answersResult] = await Promise.all([db.from('test_session_questions').select('*').eq('session_id', id).order('position'), db.from('test_answers').select('*').eq('session_id', id)]);
     if (itemsResult.error) throw itemsResult.error;
     const questions = (itemsResult.data || []).map((item) => ({ id: item.question_id, ...item.question_snapshot, options: item.question_snapshot.options || [] }));
-    const answers = Object.fromEntries((answersResult.data || []).map((answer) => [answer.question_id, answer])); const personal = await loadPersonalState(questions.map((question) => question.id)); const session = sessionResult.data;
+    const answers = Object.fromEntries((answersResult.data || []).map((answer) => [answer.question_id, answer]));
+    if (existingActive) for (const [questionId, answer] of Object.entries(existingActive.answers || {})) {
+      if (answers[questionId] && answer.question_time_remaining_seconds != null) answers[questionId].question_time_remaining_seconds = answer.question_time_remaining_seconds;
+    }
+    const personal = await loadPersonalState(questions.map((question) => question.id)); const session = sessionResult.data;
     assertValidation(validateResumeSnapshot({ session, storedRows: itemsResult.data || [], questions, answers: answersResult.data || [] }), 'Resume');
     assertValidation(validateQuestionStateBindings({ questions, answers, bookmarks: personal.bookmarks, marked: new Set([...personal.marked, ...(answersResult.data || []).filter((answer) => answer.marked_for_review).map((answer) => answer.question_id)]) }), 'Resumed question state');
     const resumedAt = Date.now();
     const elapsedBeforeResume = existingActive
       ? totalTimeUsed(existingActive, resumedAt)
       : Math.min(questions.length * TARGET_SECONDS * 1000, Math.max(0, resumedAt - new Date(session.started_at).getTime()));
-    const resumePaused = Boolean(existingActive && existingActive.totalTimerStartedAt == null);
-    state.active = { ...session, kind: ['practice', 'recall'].includes(session.mode) ? session.mode : 'test', questions, index: Math.min(session.current_position || 0, Math.max(questions.length - 1, 0)), answers, bookmarks: personal.bookmarks, marked: new Set([...personal.marked, ...(answersResult.data || []).filter((x) => x.marked_for_review).map((x) => x.question_id)]), learning: personal.learning, questionStartedAt: resumedAt, totalTimeUsedMs: elapsedBeforeResume, totalTimerStartedAt: !resumePaused && elapsedBeforeResume < questions.length * TARGET_SECONDS * 1000 ? resumedAt : null, explanationOpen: false, completedReview: session.status !== 'in_progress' };
+    const resumedIndex = Math.min(session.current_position || 0, Math.max(questions.length - 1, 0));
+    const resumedAnswer = answers[questions[resumedIndex]?.id];
+    const resumePaused = Boolean(resumedAnswer?.selected_option || (existingActive && existingActive.totalTimerStartedAt == null));
+    state.active = { ...session, kind: ['practice', 'recall'].includes(session.mode) ? session.mode : 'test', questions, index: resumedIndex, answers, bookmarks: personal.bookmarks, marked: new Set([...personal.marked, ...(answersResult.data || []).filter((x) => x.marked_for_review).map((x) => x.question_id)]), learning: personal.learning, questionStartedAt: resumedAt, questionTimeRemainingSeconds: resumedAnswer?.selected_option ? answeredQuestionTimeRemaining(resumedAnswer) : null, totalTimeUsedMs: elapsedBeforeResume, totalTimerStartedAt: !resumePaused && elapsedBeforeResume < questions.length * TARGET_SECONDS * 1000 ? resumedAt : null, explanationOpen: false, completedReview: session.status !== 'in_progress' };
     renderActive();
   } catch (error) { toast(error.message || 'Could not resume session.', 'error'); location.hash = '#/home'; }
 }

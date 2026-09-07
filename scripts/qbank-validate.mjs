@@ -292,10 +292,14 @@ check('timer.question_and_total_are_live', appSource.includes('id="question-time
 check('timer.total_uses_accumulated_active_time', appSource.includes('function totalTimeUsed(active, at = Date.now())') && appSource.includes('totalTimerStartedAt') && /questions\.length \* TARGET_SECONDS \* 1000/.test(appSource));
 check('timer.question_resets_on_navigation', /active\.questionStartedAt = active\.kind === 'browse' \? null : Date\.now\(\)/.test(appSource));
 check('timer.single_interval_and_cleanup', /function startActiveTimers\(\) \{\s*stopActiveTimer\(\)/.test(appSource) && /function stopActiveTimer\(\) \{\s*clearInterval\(state\.timer\);\s*state\.timer = null;/.test(appSource) && /stopActiveTimer\(\); const current = activeQuestion\(\)/.test(appSource));
-check('timer.question_zero_pauses_total', /if \(questionRemaining === 0\) pauseTotalTimer\(active, questionDeadline\)/.test(appSource) && /active\.totalTimerStartedAt = null/.test(appSource));
-check('timer.next_question_resumes_total', /if \(active\.kind !== 'browse'\) resumeTotalTimer\(active, active\.questionStartedAt\)/.test(appSource));
+check('timer.question_zero_pauses_total', /if \(questionRemaining === 0\) \{[\s\S]*pauseTotalTimer\(active, questionDeadline\)/.test(appSource) && /active\.totalTimerStartedAt = null/.test(appSource));
+check('timer.answer_pauses_both_immediately', appSource.includes('pauseAttemptTimers(active, selectedAt)') && /const timerShouldTick = timerRunning && !answer\?\.selected_option/.test(appSource));
+check('timer.answer_freezes_question_remaining', appSource.includes('question_time_remaining_seconds: selectedOption ? questionTimeRemaining(active, null, selectedAt) : null'));
+check('timer.explanation_time_is_not_saved_as_attempt_time', /if \(!answer\.selected_option\) answer\.time_spent_seconds = Math\.max/.test(appSource));
+check('timer.next_question_resumes_total', /!destinationAnswer\?\.selected_option\) resumeTotalTimer\(active, active\.questionStartedAt\)/.test(appSource));
+check('timer.answered_previous_stays_paused', /active\.questionTimeRemainingSeconds = destinationAnswer\?\.selected_option \? answeredQuestionTimeRemaining\(destinationAnswer\) : null/.test(appSource));
 check('timer.paused_state_has_no_background_interval', /if \(questionRemaining === 0\) stopActiveTimer\(\)/.test(appSource) && /setInterval\(tick, 250\)/.test(appSource));
-check('timer.paused_total_survives_spa_resume', appSource.includes("const existingActive = state.active?.id === id ? state.active : null") && appSource.includes('const resumePaused = Boolean(existingActive && existingActive.totalTimerStartedAt == null)') && appSource.includes('totalTimerStartedAt: !resumePaused'));
+check('timer.paused_total_survives_spa_resume', appSource.includes("const existingActive = state.active?.id === id ? state.active : null") && appSource.includes('const resumePaused = Boolean(resumedAnswer?.selected_option') && appSource.includes('totalTimerStartedAt: !resumePaused'));
 check('timer.labels_are_explicit', appSource.includes('QUESTION TIMER') && appSource.includes('TOTAL TIMER') && !appSource.includes('QUESTION TARGET'));
 check('frontend.shared_exact_question_set_actions', appSource.includes('prepareQuestionSet') && appSource.includes('actionSetButtons') && appSource.includes('questionIds: selectedIds'));
 check('frontend.same_hash_origin_rerenders', /const goToHash = \(target\) => \{ if \(location\.hash === target\) render\(\)/.test(appSource));
@@ -355,7 +359,7 @@ check('browser.taxonomy_dom_regression_installed', appSource.includes('runTaxono
   && domRegressionSource.includes('invalidChildPruning')
   && domRegressionSource.includes('zeroCountLabelsHidden'));
 check('frontend.cascade_modules_cache_busted', appSource.includes("./validation.js?v=20260902-srm2")
-  && readFileSync(resolve(root, 'index.html'), 'utf8').includes('./app/app.js?v=20260908-paused-timers'));
+  && readFileSync(resolve(root, 'index.html'), 'utf8').includes('./app/app.js?v=20260908-answer-paused-timers'));
 check('correctness.frontend_uses_canonical_option_flags', appSource.includes("select('question_id,option_key,option_text,is_correct')") && appSource.includes('isCanonicalAnswerCorrect'));
 check('correctness.rpc_uses_exact_normalized_sets', correctnessMigration.includes('qbank_is_answer_correct') && correctnessMigration.includes('qbank_correct_option_keys') && !correctnessMigration.includes('bool_or(o.is_correct)'));
 check('srm.canonical_state_extended_not_duplicated', /alter table public\.user_question_state[\s\S]*srm_active/.test(srmMigration) && !/create table if not exists public\.question_srm_state/i.test(srmMigration));
