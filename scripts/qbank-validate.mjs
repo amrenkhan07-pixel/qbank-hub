@@ -262,6 +262,7 @@ check('cascade.sixty_thousand_mapping_rows', largeCascade.matchingQuestionIds.le
 }));
 
 const appSource = readFileSync(resolve(root, 'app/app.js'), 'utf8');
+const loadMetaSource = appSource.slice(appSource.indexOf('async function loadMeta'), appSource.indexOf('function multiPicker'));
 const stylesSource = readFileSync(resolve(root, 'app/styles.css'), 'utf8');
 const overviewSource = appSource.match(/function renderAnalyticsOverview[\s\S]*?function renderPyqAnalytics/)?.[0] || '';
 const domRegressionSource = readFileSync(resolve(root, 'app/taxonomy-dom-regression.js'), 'utf8');
@@ -274,6 +275,7 @@ const pathologyPilotMigration = readFileSync(resolve(root, 'supabase/migrations/
 const prepBulkMigration = readFileSync(resolve(root, 'supabase/migrations/202609020005_prepladder_bulk_import.sql'), 'utf8');
 const srmMigration = readFileSync(resolve(root, 'supabase/migrations/202609020003_qbank_srm_engine.sql'), 'utf8');
 const correctnessMigration = readFileSync(resolve(root, 'supabase/migrations/202609020004_qbank_answer_correctness.sql'), 'utf8');
+const serverPopulationMigration = readFileSync(resolve(root, 'supabase/migrations/202609070001_qbank_server_population.sql'), 'utf8');
 check('frontend.canonical_learning_state_table', !appSource.includes("from('question_learning_state')"), 'expected user_question_state');
 check('frontend.live_session_total_columns', !/\bquestion_count\b|\bcorrect_count\b/.test(appSource), 'expected total_questions/total_correct');
 check('frontend.generated_set_guard_installed', appSource.includes('validateGeneratedQuestionSet'));
@@ -282,7 +284,7 @@ check('frontend.ui_count_uses_database_count', /updateMatchCount[\s\S]*matchingC
 check('frontend.stale_filter_counts_cannot_overwrite_current_count', appSource.includes('filterCountRequests.get(form) !== requestId'));
 check('frontend.live_taxonomy_columns', !/subtopics'\)\.select\('id,name,subject_id,topic_id'\)|order\('display_order'\)/.test(appSource), 'expected platform_subject_id/sort_order');
 check('frontend.session_persists_subtopic_filters', /test_sessions'\)\.insert\([\s\S]*filters/.test(appSource));
-check('frontend.analytics_preserves_subtopic_context', appSource.includes("subtopic: ['subtopic_ids'"));
+check('frontend.analytics_preserves_subtopic_context', serverPopulationMigration.includes("p_dimension not in ('platform','subject','system','topic','subtopic','source_test','pyq','exam','year_session')") && serverPopulationMigration.includes('question_subtopics qs'));
 check('frontend.retake_preserves_filter_context', /preset: state\.active\.preset[\s\S]*filters: state\.active\.filters/.test(appSource));
 check('frontend.ready_defers_session_creation', /function readyScreen[\s\S]*start-pending-test[\s\S]*async function createSession[\s\S]*readyScreen\(await prepareQuestionSet[\s\S]*async function startPendingSession[\s\S]*test_sessions'\)\.insert/.test(appSource));
 check('frontend.browse_has_no_timer_or_session', /kind: 'browse'[\s\S]*questionStartedAt: null[\s\S]*if \(!browsing && active\.kind !== 'recall'\) startQuestionTimer\(\)/.test(appSource));
@@ -320,11 +322,18 @@ check('frontend.analytics_exam_year_session_contextual', appSource.includes("mul
 check('frontend.analytics_srm_integration', appSource.includes('srm_active') && appSource.includes('srm_due_at') && appSource.includes('Recall Due'));
 check('frontend.analytics_context_aware_breakdowns', appSource.includes('analyticsGroups(level).length > 1') && appSource.includes('This selection has no useful multi-group breakdown'));
 check('frontend.analytics_no_default_breakdown_rows', appSource.includes('No rows are rendered by default.') && !/if \(!state\.analyticsBreakdown\) renderAnalyticsBreakdown/.test(appSource));
-check('frontend.analytics_lightweight_taxonomy_metadata', appSource.includes("select('id,platform_id,subject_id,system_id,is_usable,is_pyq,is_inicet,is_neet_pg,exam_tags,exam_year,exam_shift,question_topics(topic_id),question_subtopics(subtopic_id)')"));
+check('frontend.analytics_lightweight_taxonomy_metadata', !/loadMeta[\s\S]*questions'\)\.select\([^\n]*question_topics/.test(appSource) && appSource.includes("db.rpc('qbank_population_groups'") && appSource.includes("db.rpc('qbank_resolve_population'"));
 check('prepladder.canonical_subject_guard', pilotCorrectionMigration.includes("set name='Anaesthesia'") && pilotCorrectionMigration.includes('subjects_one_anaesthesia_alias'));
 check('prepladder.four_source_questions_quarantined', pilotCorrectionMigration.includes("'846800','846703','846768','846764'") && pilotCorrectionMigration.includes("SOURCE_CONTENT_INCOMPLETE"));
 check('prepladder.future_blank_options_rejected', prepImporterSource.includes('blank required option content'));
-check('frontend.mapping_based_taxonomy_cascade', appSource.includes('resolveTaxonomyCascade(state.meta.questionTaxonomy'));
+check('frontend.mapping_based_taxonomy_cascade', appSource.includes("db.rpc('qbank_filter_facets'") && serverPopulationMigration.includes('question_topics qt') && serverPopulationMigration.includes('question_subtopics qs'));
+check('performance.no_full_corpus_startup_hydration', !loadMetaSource.includes("from('questions')") && !loadMetaSource.includes("from('qbank_source_occurrences')"));
+check('performance.shared_server_population_contract', appSource.includes("db.rpc('qbank_resolve_population'") && serverPopulationMigration.includes('qbank_resolved_question_ids') && serverPopulationMigration.includes('q.is_usable = true'));
+check('performance.count_does_not_download_ids', /matchingCount\(filters\)[\s\S]*includeIds: false/.test(appSource));
+check('performance.requested_set_is_server_bounded', /requestedLimit[\s\S]*includeIds: true, limit: requestedLimit/.test(appSource));
+check('performance.facets_are_server_aggregated', appSource.includes("db.rpc('qbank_filter_facets'") && serverPopulationMigration.includes("'subtopics'") && serverPopulationMigration.includes("'source_tests'"));
+check('performance.analytics_groups_are_lazy_server_queries', appSource.includes("db.rpc('qbank_population_groups'") && /if \(!state\.analyticsView\.groups\.has\(level\)\)/.test(appSource));
+check('performance.filter_change_requests_are_coalesced', appSource.includes('clearTimeout(state.filterTimer)') && appSource.includes('setTimeout(() => { form.__cascadeReady = update()'));
 check('frontend.hidden_taxonomy_rows_not_displayed', /row\.hidden = !visible;[\s\S]*row\.style\.display = visible \? '' : 'none'/.test(appSource));
 check('frontend.hidden_attribute_overrides_check_row_display', /html\s+\[hidden\]\s*\{\s*display:\s*none\s*!important;?\s*\}/.test(stylesSource));
 check('browser.taxonomy_dom_regression_installed', appSource.includes('runTaxonomyDomRegression')
@@ -337,7 +346,7 @@ check('browser.taxonomy_dom_regression_installed', appSource.includes('runTaxono
   && domRegressionSource.includes('invalidChildPruning')
   && domRegressionSource.includes('zeroCountLabelsHidden'));
 check('frontend.cascade_modules_cache_busted', appSource.includes("./validation.js?v=20260902-srm2")
-  && readFileSync(resolve(root, 'index.html'), 'utf8').includes('./app/app.js?v=20260903-bulk2'));
+  && readFileSync(resolve(root, 'index.html'), 'utf8').includes('./app/app.js?v=20260907-server-population'));
 check('correctness.frontend_uses_canonical_option_flags', appSource.includes("select('question_id,option_key,option_text,is_correct')") && appSource.includes('isCanonicalAnswerCorrect'));
 check('correctness.rpc_uses_exact_normalized_sets', correctnessMigration.includes('qbank_is_answer_correct') && correctnessMigration.includes('qbank_correct_option_keys') && !correctnessMigration.includes('bool_or(o.is_correct)'));
 check('srm.canonical_state_extended_not_duplicated', /alter table public\.user_question_state[\s\S]*srm_active/.test(srmMigration) && !/create table if not exists public\.question_srm_state/i.test(srmMigration));
@@ -370,7 +379,7 @@ check('prepladder.pathology_quarantine_guard', prepImporterSource.includes('quar
 check('prepladder.pathology_study_state_guard', pathologyPilotMigration.includes('protected existing data changed during import') && pathologyPilotMigration.includes('pg_advisory_xact_lock'));
 check('prepladder.hybrid_payload_hydration_installed', appSource.includes('hydrateHybridQuestions') && appSource.includes("storage.from('qbank-payloads').download") && appSource.includes('DecompressionStream'));
 check('prepladder.source_test_order_and_filter_installed', appSource.includes("multiPicker('source_tests'") && appSource.includes("from('qbank_source_occurrences')") && appSource.includes('question_position'));
-check('prepladder.source_test_metadata_is_paged', /paged\(\(\) => db\.from\('qbank_source_tests'\)/.test(appSource) && appSource.includes('sourceTests.data || sourceTests || []'), 'required beyond the Supabase 1,000-row response cap');
+check('prepladder.source_test_metadata_is_paged', /paged\(\(\) => db\.from\('qbank_source_tests'\)[\s\S]*?\.order\('sequence'\)\.order\('id'\)/.test(appSource) && appSource.includes('sourceTests.data || sourceTests || []'), 'requires pagination plus a stable unique tiebreaker beyond the Supabase 1,000-row response cap');
 check('prepladder.multi_correct_rendering_installed', appSource.includes('correct_option_keys') && appSource.includes('submit-multi-answer') && appSource.includes('isAnswerCorrect'));
 check('prepladder.migration_is_additive_private_and_service_only', /create table if not exists public\.qbank_question_payloads/i.test(prepImporterMigration) && /values \('qbank-payloads','qbank-payloads',false/i.test(prepImporterMigration) && /grant execute on function public\.qbank_commit_prepladder_import\(jsonb\) to service_role/i.test(prepImporterMigration));
 check('prepladder.two_phase_storage_verification', prepImporterSource.includes('upload_and_verify') && prepImporterSource.includes('delete_objects') && prepImporterMigration.includes("payload object is missing or its stored byte count differs"));

@@ -502,6 +502,27 @@ checks(check_name, failures, detail) as (
     where c.table_schema = 'public' and c.table_name = 'test_sessions' and c.column_name = expected.column_name
   )
 
+  union all select 'performance.server_population_contract',
+    case when to_regprocedure('public.qbank_resolve_population(jsonb,boolean,integer,integer,text)') is not null
+      and to_regprocedure('public.qbank_filter_facets(jsonb)') is not null
+      and to_regprocedure('public.qbank_population_groups(jsonb,text)') is not null then 0 else 1 end,
+    'shared population, facet and lazy group RPCs must exist'
+
+  union all select 'performance.population_matches_usable_denominator',
+    abs((select count(*) from public.questions where is_usable) - (select count(*) from public.qbank_resolved_question_ids('{"statuses":["all"]}'::jsonb))),
+    format('%s resolver rows / %s usable questions', (select count(*) from public.qbank_resolved_question_ids('{"statuses":["all"]}'::jsonb)), (select count(*) from public.questions where is_usable))
+
+  union all select 'performance.resolver_excludes_quarantine', count(*), format('%s unusable questions escaped the canonical resolver', count(*))
+  from public.qbank_resolved_question_ids('{"statuses":["all"]}'::jsonb) resolved
+  join public.questions q on q.id=resolved.question_id where not q.is_usable
+
+  union all select 'performance.pyq_population_matches_source_truth',
+    abs(
+      (select count(*) from public.qbank_resolved_question_ids('{"statuses":["all"],"pyq":"yes"}'::jsonb))
+      - (select count(*) from public.questions q where q.is_usable and (q.is_pyq or exists(select 1 from public.qbank_source_occurrences o join public.qbank_source_tests t on t.id=o.source_test_id where o.question_id=q.id and o.is_current and (o.is_pyq or t.is_pyq))))
+    ),
+    'canonical PYQ resolver must equal question-or-current-source PYQ truth'
+
   union all select 'srm.canonical_one_row_per_question', count(*), format('%s duplicate active user/question SRM rows', count(*))
   from (select user_id,question_id from public.user_question_state where srm_active group by user_id,question_id having count(*)>1) x
 

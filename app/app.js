@@ -9,7 +9,7 @@ const filterCountRequests = new WeakMap();
 const state = {
   user: null,
   route: 'home',
-  meta: { subjects: [], platforms: [], systems: [], topics: [], subtopics: [], sourceTests: [], tags: [], questionTaxonomy: [] },
+  meta: { subjects: [], platforms: [], systems: [], topics: [], subtopics: [], sourceTests: [] },
   active: null,
   pendingSet: null,
   actionSets: new Map(),
@@ -21,6 +21,7 @@ const state = {
   analyticsSubjectId: null,
   analyticsPyqBreakdown: null,
   analyticsView: null,
+  analyticsPyqSet: new Set(),
   recallFilters: { platform_id: '', subject_id: '', scope: 'all' },
   recallQueue: [],
   payloadCache: new Map(),
@@ -108,17 +109,14 @@ async function optional(query, feature) {
 
 async function loadMeta(force = false) {
   if (!force && state.meta.subjects.length && state.meta.platforms.length) return;
-  const [subjects, platforms, platformSubjects, systems, topics, subtopics, sourceTests, sourceOccurrences, tags, questionTaxonomy] = await Promise.all([
+  const [subjects, platforms, platformSubjects, systems, topics, subtopics, sourceTests] = await Promise.all([
     db.from('subjects').select('id,name').order('name'),
     db.from('platforms').select('id,name').order('name'),
     db.from('platform_subjects').select('id,subject_id'),
     optional(db.from('systems').select('id,name,platform_subject_id').order('sort_order').order('name')),
     optional(db.from('topics').select('id,name,platform_subject_id,system_id,parent_topic_id').order('sort_order').order('name')),
     optional(db.from('subtopics').select('id,name,topic_id').order('sort_order').order('name'), 'subtopics'),
-    optional(paged(() => db.from('qbank_source_tests').select('id,title,platform_id,subject_id,sequence,declared_question_count,is_pyq').order('sequence')), 'hybrid'),
-    optional(paged(() => db.from('qbank_source_occurrences').select('question_id,source_test_id,is_pyq').eq('is_current', true)), 'hybrid'),
-    optional(db.from('tags').select('id,name').order('name')),
-    paged(() => db.from('questions').select('id,platform_id,subject_id,system_id,is_usable,is_pyq,is_inicet,is_neet_pg,exam_tags,exam_year,exam_shift,question_topics(topic_id),question_subtopics(subtopic_id)').eq('is_usable', true)),
+    optional(paged(() => db.from('qbank_source_tests').select('id,title,platform_id,subject_id,sequence,declared_question_count,is_pyq').order('sequence').order('id')), 'hybrid'),
   ]);
   if (subjects.error) throw subjects.error;
   if (platforms.error) throw platforms.error;
@@ -126,25 +124,40 @@ async function loadMeta(force = false) {
   const subjectByPlatformSubject = new Map((platformSubjects.data || []).map((row) => [row.id, row.subject_id]));
   const hydratedTopics = (topics.data || []).map((topic) => ({ ...topic, subject_id: subjectByPlatformSubject.get(topic.platform_subject_id) || '' }));
   const topicById = new Map(hydratedTopics.map((topic) => [topic.id, topic]));
-  const occurrencesByQuestion = new Map();
-  (sourceOccurrences.data || sourceOccurrences || []).forEach((row) => {
-    const id = String(row.question_id); if (!occurrencesByQuestion.has(id)) occurrencesByQuestion.set(id, { all: [], pyq: [], nonPyq: [] });
-    const group = occurrencesByQuestion.get(id); group.all.push(String(row.source_test_id));
-    (row.is_pyq ? group.pyq : group.nonPyq).push(String(row.source_test_id));
-  });
-  const hydratedQuestionTaxonomy = (questionTaxonomy || []).map((question) => {
-    const occurrences = occurrencesByQuestion.get(String(question.id)) || { all: [], pyq: [], nonPyq: [] };
-    return { ...question, source_test_ids: occurrences.all, pyq_source_test_ids: occurrences.pyq, non_pyq_source_test_ids: occurrences.nonPyq };
-  });
   state.meta = {
     subjects: subjects.data || [], platforms: platforms.data || [],
     systems: (systems.data || []).map((system) => ({ ...system, subject_id: subjectByPlatformSubject.get(system.platform_subject_id) || '' })),
     topics: hydratedTopics.filter((topic) => !topic.parent_topic_id),
     subtopics: (subtopics.data || []).map((subtopic) => ({ ...subtopic, subject_id: topicById.get(subtopic.topic_id)?.subject_id || '' })),
     sourceTests: (sourceTests.data || sourceTests || []).map((test) => ({ ...test, name: test.title })),
-    tags: tags.data || [],
-    questionTaxonomy: buildTaxonomyIndex(hydratedQuestionTaxonomy),
   };
+}
+
+async function resolvePopulation(filters, { includeIds = true, limit = null, offset = 0, order = 'canonical' } = {}) {
+  const result = await db.rpc('qbank_resolve_population', {
+    p_filters: filters || {}, p_include_ids: includeIds, p_limit: limit, p_offset: offset, p_order: order,
+  });
+  if (result.error) throw result.error;
+  return { count: Number(result.data?.count || 0), questionIds: (result.data?.question_ids || []).map(String) };
+}
+
+async function resolveFacets(filters) {
+  const result = await db.rpc('qbank_filter_facets', { p_filters: filters || {} });
+  if (result.error) throw result.error;
+  const data = result.data || {};
+  return {
+    count: Number(data.count || 0),
+    platforms: new Set((data.platforms || []).map(String)), subjects: new Set((data.subjects || []).map(String)),
+    systems: new Set((data.systems || []).map(String)), topics: new Set((data.topics || []).map(String)),
+    subtopics: new Set((data.subtopics || []).map(String)), source_tests: new Set((data.source_tests || []).map(String)),
+    exams: (data.exams || []).map(String), years: (data.years || []).map(String), sessions: (data.sessions || []).map(String),
+  };
+}
+
+async function resolvePopulationGroups(filters, dimension) {
+  const result = await db.rpc('qbank_population_groups', { p_filters: filters || {}, p_dimension: dimension });
+  if (result.error) throw result.error;
+  return (result.data || []).map((group) => ({ ...group, id: String(group.id), questionIds: (group.question_ids || []).map(String) }));
 }
 
 function multiPicker(name, label, items, empty = `No ${label.toLowerCase()} available`) {
@@ -177,33 +190,36 @@ function readFilters(form) {
 }
 
 function setupDependentFilters(form) {
-  const update = () => {
-    const cascade = resolveTaxonomyCascade(state.meta.questionTaxonomy, {
-      platforms: readMulti(form, 'platforms'), subjects: readMulti(form, 'subjects'),
-      systems: readMulti(form, 'systems'), topics: readMulti(form, 'topics'),
-      subtopics: readMulti(form, 'subtopics'),
-    });
-    for (const level of ['platforms', 'subjects', 'systems', 'topics', 'subtopics']) {
-      const selected = new Set(cascade.selected[level]);
+  const update = async () => {
+    const requestId = (filterCountRequests.get(form) || 0) + 1;
+    filterCountRequests.set(form, requestId);
+    const holder = form.querySelector('[data-match-count]');
+    if (holder) holder.textContent = 'Counting…';
+    const facets = await resolveFacets(readFilters(form));
+    if (!form.isConnected || filterCountRequests.get(form) !== requestId) return;
+    form.__lastFacets = facets;
+    let pruned = false;
+    for (const level of ['platforms', 'subjects', 'systems', 'topics', 'subtopics', 'source_tests']) {
+      const selected = new Set(readMulti(form, level));
       form.querySelectorAll(`[data-multi-field="${level}"] input`).forEach((input) => {
-        const visible = cascade.valid[level].has(input.value);
+        const visible = facets[level].has(input.value);
         const row = input.closest('.check-row');
         row.hidden = !visible;
         row.style.display = visible ? '' : 'none';
-        input.checked = visible && selected.has(input.value);
+        const nextChecked = visible && selected.has(input.value);
+        if (input.checked !== nextChecked) pruned = true;
+        input.checked = nextChecked;
       });
     }
-    const matchingQuestions = state.meta.questionTaxonomy.filter((question) => cascade.matchingQuestionIds.includes(question.id));
-    const validSourceTests = new Set(matchingQuestions.flatMap((question) => question.source_test_ids || []));
-    form.querySelectorAll('[data-multi-field="source_tests"] input').forEach((input) => {
-      const visible = validSourceTests.has(input.value);
-      const row = input.closest('.check-row'); row.hidden = !visible; row.style.display = visible ? '' : 'none';
-      if (!visible) input.checked = false;
-    });
     form.querySelectorAll('[data-multi-field]').forEach((field) => {
       const checked = readMulti(form, field.dataset.multiField);
       field.querySelector('[data-multi-summary]').textContent = checked.length ? `${checked.length} selected` : `All ${field.dataset.multiField}`;
     });
+    if (pruned) return update();
+    if (holder) {
+      holder.textContent = `${facets.count.toLocaleString()} question${facets.count === 1 ? '' : 's'} match`;
+      holder.dataset.count = facets.count;
+    }
   };
   form.addEventListener('change', (event) => {
     if (event.target.name === 'statuses') {
@@ -211,9 +227,10 @@ function setupDependentFilters(form) {
       if (event.target.value === 'all' && event.target.checked) form.querySelectorAll('input[name="statuses"]').forEach((input) => { if (input !== all) input.checked = false; });
       else if (event.target.checked && all) all.checked = false;
     }
-    update(); clearTimeout(state.filterTimer); state.filterTimer = setTimeout(() => updateMatchCount(form), 250);
+    clearTimeout(state.filterTimer);
+    state.filterTimer = setTimeout(() => { form.__cascadeReady = update().catch((error) => { console.warn(error); const holder = form.querySelector('[data-match-count]'); if (holder) holder.textContent = 'Count unavailable'; }); }, 100);
   });
-  update();
+  form.__cascadeReady = update().catch((error) => { console.warn(error); const holder = form.querySelector('[data-match-count]'); if (holder) holder.textContent = 'Count unavailable'; });
 }
 
 async function paged(queryFactory, size = PAGE_SIZE) {
@@ -296,44 +313,12 @@ async function rowsForQuestionIds(table, columns, questionIds, configure = (quer
 
 async function validationMembership(filters, questions) {
   const questionIds = questions.map((question) => question.id);
-  const indexed = state.meta.questionTaxonomy.filter((question) => questionIds.includes(question.id));
-  const pyqQuestionIds = filterAnalyticsPopulation(indexed, { ...filters, pyq: 'yes' });
-  const nonPyqQuestionIds = filterAnalyticsPopulation(indexed, { ...filters, pyq: 'no' });
-  const topicQuestionIds = (filters.topics || []).length
-    ? unique(await rowsForQuestionIds('question_topics', 'question_id', questionIds, (query) => query.in('topic_id', filters.topics)))
-    : questionIds;
-  const subtopicQuestionIds = (filters.subtopics || []).length
-    ? unique(await rowsForQuestionIds('question_subtopics', 'question_id', questionIds, (query) => query.in('subtopic_id', filters.subtopics)))
-    : questionIds;
-  const statuses = new Set(filters.statuses || []);
-  if (!statuses.size || statuses.has('all')) return { topicQuestionIds, subtopicQuestionIds, statusQuestionIds: questionIds, pyqQuestionIds, nonPyqQuestionIds };
-
-  const statusQuestionIds = new Set();
-  if (statuses.has('my_content')) questions.filter((question) => question.content_origin === 'user' && question.created_by === state.user.id).forEach((question) => statusQuestionIds.add(question.id));
-  if (statuses.has('bookmarked')) {
-    const rows = await rowsForQuestionIds('user_question_state', 'question_id', questionIds, (query) => query.eq('user_id', state.user.id).eq('bookmarked', true));
-    rows.forEach((row) => statusQuestionIds.add(row.question_id));
-  }
-  const learningStatuses = ['incorrect', 'correct', 'marked', 'recall_due', 'difficult', 'confident_wrong', 'slow'];
-  if (learningStatuses.some((status) => statuses.has(status))) {
-    const now = Date.now();
-    const rows = await rowsForQuestionIds('user_question_state', '*', questionIds, (query) => query.eq('user_id', state.user.id));
-    rows.forEach((row) => {
-      const matches = (statuses.has('incorrect') && (row.last_is_correct === false || row.wrong === true))
-        || (statuses.has('correct') && row.last_is_correct === true)
-        || (statuses.has('marked') && (row.marked_for_review === true || row.revision === true))
-        || (statuses.has('recall_due') && row.srm_active && row.srm_due_at && new Date(row.srm_due_at).getTime() <= now)
-        || (statuses.has('difficult') && row.personally_difficult === true)
-        || (statuses.has('confident_wrong') && row.last_is_correct === false && row.last_confidence === 'sure')
-        || (statuses.has('slow') && Number(row.last_time_seconds) > TARGET_SECONDS);
-      if (matches) statusQuestionIds.add(row.question_id);
-    });
-  }
-  if (statuses.has('new')) {
-    const attempted = new Set(unique(await rowsForQuestionIds('question_attempts', 'question_id', questionIds, (query) => query.eq('user_id', state.user.id))));
-    questionIds.filter((questionId) => !attempted.has(questionId)).forEach((questionId) => statusQuestionIds.add(questionId));
-  }
-  return { topicQuestionIds, subtopicQuestionIds, statusQuestionIds: [...statusQuestionIds], pyqQuestionIds, nonPyqQuestionIds };
+  const scoped = await resolvePopulation({ ...filters, question_ids: questionIds }, { includeIds: true, limit: questionIds.length });
+  const validIds = scoped.questionIds;
+  return {
+    topicQuestionIds: validIds, subtopicQuestionIds: validIds, statusQuestionIds: validIds,
+    pyqQuestionIds: filters.pyq === 'yes' ? validIds : [], nonPyqQuestionIds: filters.pyq === 'no' ? validIds : [],
+  };
 }
 
 function applyDirectFilters(query, filters) {
@@ -351,7 +336,7 @@ function applyDirectFilters(query, filters) {
 }
 
 async function matchingCount(filters) {
-  return (await matchingQuestionIds(filters)).length;
+  return (await resolvePopulation(filters, { includeIds: false })).count;
 }
 
 async function updateMatchCount(form) {
@@ -489,26 +474,8 @@ async function loadQuestionsByIds(questionIds, filters = {}) {
 }
 
 async function matchingQuestionIds(filters) {
-  const candidate = await candidateIds(filters);
-  if (candidate && !candidate.size) return [];
-  let rows;
-  if (candidate && candidate.size <= 400) {
-    rows = [];
-    const values = [...candidate];
-    for (let index = 0; index < values.length; index += 100) {
-      const query = applyDirectFilters(db.from('questions').select('id'), filters).in('id', values.slice(index, index + 100));
-      const { data, error } = await query; if (error) throw error; rows.push(...(data || []));
-    }
-  } else {
-    rows = await paged(() => applyDirectFilters(db.from('questions').select('id'), filters));
-  }
-  const valid = new Set(rows.map((row) => row.id).filter((id) => !candidate || candidate.has(id)));
-  if (filters.source_tests?.length) {
-    const occurrences = await optional(db.from('qbank_source_occurrences').select('question_id,question_position,qbank_source_tests!inner(sequence)').in('source_test_id', filters.source_tests).eq('is_current', true).order('question_position'), 'hybrid');
-    const ordered = (occurrences.data || []).sort((left, right) => Number(left.qbank_source_tests?.sequence || 0) - Number(right.qbank_source_tests?.sequence || 0) || left.question_position - right.question_position).map((row) => row.question_id);
-    return [...new Set(ordered.filter((id) => valid.has(id)))];
-  }
-  return [...valid];
+  const result = await resolvePopulation(filters, { includeIds: true, limit: null, order: filters.source_tests?.length ? 'source' : 'canonical' });
+  return result.questionIds;
 }
 
 function shuffled(values) {
@@ -523,14 +490,19 @@ function shuffled(values) {
 async function prepareQuestionSet({ mode = 'test', preset = 'custom', title = 'Question set', filters, requested = 'all', autoSubmit = true, questionIds = null, origin = '#/qbank' }) {
   loading('Building your exact question set…');
   const normalizedFilters = { platforms: [], subjects: [], systems: [], topics: [], subtopics: [], statuses: ['all'], pyq: '', year: '', search: '', source: '', ...(filters || {}) };
-  const population = questionIds ? [...new Set(questionIds.map(String))] : await matchingQuestionIds(normalizedFilters);
-  const requestedCount = requested === 'all' ? population.length : Math.min(population.length, Math.max(1, Number(requested) || 10));
-  const selectedIds = questionIds ? population : shuffled(population).slice(0, requestedCount);
+  let populationCount; let selectedIds;
+  if (questionIds) {
+    selectedIds = [...new Set(questionIds.map(String))]; populationCount = selectedIds.length;
+  } else {
+    const requestedLimit = requested === 'all' ? null : Math.max(1, Number(requested) || 10);
+    const population = await resolvePopulation(normalizedFilters, { includeIds: true, limit: requestedLimit, order: normalizedFilters.source_tests?.length ? 'source' : 'sample' });
+    populationCount = population.count; selectedIds = population.questionIds;
+  }
   const questions = await loadQuestionsByIds(selectedIds, normalizedFilters);
   const membership = await validationMembership(normalizedFilters, questions);
-  assertValidation(validateGeneratedQuestionSet({ questions, filters: normalizedFilters, requested: selectedIds.length, matchingCount: questionIds ? selectedIds.length : population.length, ...membership }), 'Generated question set');
+  assertValidation(validateGeneratedQuestionSet({ questions, filters: normalizedFilters, requested: selectedIds.length, matchingCount: populationCount, ...membership }), 'Generated question set');
   if (!questions.length) throw new Error('No questions match those filters.');
-  return { mode, preset, title, filters: normalizedFilters, requested, autoSubmit, origin, questionIds: selectedIds, questions, matchingCount: population.length, targetSeconds: questions.length * TARGET_SECONDS };
+  return { mode, preset, title, filters: normalizedFilters, requested, autoSubmit, origin, questionIds: selectedIds, questions, matchingCount: populationCount, targetSeconds: questions.length * TARGET_SECONDS };
 }
 
 function taxonomySummary(questionSet) {
@@ -675,7 +647,6 @@ async function qbank() {
     try { if (event.submitter?.value === 'browse') await openQuestionSet(definition); else await createSession(definition); }
     catch (error) { toast(error.message || 'Could not build practice set.', 'error'); qbank(); }
   };
-  updateMatchCount(form);
   const diagnostic = new URLSearchParams(location.hash.split('?')[1] || '').get('dom-regression');
   if (diagnostic === '1') {
     const regressionRun = `${Date.now()}-${Math.random()}`;
@@ -685,7 +656,7 @@ async function qbank() {
     setTimeout(async () => {
       if (!form.isConnected || document.documentElement.dataset.qbankDomRegressionRun !== regressionRun) return;
       try {
-        window.__QBANK_DOM_REGRESSION__ = await runTaxonomyDomRegression({ form, questionIndex: state.meta.questionTaxonomy });
+        window.__QBANK_DOM_REGRESSION__ = await runTaxonomyDomRegression({ form });
       } catch (error) {
         window.__QBANK_DOM_REGRESSION__ = { status: 'FAIL', error: error?.message || String(error) };
       }
@@ -711,10 +682,11 @@ async function recall() {
   const platformIds = filters.platform_id ? [filters.platform_id] : null;
   const subjectIds = filters.subject_id ? [filters.subject_id] : null;
   const params = { p_platform_ids: platformIds, p_subject_ids: subjectIds };
-  const [summaryResult, queueResult, settingsResult] = await Promise.all([
+  const [summaryResult, queueResult, settingsResult, recallFacets] = await Promise.all([
     db.rpc('qbank_srm_summary', params),
     db.rpc('qbank_srm_queue', { ...params, p_pyq_only: filters.scope === 'pyq', p_repeated_only: filters.scope === 'repeated', p_limit: 500 }),
     optional(db.from('user_srm_settings').select('*').eq('user_id', state.user.id).maybeSingle(), 'srm'),
+    resolveFacets({ platforms: platformIds || [], subjects: [], systems: [], topics: [], subtopics: [], source_tests: [], statuses: ['all'], pyq: '' }),
   ]);
   if (summaryResult.error || queueResult.error) {
     state.features.srm = false;
@@ -726,7 +698,7 @@ async function recall() {
   state.recallQueue = queue;
   const settings = settingsResult.data || { timezone_name: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata', new_daily_limit: 20, review_daily_limit: 40 };
   const visibleSubjects = filters.platform_id
-    ? state.meta.subjects.filter((subject) => state.meta.questionTaxonomy.some((question) => question.platform_id === filters.platform_id && question.subject_id === subject.id))
+    ? state.meta.subjects.filter((subject) => recallFacets.subjects.has(String(subject.id)))
     : state.meta.subjects;
   layout(`<div class="page-heading"><span class="eyebrow">RECALL</span><h1>Review what matters, when it matters</h1><p>Due questions are ranked by overdue time, PYQ value, repeated errors and your study flags.</p></div>
   <section class="recall-summary">${metricStrip([['Due now', summary.due_now ?? 0], ['Overdue', summary.overdue ?? 0], ['PYQ due', summary.pyq_due ?? 0], ['Repeated mistakes', summary.repeated_due ?? 0], ['Reviewed today', summary.reviewed_today ?? 0], ['Retention today', summary.retention_today == null ? '—' : `${summary.retention_today}%`]])}</section>
@@ -773,7 +745,7 @@ function showTestBuilder(preset) {
     try { if (event.submitter?.value === 'browse') await openQuestionSet(definition); else await createSession(definition); }
     catch (error) { toast(error.message || 'Could not create test.', 'error'); }
   };
-  updateMatchCount(form); slot.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  slot.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function activeQuestion() { return state.active?.questions?.[state.active.index]; }
@@ -1031,7 +1003,14 @@ async function review() {
     ['difficult', 'Personally Difficult', rows.filter((x) => x.personally_difficult), 'Questions flagged as difficult.'],
     ['slow', 'Slow >50s', rows.filter((x) => Number(x.last_time_seconds) > TARGET_SECONDS), 'Questions whose latest relevant time exceeded 50 seconds.'],
   ];
-  const taxonomyByQuestion = new Map(state.meta.questionTaxonomy.map((item) => [item.id, item]));
+  const learningQuestionIds = [...new Set(rows.map((row) => String(row.question_id)))];
+  const taxonomyRows = [];
+  for (let index = 0; index < learningQuestionIds.length; index += 200) {
+    const result = await db.from('questions').select('id,platform_id,subject_id').in('id', learningQuestionIds.slice(index, index + 200));
+    if (result.error) throw result.error;
+    taxonomyRows.push(...(result.data || []));
+  }
+  const taxonomyByQuestion = new Map(taxonomyRows.map((item) => [String(item.id), item]));
   const groupRows = (ids, field, items, status, title) => {
     const groups = new Map(); ids.forEach((id) => { const key = taxonomyByQuestion.get(String(id))?.[field]; if (key) { if (!groups.has(key)) groups.set(key, []); groups.get(key).push(id); } });
     const names = byId(items);
@@ -1107,9 +1086,7 @@ function analyticsMetric(questionIds, model) {
   const repeatedIncorrect = ids.filter((id) => wrongCount(id) >= 2);
   const wrongThree = ids.filter((id) => wrongCount(id) >= 3);
   const recovered = correct.filter((id) => wrongCount(id) > 0);
-  const mapping = new Map(state.meta.questionTaxonomy.map((question) => [String(question.id), question]));
-  const pyqIdSet = new Set(filterAnalyticsPopulation([...mapping.values()].filter((question) => ids.includes(question.id)), { pyq: 'yes' }));
-  const pyq = ids.filter((id) => pyqIdSet.has(id));
+  const pyq = ids.filter((id) => state.analyticsPyqSet.has(id));
   return { ids, attempted, correct, incorrect, unattempted, bookmarked, marked, recallDue, attempts: attempts.length, coverage: pct(attempted.length, ids.length), latestAccuracy: pct(correct.length, attempted.length), latestAccuracyValue: attempted.length ? correct.length / attempted.length : null, attemptAccuracy: pct(attempts.filter((row) => row.is_correct).length, attempts.length), averageTime: timed.length ? Math.round(timed.reduce((sum, row) => sum + Number(row.time_spent_seconds || 0), 0) / timed.length) : null, slow, verySlow, fastWrong, slowWrong, repeatedIncorrect, wrongThree, recovered, pyq };
 }
 
@@ -1139,41 +1116,21 @@ function analyticsPopulationControls(population) {
 }
 
 function analyticsGroups(level) {
-  const view = state.analyticsView; if (view.groups.has(level)) return view.groups.get(level);
-  const definition = {
-    platform: ['platform_id', state.meta.platforms, false], subject: ['subject_id', state.meta.subjects, false],
-    system: ['system_id', state.meta.systems, false],
-    topic: ['topic_ids', state.meta.topics, true], subtopic: ['subtopic_ids', state.meta.subtopics, true],
-    source_test: ['source_test_ids', state.meta.sourceTests, true],
-  }[level];
-  const groups = new Map(); const mapping = new Map(state.meta.questionTaxonomy.map((question) => [question.id, question]));
-  if (level === 'pyq') {
-    view.questionIds.forEach((questionId) => { const row = mapping.get(String(questionId)); const key = row?.pyq_source_test_ids?.length || (row?.is_pyq && !row?.source_test_ids?.length) ? 'yes' : 'no'; if (!groups.has(key)) groups.set(key, []); groups.get(key).push(String(questionId)); });
-    const result = [...groups].map(([id, questionIds]) => ({ id, name: id === 'yes' ? 'PYQ' : 'Non-PYQ', questionIds, metric: analyticsMetric(questionIds, view.model) }));
-    view.groups.set(level, result); return result;
-  }
-  if (level === 'exam') {
-    view.questionIds.forEach((questionId) => (mapping.get(String(questionId))?.exams || []).forEach((key) => { if (!groups.has(key)) groups.set(key, []); groups.get(key).push(String(questionId)); }));
-    const result = [...groups].map(([id, questionIds]) => ({ id, name: ANALYTICS_EXAM_LABELS[id] || id.replace(/_/g, ' '), questionIds, metric: analyticsMetric(questionIds, view.model) })).sort((a, b) => a.name.localeCompare(b.name));
-    view.groups.set(level, result); return result;
-  }
-  if (level === 'year_session') {
-    view.questionIds.forEach((questionId) => { const row = mapping.get(String(questionId)); if (!row?.exam_year && !row?.exam_session) return; const key = `${row.exam_year || 'Unknown year'}${row.exam_session ? ` · ${row.exam_session}` : ''}`; if (!groups.has(key)) groups.set(key, []); groups.get(key).push(String(questionId)); });
-    const result = [...groups].map(([id, questionIds]) => ({ id, name: id, questionIds, metric: analyticsMetric(questionIds, view.model) })).sort((a, b) => b.name.localeCompare(a.name));
-    view.groups.set(level, result); return result;
-  }
-  if (!definition) return [];
-  const [field, items, nested] = definition; const names = byId(items);
-  view.questionIds.forEach((questionId) => {
-    const raw = mapping.get(String(questionId))?.[field]; const keys = nested ? raw || [] : [raw];
-    keys.filter(Boolean).forEach((key) => { if (!groups.has(key)) groups.set(key, []); groups.get(key).push(String(questionId)); });
-  });
-  const result = [...groups].map(([id, questionIds]) => ({ id, name: names.get(String(id))?.name || 'Unclassified', questionIds, metric: analyticsMetric(questionIds, view.model) })).sort((a, b) => a.name.localeCompare(b.name));
-  view.groups.set(level, result); return result;
+  return state.analyticsView?.groups?.get(level) || [];
 }
 
-function renderAnalyticsBreakdown(level, page = 1) {
+async function loadAnalyticsGroups(levels, filters, model) {
+  const entries = await Promise.all(levels.map(async (level) => [level, await resolvePopulationGroups(filters, level)]));
+  entries.forEach(([level, groups]) => state.analyticsView.groups.set(level, groups.map((group) => ({ ...group, metric: analyticsMetric(group.questionIds, model) }))));
+}
+
+async function renderAnalyticsBreakdown(level, page = 1) {
   const holder = document.querySelector('#analytics-breakdown-selected'); if (!holder || !state.analyticsView) return;
+  if (!state.analyticsView.groups.has(level)) {
+    holder.innerHTML = '<div class="empty">Loading breakdown…</div>';
+    await loadAnalyticsGroups([level], state.analyticsView.filters, state.analyticsView.model);
+    if (!holder.isConnected) return;
+  }
   const groups = analyticsGroups(level); const visible = groups.slice(0, page * 50);
   holder.innerHTML = visible.length ? visible.map((group) => {
     const metric = group.metric; const enough = metric.attempted.length >= 5; const weak = enough && metric.latestAccuracyValue < .6;
@@ -1287,9 +1244,7 @@ function metricStrip(items) {
 }
 
 function analyticsSubjectGroups(questionIds, model) {
-  const byQuestion = new Map(state.meta.questionTaxonomy.map((row) => [String(row.id), row])); const groups = new Map();
-  questionIds.forEach((id) => { const subjectId = byQuestion.get(String(id))?.subject_id; if (!subjectId) return; if (!groups.has(subjectId)) groups.set(subjectId, []); groups.get(subjectId).push(String(id)); });
-  return [...groups].map(([id, ids]) => ({ id, name: state.meta.subjects.find((row) => row.id === id)?.name || 'Unclassified', questionIds: ids, metric: analyticsMetric(ids, model) }));
+  return analyticsGroups('subject');
 }
 
 function analyticsMomentum(model) {
@@ -1351,8 +1306,6 @@ function renderPyqAnalytics({ pyqMetric, pyqIds, subjectGroups, model }) {
   if (!selected) {
     return `<section class="analytics-compact"><div class="section-heading"><div><span class="eyebrow">PYQ OVERALL</span><h2>Previous-year question performance</h2></div></div>${metricStrip([['Available', pyqMetric.ids.length], ['Attempted', pyqMetric.attempted.length, pyqMetric.coverage], ['Latest accuracy', pyqMetric.latestAccuracy], ['Currently wrong', pyqMetric.incorrect.length], ['Repeated', pyqMetric.repeatedIncorrect.length], ['Recovered', pyqMetric.recovered.length]])}</section><section class="analytics-compact"><div class="section-heading"><div><span class="eyebrow">BY SUBJECT</span><h2>PYQ revision priorities</h2></div></div><div class="subject-list">${pyqSubjects.slice(0, 5).map((group) => `<article><div><b>${e(group.name)}</b><small>${group.metric.ids.length} PYQs · ${group.metric.attempted.length} attempted · ${group.metric.latestAccuracy} accuracy · ${group.metric.incorrect.length} wrong · ${group.metric.repeatedIncorrect.length} repeated</small></div><button class="button secondary compact" data-action="analytics-pyq-subject" data-subject="${e(group.id)}">Open</button></article>`).join('')}</div>${pyqSubjects.length > 5 ? '<button class="button ghost compact" data-action="analytics-view-all-pyq-subjects">View all subjects</button>' : ''}</section>`;
   }
-  const subjectCapabilities = analyticsMetadataCapabilities(state.meta.questionTaxonomy, selected.questionIds); const mappingIds = new Set(selected.questionIds);
-  state.analyticsView = { questionIds: selected.questionIds, model, filters: { subjects: [selected.id], pyq: 'yes' }, groups: new Map(), topicSubtopicRedundant: false, capabilities: subjectCapabilities };
   const allowedBreakdowns = [['topic', 'By Topic'], ['exam', 'By Exam'], ['year_session', 'By Year / session'], ['source_test', 'Source Tests']].filter(([level]) => analyticsGroups(level).length);
   const breakdownRows = state.analyticsPyqBreakdown ? analyticsGroups(state.analyticsPyqBreakdown).slice(0, 50) : [];
   const filters = { platforms: [], subjects: [selected.id], systems: [], topics: [], subtopics: [], source_tests: [], statuses: ['all'], exams: [], years: [], sessions: [], pyq: 'yes' };
@@ -1362,35 +1315,61 @@ function renderPyqAnalytics({ pyqMetric, pyqIds, subjectGroups, model }) {
 function renderSubjectAnalytics({ overallIds, subjectGroups, pyqSet, model }) {
   const selected = subjectGroups.find((group) => group.id === state.analyticsSubjectId);
   if (!selected) return `<section class="analytics-compact"><div class="section-heading"><div><span class="eyebrow">SUBJECT-WISE ANALYTICS</span><h2>Compare real imported subject performance</h2><p class="subtle">Coverage and current accuracy are shown separately.</p></div></div><div class="subject-list">${subjectGroups.sort((a, b) => a.name.localeCompare(b.name)).map((group) => { const pyq = analyticsMetric(group.questionIds.filter((id) => pyqSet.has(id)), model); return `<article><div><b>${e(group.name)}</b><small>${group.metric.coverage} coverage · ${group.metric.latestAccuracy} latest accuracy · ${pyq.latestAccuracy} PYQ accuracy · ${group.metric.incorrect.length} wrong · ${group.metric.repeatedIncorrect.length} repeated</small></div><button class="button secondary compact" data-action="analytics-subject" data-subject="${e(group.id)}">Open</button></article>`; }).join('')}</div></section>`;
-  const mapping = new Map(state.meta.questionTaxonomy.map((row) => [String(row.id), row])); const platformGroups = new Map();
-  selected.questionIds.forEach((id) => { const platform = mapping.get(String(id))?.platform_id; if (!platformGroups.has(platform)) platformGroups.set(platform, []); platformGroups.get(platform).push(id); });
-  const platforms = [...platformGroups].map(([id, ids]) => ({ id, name: state.meta.platforms.find((row) => row.id === id)?.name || 'Unclassified', metric: analyticsMetric(ids, model), ids }));
+  const platforms = analyticsGroups('platform').map((group) => ({ ...group, ids: group.questionIds }));
   const disagreement = analyticsPlatformDisagreement(platforms.map((row) => ({ attempted: row.metric.attempted.length, latestAccuracy: row.metric.latestAccuracyValue })));
   const pyqMetric = analyticsMetric(selected.questionIds.filter((id) => pyqSet.has(id)), model); const allFilters = { platforms: [], subjects: [selected.id], systems: [], topics: [], subtopics: [], source_tests: [], statuses: ['all'], exams: [], years: [], sessions: [], pyq: '' };
-  state.analyticsView = { questionIds: selected.questionIds, model, filters: allFilters, groups: new Map(), topicSubtopicRedundant: false, capabilities: analyticsMetadataCapabilities(state.meta.questionTaxonomy, selected.questionIds) };
   const canonical = [['system', 'By System'], ['topic', 'By Topic'], ['subtopic', 'By Subtopic']].filter(([level]) => analyticsGroups(level).length > 1);
   return `<button class="text-button" data-action="analytics-subject-back">← All subjects</button><section class="analytics-compact"><div class="section-heading"><div><span class="eyebrow">${e(selected.name.toUpperCase())} ANALYTICS</span><h2>All platforms</h2></div>${analyticsActionButton({ title: `${selected.name} mistakes`, questionIds: selected.metric.incorrect, filters: allFilters, label: 'Review Subject Mistakes', open: true })}</div>${metricStrip([['Coverage', selected.metric.coverage], ['Accuracy', selected.metric.latestAccuracy], ['Wrong', selected.metric.incorrect.length], ['Repeated', selected.metric.repeatedIncorrect.length], ['Recovered', selected.metric.recovered.length], ['PYQ accuracy', pyqMetric.latestAccuracy], ['Avg time', selected.metric.averageTime == null ? '—' : `${selected.metric.averageTime}s`]])}</section><section class="analytics-compact"><div class="section-heading"><div><span class="eyebrow">PLATFORM COMPARISON</span><h2>Is the weakness platform-dependent?</h2></div></div><div class="platform-list">${platforms.map((row) => `<article><div><b>${e(row.name)}</b><small>${row.metric.coverage} coverage · ${row.metric.latestAccuracy} accuracy · ${row.metric.incorrect.length} wrong · ${row.metric.attempted.length} attempted</small></div>${analyticsActionButton({ title: `${selected.name} · ${row.name} mistakes`, questionIds: row.metric.incorrect, filters: { ...allFilters, platforms: [row.id] }, label: 'Review mistakes', secondary: true, open: true })}</article>`).join('')}</div>${disagreement ? `<div class="study-signal"><b>Performance varies markedly across platforms</b><span>At least 5 questions were attempted on each compared platform and latest accuracy differs by 20+ percentage points.</span></div>` : '<p class="subtle">Platform disagreement requires at least 5 attempted questions on two platforms and a 20+ point accuracy gap.</p>'}</section>${canonical.length ? `<section class="analytics-compact"><div class="section-heading"><div><span class="eyebrow">CANONICAL TAXONOMY</span><h2>Mapped subject detail</h2></div></div>${canonical.map(([level, label]) => `<details><summary>${e(label)}</summary><div class="compact-breakdown">${analyticsGroups(level).slice(0, 20).map((row) => `<article><b>${e(row.name)}</b><span>${row.metric.coverage} coverage · ${row.metric.latestAccuracy} accuracy · ${row.metric.incorrect.length} wrong</span></article>`).join('')}</div></details>`).join('')}</section>` : ''}`;
 }
 
 async function renderAnalyticsExplore(overallIds, model) {
   const filters = state.analyticsFilters || { platforms: [], subjects: [], systems: [], topics: [], subtopics: [], source_tests: [], statuses: ['all'], exams: [], years: [], sessions: [], pyq: '', srm: '' };
-  const cascade = resolveTaxonomyCascade(state.meta.questionTaxonomy, filters); const capabilities = analyticsMetadataCapabilities(state.meta.questionTaxonomy, cascade.matchingQuestionIds);
-  const normalizedFilters = { ...filters, ...cascade.selected, statuses: filters.statuses?.length ? filters.statuses : ['all'], exams: (filters.exams || []).filter((value) => capabilities.exams.includes(String(value))), years: (filters.years || []).filter((value) => capabilities.years.includes(String(value))), sessions: (filters.sessions || []).filter((value) => capabilities.sessions.includes(String(value))), year: '', search: '', source: '' };
-  const questionIds = await matchingQuestionIds(normalizedFilters); const metric = analyticsMetric(questionIds, model); const topicSubtopicRedundant = analyticsTopicSubtopicRedundant({ questionIndex: state.meta.questionTaxonomy, topics: state.meta.topics, subtopics: state.meta.subtopics, questionIds });
-  state.analyticsView = { questionIds, model, filters: normalizedFilters, groups: new Map(), topicSubtopicRedundant, capabilities };
-  const candidates = [['platform', 'Platform'], ['subject', 'Subject'], ['system', 'System'], ['topic', topicSubtopicRedundant ? 'Topic / Subtopic' : 'Topic'], ...(!topicSubtopicRedundant ? [['subtopic', 'Subtopic']] : []), ['source_test', 'Source Test'], ['pyq', 'PYQ'], ['exam', 'Exam'], ['year_session', 'Year / session']]; const breakdowns = candidates.filter(([level]) => analyticsGroups(level).length > 1);
+  const initialFacets = await resolveFacets(filters);
+  const valid = (level, values) => (values || []).map(String).filter((value) => initialFacets[level]?.has?.(value) ?? true);
+  const capabilities = { exams: initialFacets.exams, years: initialFacets.years, sessions: initialFacets.sessions };
+  const normalizedFilters = { ...filters, platforms: valid('platforms', filters.platforms), subjects: valid('subjects', filters.subjects), systems: valid('systems', filters.systems), topics: valid('topics', filters.topics), subtopics: valid('subtopics', filters.subtopics), source_tests: valid('source_tests', filters.source_tests), statuses: filters.statuses?.length ? filters.statuses : ['all'], exams: valid('exams', filters.exams), years: valid('years', filters.years), sessions: valid('sessions', filters.sessions), year: '', search: '', source: '' };
+  const questionIds = await matchingQuestionIds(normalizedFilters); const metric = analyticsMetric(questionIds, model);
+  state.analyticsView = { questionIds, model, filters: normalizedFilters, groups: new Map(), topicSubtopicRedundant: false, capabilities };
+  const counts = { platform: initialFacets.platforms.size, subject: initialFacets.subjects.size, system: initialFacets.systems.size, topic: initialFacets.topics.size, subtopic: initialFacets.subtopics.size, source_test: initialFacets.source_tests.size, exam: capabilities.exams.length, year_session: Math.max(capabilities.years.length, capabilities.sessions.length), pyq: normalizedFilters.pyq ? 1 : 2 };
+  const candidates = [['platform', 'Platform'], ['subject', 'Subject'], ['system', 'System'], ['topic', 'Topic'], ['subtopic', 'Subtopic'], ['source_test', 'Source Test'], ['pyq', 'PYQ'], ['exam', 'Exam'], ['year_session', 'Year / session']]; const breakdowns = candidates.filter(([level]) => counts[level] > 1);
   if (!breakdowns.some(([level]) => level === state.analyticsBreakdown)) state.analyticsBreakdown = null;
+  if (state.analyticsBreakdown) await loadAnalyticsGroups([state.analyticsBreakdown], normalizedFilters, model);
   return { html: `<section class="analytics-compact"><div class="section-heading"><div><span class="eyebrow">ANALYZE</span><h2>Choose what you want to analyze</h2></div></div><form id="analytics-filter-form" class="stack"><div class="filters analytics-query-filters">${multiPicker('platforms', 'Platforms', state.meta.platforms)}${multiPicker('subjects', 'Subjects', state.meta.subjects)}${multiPicker('systems', 'Systems (optional)', state.meta.systems)}${multiPicker('topics', 'Topics', state.meta.topics)}${multiPicker('subtopics', 'Subtopics', state.meta.subtopics)}${analyticsStatusPicker()}${analyticsMetadataFields(capabilities)}${state.meta.sourceTests.length ? multiPicker('source_tests', 'Source Tests', state.meta.sourceTests) : ''}</div><div class="builder-footer"><div><b>${metric.ids.length.toLocaleString()} questions selected</b><div class="subtle">No fallback questions are substituted.</div></div><div class="row"><button class="button">Apply filters</button><button type="button" class="button ghost" data-action="clear-analytics-filters">Clear</button></div></div></form><div class="selected-analysis"><div class="section-heading"><div><span class="eyebrow">SELECTED ANALYSIS</span><h2>${e(analyticsSelectionLabel(normalizedFilters))}</h2></div>${analyticsPopulationControls({ title: 'Selected analytics population', questionIds, filters: normalizedFilters })}</div>${metricStrip([['Available', metric.ids.length], ['Attempted', metric.attempted.length, metric.coverage], ['Latest accuracy', metric.latestAccuracy], ['Currently wrong', metric.incorrect.length], ['Repeated', metric.repeatedIncorrect.length], ['Recovered', metric.recovered.length], ['Bookmarked', metric.bookmarked.length], ['Avg time', metric.averageTime == null ? '—' : `${metric.averageTime}s`]])}</div><div class="detailed-analytics">${breakdowns.length ? `<div class="field breakdown-selector"><label for="analytics-breakdown-select">Break down by</label><select id="analytics-breakdown-select"><option value="">Choose a breakdown</option>${breakdowns.map(([level, label]) => `<option value="${e(level)}" ${state.analyticsBreakdown === level ? 'selected' : ''}>${e(label)}</option>`).join('')}</select></div><div id="analytics-breakdown-selected">${state.analyticsBreakdown ? '' : '<div class="empty compact-empty">Choose one useful breakdown.</div>'}</div>` : '<div id="analytics-breakdown-selected" class="empty compact-empty">This selection has no useful multi-group breakdown.</div>'}</div></section>`, normalizedFilters };
 }
 
 async function analytics() {
   loading('Calculating analytics…');
   const allFilters = { platforms: [], subjects: [], systems: [], topics: [], subtopics: [], source_tests: [], statuses: ['all'], exams: [], years: [], sessions: [], pyq: '', year: '', search: '', source: '' };
-  const overallIds = await matchingQuestionIds(allFilters); const model = await fetchAnalyticsModel(overallIds); const overallMetric = analyticsMetric(overallIds, model); const pyqIds = filterAnalyticsPopulation(state.meta.questionTaxonomy, { pyq: 'yes' }); const pyqMetric = analyticsMetric(pyqIds, model); const pyqSet = new Set(pyqIds); const subjectGroups = analyticsSubjectGroups(overallIds, model);
-  state.analyticsView = { questionIds: overallIds, model, filters: allFilters, groups: new Map(), topicSubtopicRedundant: false, capabilities: analyticsMetadataCapabilities(state.meta.questionTaxonomy, overallIds) };
+  const [overallPopulation, pyqPopulation, allFacets] = await Promise.all([
+    resolvePopulation(allFilters, { includeIds: true, limit: null }),
+    resolvePopulation({ ...allFilters, pyq: 'yes' }, { includeIds: true, limit: null }),
+    resolveFacets(allFilters),
+  ]);
+  const overallIds = overallPopulation.questionIds; const pyqIds = pyqPopulation.questionIds;
+  state.analyticsPyqSet = new Set(pyqIds);
+  const model = await fetchAnalyticsModel(overallIds); const overallMetric = analyticsMetric(overallIds, model); const pyqMetric = analyticsMetric(pyqIds, model); const pyqSet = state.analyticsPyqSet;
+  state.analyticsView = { questionIds: overallIds, model, filters: allFilters, groups: new Map(), topicSubtopicRedundant: false, capabilities: allFacets };
+  await loadAnalyticsGroups(['subject'], allFilters, model);
+  const subjectGroups = analyticsSubjectGroups(overallIds, model);
   let content; let explore = null;
-  if (state.analyticsSection === 'pyq') content = renderPyqAnalytics({ pyqMetric, pyqIds, subjectGroups, model });
-  else if (state.analyticsSection === 'subjects') content = renderSubjectAnalytics({ overallIds, subjectGroups, pyqSet, model });
+  if (state.analyticsSection === 'pyq') {
+    if (state.analyticsSubjectId) {
+      const selected = subjectGroups.find((group) => group.id === state.analyticsSubjectId);
+      const selectedIds = (selected?.questionIds || []).filter((id) => pyqSet.has(id));
+      const filters = { ...allFilters, subjects: selected ? [selected.id] : [], pyq: 'yes' };
+      state.analyticsView = { questionIds: selectedIds, model, filters, groups: new Map(), topicSubtopicRedundant: false, capabilities: await resolveFacets(filters) };
+      await loadAnalyticsGroups(['topic', 'exam', 'year_session', 'source_test'], filters, model);
+    }
+    content = renderPyqAnalytics({ pyqMetric, pyqIds, subjectGroups, model });
+  } else if (state.analyticsSection === 'subjects') {
+    if (state.analyticsSubjectId) {
+      const selected = subjectGroups.find((group) => group.id === state.analyticsSubjectId);
+      const filters = { ...allFilters, subjects: selected ? [selected.id] : [] };
+      state.analyticsView = { questionIds: selected?.questionIds || [], model, filters, groups: new Map(), topicSubtopicRedundant: false, capabilities: await resolveFacets(filters) };
+      await loadAnalyticsGroups(['platform', 'system', 'topic', 'subtopic'], filters, model);
+    }
+    content = renderSubjectAnalytics({ overallIds, subjectGroups, pyqSet, model });
+  }
   else if (state.analyticsSection === 'explore') { explore = await renderAnalyticsExplore(overallIds, model); content = explore.html; }
   else content = renderAnalyticsOverview({ overallMetric, pyqMetric, subjectGroups, pyqSet, model });
   layout(`<div class="page-heading analytics-heading"><span class="eyebrow">ANALYTICS</span><h1>Turn performance into a study plan</h1></div>${analyticsTabs()}<div class="analytics-view">${content}</div>`);
