@@ -1,5 +1,5 @@
 import { db, initError, isMissingTable, requireUser, withAuthTimeout } from './supabase.js';
-import { analyticsMetadataCapabilities, analyticsTopicSubtopicRedundant, assertValidation, buildTaxonomyIndex, filterAnalyticsPopulation, resolveTaxonomyCascade, validateGeneratedQuestionSet, validateQuestionStateBindings, validateResumeSnapshot } from './validation.js?v=20260902-pilot-analytics';
+import { analyticsActionQuestionIds, analyticsMetadataCapabilities, analyticsPlatformDisagreement, analyticsStudyPriority, analyticsTopicSubtopicRedundant, assertValidation, buildTaxonomyIndex, canonicalCorrectOptionKeys, filterAnalyticsPopulation, isCanonicalAnswerCorrect, normalizeOptionKeys, resolveTaxonomyCascade, validateGeneratedQuestionSet, validateQuestionStateBindings, validateResumeSnapshot, validateSrmQueue } from './validation.js?v=20260902-srm2';
 import { runTaxonomyDomRegression } from './taxonomy-dom-regression.js?v=20260902-canonical-subject';
 
 const root = document.querySelector('#app');
@@ -17,11 +17,16 @@ const state = {
   reviewFilters: null,
   analyticsFilters: null,
   analyticsBreakdown: null,
+  analyticsSection: 'overview',
+  analyticsSubjectId: null,
+  analyticsPyqBreakdown: null,
   analyticsView: null,
+  recallFilters: { platform_id: '', subject_id: '', scope: 'all' },
+  recallQueue: [],
   payloadCache: new Map(),
   timer: null,
   filterTimer: null,
-  features: { learning: true, subtopics: true, sessions: true, personal: true },
+  features: { learning: true, subtopics: true, sessions: true, personal: true, srm: true },
 };
 
 const e = (value) => String(value ?? '').replace(/[&<>'"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c]));
@@ -31,12 +36,12 @@ const route = () => location.hash.replace(/^#\/?/, '').split('?')[0] || 'home';
 const goToHash = (target) => { if (location.hash === target) render(); else location.hash = target; };
 const unique = (rows, key = 'question_id') => [...new Set((rows || []).map((row) => row[key]).filter(Boolean))];
 const byId = (rows) => new Map((rows || []).map((row) => [String(row.id), row]));
-const keyList = (value) => [...new Set(String(value || '').toUpperCase().split(',').map((key) => key.trim()).filter(Boolean))].sort();
-const correctKeys = (question) => keyList(question.correct_option_keys?.join(',') || question.correct_answer);
+const keyList = (value) => normalizeOptionKeys(value);
+const correctKeys = (question) => canonicalCorrectOptionKeys(question);
 const correctKey = (question) => correctKeys(question)[0] || '';
 const selectedKey = (answer) => String(answer?.selected_option || '').toUpperCase();
 const selectedKeys = (answer) => keyList(answer?.selected_option);
-const isAnswerCorrect = (question, answer) => correctKeys(question).join(',') === selectedKeys(answer).join(',');
+const isAnswerCorrect = (question, answer) => isCanonicalAnswerCorrect(question, answer);
 const intersect = (left, right) => left == null ? new Set(right) : new Set([...left].filter((value) => right.has(value)));
 
 function toast(text, kind = '') {
@@ -79,7 +84,7 @@ function richHtml(value) {
 }
 
 function layout(content) {
-  const nav = [['home', 'Home'], ['qbank', 'QBank'], ['tests', 'Test'], ['review', 'Review'], ['analytics', 'Analytics'], ['my-bank', 'My Bank']];
+  const nav = [['home', 'Home'], ['qbank', 'QBank'], ['tests', 'Test'], ['recall', 'Recall'], ['review', 'Review'], ['analytics', 'Analytics'], ['my-bank', 'My Bank']];
   root.innerHTML = `<header class="topbar"><div class="shell topbar-row"><a class="brand" href="#/home">QBank <span>Hub</span></a><div class="user-actions"><span class="email">${e(state.user?.email)}</span><button class="button secondary compact" data-action="signout">Sign out</button></div></div><nav class="shell nav" aria-label="Primary navigation">${nav.map(([id, label]) => `<a href="#/${id}" class="${state.route === id ? 'active' : ''}">${label}</a>`).join('')}</nav></header><main class="shell">${content}</main>`;
 }
 
@@ -110,7 +115,7 @@ async function loadMeta(force = false) {
     optional(db.from('systems').select('id,name,platform_subject_id').order('sort_order').order('name')),
     optional(db.from('topics').select('id,name,platform_subject_id,system_id,parent_topic_id').order('sort_order').order('name')),
     optional(db.from('subtopics').select('id,name,topic_id').order('sort_order').order('name'), 'subtopics'),
-    optional(db.from('qbank_source_tests').select('id,title,platform_id,subject_id,sequence,declared_question_count,is_pyq').order('sequence'), 'hybrid'),
+    optional(paged(() => db.from('qbank_source_tests').select('id,title,platform_id,subject_id,sequence,declared_question_count,is_pyq').order('sequence')), 'hybrid'),
     optional(paged(() => db.from('qbank_source_occurrences').select('question_id,source_test_id,is_pyq').eq('is_current', true)), 'hybrid'),
     optional(db.from('tags').select('id,name').order('name')),
     paged(() => db.from('questions').select('id,platform_id,subject_id,system_id,is_usable,is_pyq,is_inicet,is_neet_pg,exam_tags,exam_year,exam_shift,question_topics(topic_id),question_subtopics(subtopic_id)').eq('is_usable', true)),
@@ -136,7 +141,7 @@ async function loadMeta(force = false) {
     systems: (systems.data || []).map((system) => ({ ...system, subject_id: subjectByPlatformSubject.get(system.platform_subject_id) || '' })),
     topics: hydratedTopics.filter((topic) => !topic.parent_topic_id),
     subtopics: (subtopics.data || []).map((subtopic) => ({ ...subtopic, subject_id: topicById.get(subtopic.topic_id)?.subject_id || '' })),
-    sourceTests: (sourceTests.data || []).map((test) => ({ ...test, name: test.title })),
+    sourceTests: (sourceTests.data || sourceTests || []).map((test) => ({ ...test, name: test.title })),
     tags: tags.data || [],
     questionTaxonomy: buildTaxonomyIndex(hydratedQuestionTaxonomy),
   };
@@ -235,7 +240,7 @@ async function statusCandidateIds(filters) {
     if (statuses.has('marked')) add(rows.filter((x) => x.marked_for_review).map((x) => x.question_id));
     if (statuses.has('incorrect')) add(rows.filter((x) => x.last_is_correct === false || x.wrong).map((x) => x.question_id));
     if (statuses.has('correct')) add(rows.filter((x) => x.last_is_correct === true).map((x) => x.question_id));
-    if (statuses.has('recall_due')) add(rows.filter((x) => x.recall_due_at && new Date(x.recall_due_at) <= new Date()).map((x) => x.question_id));
+    if (statuses.has('recall_due')) add(rows.filter((x) => x.srm_active && x.srm_due_at && new Date(x.srm_due_at) <= new Date()).map((x) => x.question_id));
     if (statuses.has('difficult')) add(rows.filter((x) => x.personally_difficult).map((x) => x.question_id));
     if (statuses.has('confident_wrong')) add(rows.filter((x) => x.last_is_correct === false && x.last_confidence === 'sure').map((x) => x.question_id));
     if (statuses.has('slow')) add(rows.filter((x) => x.last_time_seconds > TARGET_SECONDS).map((x) => x.question_id));
@@ -317,7 +322,7 @@ async function validationMembership(filters, questions) {
       const matches = (statuses.has('incorrect') && (row.last_is_correct === false || row.wrong === true))
         || (statuses.has('correct') && row.last_is_correct === true)
         || (statuses.has('marked') && (row.marked_for_review === true || row.revision === true))
-        || (statuses.has('recall_due') && row.recall_due_at && new Date(row.recall_due_at).getTime() <= now)
+        || (statuses.has('recall_due') && row.srm_active && row.srm_due_at && new Date(row.srm_due_at).getTime() <= now)
         || (statuses.has('difficult') && row.personally_difficult === true)
         || (statuses.has('confident_wrong') && row.last_is_correct === false && row.last_confidence === 'sure')
         || (statuses.has('slow') && Number(row.last_time_seconds) > TARGET_SECONDS);
@@ -367,7 +372,7 @@ async function updateMatchCount(form) {
 async function batchOptions(questionIds) {
   const all = [];
   for (let i = 0; i < questionIds.length; i += 200) {
-    const result = await db.from('question_options').select('question_id,option_key,option_text').in('question_id', questionIds.slice(i, i + 200)).order('option_key');
+    const result = await db.from('question_options').select('question_id,option_key,option_text,is_correct').in('question_id', questionIds.slice(i, i + 200)).order('option_key');
     if (result.error) throw result.error; all.push(...(result.data || []));
   }
   const grouped = new Map();
@@ -557,7 +562,8 @@ function actionSetButtons(definition, testLabel = 'Start test') {
 function readyScreen(questionSet) {
   state.pendingSet = questionSet;
   const summary = taxonomySummary(questionSet);
-  layout(`<div class="page-heading"><span class="eyebrow">READY</span><h1>${e(questionSet.title)}</h1><p>Your exact question set is frozen. Nothing starts until you press START TEST.</p></div><section class="card ready-card"><div class="result-grid"><div class="metric"><span>Questions</span><b>${questionSet.questions.length}</b></div><div class="metric"><span>Per question</span><b>50s</b></div><div class="metric"><span>Total target</span><b>${timerText(questionSet.targetSeconds)}</b></div><div class="metric"><span>Mode</span><b>${questionSet.mode === 'practice' ? 'Practice' : 'Test'}</b></div></div><dl class="ready-summary"><div><dt>Platforms</dt><dd>${e(summary.platforms)}</dd></div><div><dt>Subjects</dt><dd>${e(summary.subjects)}</dd></div><div><dt>Topics</dt><dd>${e(summary.topics)}</dd></div><div><dt>Subtopics</dt><dd>${e(summary.subtopics)}</dd></div></dl><div class="row"><button class="button large" data-action="start-pending-test">START TEST</button><button class="button secondary" data-action="cancel-question-set">BACK / CANCEL</button></div></section>`);
+  const recallMode = questionSet.mode === 'recall';
+  layout(`<div class="page-heading"><span class="eyebrow">READY</span><h1>${e(questionSet.title)}</h1><p>Your exact question set and order are frozen. Nothing starts until you press ${recallMode ? 'START RECALL' : 'START TEST'}.</p></div><section class="card ready-card"><div class="result-grid"><div class="metric"><span>Questions</span><b>${questionSet.questions.length}</b></div>${recallMode ? '<div class="metric"><span>Order</span><b>Priority</b></div><div class="metric"><span>Timer</span><b>Off</b></div>' : `<div class="metric"><span>Per question</span><b>50s</b></div><div class="metric"><span>Total target</span><b>${timerText(questionSet.targetSeconds)}</b></div>`}<div class="metric"><span>Mode</span><b>${recallMode ? 'Recall' : questionSet.mode === 'practice' ? 'Practice' : 'Test'}</b></div></div><dl class="ready-summary"><div><dt>Platforms</dt><dd>${e(summary.platforms)}</dd></div><div><dt>Subjects</dt><dd>${e(summary.subjects)}</dd></div><div><dt>Topics</dt><dd>${e(summary.topics)}</dd></div><div><dt>Subtopics</dt><dd>${e(summary.subtopics)}</dd></div></dl><div class="row"><button class="button large" data-action="start-pending-test">${recallMode ? 'START RECALL' : 'START TEST'}</button><button class="button secondary" data-action="cancel-question-set">BACK / CANCEL</button></div></section>`);
 }
 
 async function createSession(definition) {
@@ -635,13 +641,13 @@ async function home() {
   const [attempts, sessions, due, cards] = await Promise.all([
     db.from('question_attempts').select('question_id,is_correct,answered_at').eq('user_id', state.user.id).order('answered_at', { ascending: false }).limit(1000),
     optional(db.from('test_sessions').select('*').eq('user_id', state.user.id).eq('status', 'in_progress').order('updated_at', { ascending: false }).limit(1), 'sessions'),
-    optional(db.from('user_question_state').select('question_id', { count: 'exact' }).eq('user_id', state.user.id).lte('recall_due_at', now), 'learning'),
+    optional(db.from('user_question_state').select('question_id', { count: 'exact', head: true }).eq('user_id', state.user.id).eq('srm_active', true).lte('srm_due_at', now), 'srm'),
     optional(db.from('recall_card_progress').select('card_id', { count: 'exact' }).eq('user_id', state.user.id).lte('due_at', now), 'personal'),
   ]);
   const logs = attempts.data || []; const correct = logs.filter((row) => row.is_correct).length;
   const active = sessions.data?.[0]; const dueCount = (due.count || due.data?.length || 0) + (cards.count || cards.data?.length || 0);
   const mistakes = new Map(); logs.filter((row) => !row.is_correct).forEach((row) => mistakes.set(row.question_id, (mistakes.get(row.question_id) || 0) + 1));
-  const recommendation = dueCount ? { label: `Review ${dueCount} recall item${dueCount === 1 ? '' : 's'}`, route: '#/review' }
+  const recommendation = dueCount ? { label: `Review ${dueCount} recall item${dueCount === 1 ? '' : 's'}`, route: '#/recall' }
     : [...mistakes.values()].some((count) => count > 1) ? { label: 'Revise repeated mistakes', route: '#/review' }
       : { label: 'Start a focused QBank set', route: '#/qbank' };
   let weak = [];
@@ -654,7 +660,7 @@ async function home() {
     weak = [...tally].filter(([, value]) => value.total >= 2 && value.incorrectIds.size).sort((a, b) => a[1].correct / a[1].total - b[1].correct / b[1].total).slice(0, 3).map(([id, value]) => ({ id, name: names.get(String(id))?.name || 'Unclassified', accuracy: pct(value.correct, value.total), questionIds: [...value.incorrectIds] }));
   }
   layout(`<section class="home-hero"><div><span class="eyebrow">YOUR STUDY PLAN</span><h1>What should you do next?</h1><p class="subtle">One clear action, based on your real learning state.</p></div><a class="button large" href="${recommendation.route}">${e(recommendation.label)}</a></section>
-  <section class="action-grid">${active ? `<article class="card action-card priority"><span class="eyebrow">CONTINUE</span><h2>${e(active.title || active.preset || active.mode)}</h2><p>Question ${(active.current_position || 0) + 1} of ${active.total_questions}</p><button class="button" data-action="resume" data-id="${e(active.id)}">Resume exact session</button></article>` : `<article class="card action-card"><span class="eyebrow">CONTINUE</span><h2>No unfinished session</h2><p class="subtle">Start a practice set or test when you are ready.</p><a class="button secondary" href="#/qbank">Build practice</a></article>`}<article class="card action-card"><span class="eyebrow">ACTIVE RECALL</span><h2>${dueCount} due</h2><p>Questions and recall cards ready now.</p><a class="button secondary" href="#/review">Open recall</a></article><a class="card action-card link-card" href="#/analytics"><span class="eyebrow">ACCURACY</span><h2>${pct(correct, logs.length)}</h2><p>${logs.length} recent attempts · Open analytics</p></a></section>
+  <section class="action-grid">${active ? `<article class="card action-card priority"><span class="eyebrow">CONTINUE</span><h2>${e(active.title || active.preset || active.mode)}</h2><p>Question ${(active.current_position || 0) + 1} of ${active.total_questions}</p><button class="button" data-action="resume" data-id="${e(active.id)}">Resume exact session</button></article>` : `<article class="card action-card"><span class="eyebrow">CONTINUE</span><h2>No unfinished session</h2><p class="subtle">Start a practice set or test when you are ready.</p><a class="button secondary" href="#/qbank">Build practice</a></article>`}<article class="card action-card"><span class="eyebrow">ACTIVE RECALL</span><h2>${dueCount} due</h2><p>Scheduled questions and personal recall cards ready now.</p><a class="button secondary" href="#/recall">Open Recall</a></article><a class="card action-card link-card" href="#/analytics"><span class="eyebrow">ACCURACY</span><h2>${pct(correct, logs.length)}</h2><p>${logs.length} recent attempts · Open analytics</p></a></section>
   <section class="card section-card"><div class="section-heading"><div><span class="eyebrow">WEAK AREAS</span><h2>Turn weakness into an exact question set</h2></div><a href="#/analytics">See all analytics</a></div>${weak.length ? `<div class="weak-list">${weak.map((item) => `<article class="weak-item"><span>${e(item.name)}</span><b>${item.accuracy}</b><small>${item.questionIds.length} incorrect contributing question${item.questionIds.length === 1 ? '' : 's'}</small>${actionSetButtons({ mode: 'test', preset: 'analytics', title: `${item.name} weak-area revision`, filters: { platforms: [], subjects: [item.id], systems: [], topics: [], subtopics: [], statuses: ['all'], pyq: '', year: '', search: '', source: '' }, questionIds: item.questionIds }, 'Start revision test')}</article>`).join('')}</div>` : '<div class="empty">Answer a few questions and weak areas will appear here.</div>'}</section><div class="secondary-metrics"><span>${logs.length} recent attempts</span><span>${correct} correct</span></div>`);
 }
 
@@ -688,6 +694,54 @@ async function qbank() {
       console.info('QBank taxonomy DOM regression', window.__QBANK_DOM_REGRESSION__);
     }, 100);
   }
+}
+
+function srmIntervalLabel(minutes, dueAt = null) {
+  const value = Number(minutes || 0);
+  if (!value && dueAt) return new Date(dueAt) <= new Date() ? 'Now' : date(dueAt);
+  if (value < 60) return `${value} minute${value === 1 ? '' : 's'}`;
+  if (value < 1440) return `${Math.round(value / 60)} hours`;
+  const days = Math.round(value / 1440);
+  return days === 1 ? 'Tomorrow' : `${days} days`;
+}
+
+async function recall() {
+  loading('Building your Recall queue…');
+  const filters = state.recallFilters || { platform_id: '', subject_id: '', scope: 'all' };
+  const platformIds = filters.platform_id ? [filters.platform_id] : null;
+  const subjectIds = filters.subject_id ? [filters.subject_id] : null;
+  const params = { p_platform_ids: platformIds, p_subject_ids: subjectIds };
+  const [summaryResult, queueResult, settingsResult] = await Promise.all([
+    db.rpc('qbank_srm_summary', params),
+    db.rpc('qbank_srm_queue', { ...params, p_pyq_only: filters.scope === 'pyq', p_repeated_only: filters.scope === 'repeated', p_limit: 500 }),
+    optional(db.from('user_srm_settings').select('*').eq('user_id', state.user.id).maybeSingle(), 'srm'),
+  ]);
+  if (summaryResult.error || queueResult.error) {
+    state.features.srm = false;
+    return layout(`<div class="page-heading"><span class="eyebrow">RECALL</span><h1>Spaced repetition</h1></div>${featureNotice('Apply the deterministic SRM migration to activate Recall.')}`);
+  }
+  const summary = summaryResult.data || {};
+  const queue = (queueResult.data || []).map((row) => ({ ...row, questionId: row.question_id, isUsable: true }));
+  assertValidation(validateSrmQueue(queue), 'Recall queue');
+  state.recallQueue = queue;
+  const settings = settingsResult.data || { timezone_name: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata', new_daily_limit: 20, review_daily_limit: 40 };
+  const visibleSubjects = filters.platform_id
+    ? state.meta.subjects.filter((subject) => state.meta.questionTaxonomy.some((question) => question.platform_id === filters.platform_id && question.subject_id === subject.id))
+    : state.meta.subjects;
+  layout(`<div class="page-heading"><span class="eyebrow">RECALL</span><h1>Review what matters, when it matters</h1><p>Due questions are ranked by overdue time, PYQ value, repeated errors and your study flags.</p></div>
+  <section class="recall-summary">${metricStrip([['Due now', summary.due_now ?? 0], ['Overdue', summary.overdue ?? 0], ['PYQ due', summary.pyq_due ?? 0], ['Repeated mistakes', summary.repeated_due ?? 0], ['Reviewed today', summary.reviewed_today ?? 0], ['Retention today', summary.retention_today == null ? '—' : `${summary.retention_today}%`]])}</section>
+  <section class="card recall-start"><form id="recall-filter-form" class="recall-filter-row"><div class="field"><label>Platform</label><select name="platform_id"><option value="">All due</option>${state.meta.platforms.map((item) => `<option value="${e(item.id)}" ${filters.platform_id === item.id ? 'selected' : ''}>${e(item.name)}</option>`).join('')}</select></div><div class="field"><label>Subject</label><select name="subject_id"><option value="">All subjects</option>${visibleSubjects.map((item) => `<option value="${e(item.id)}" ${filters.subject_id === item.id ? 'selected' : ''}>${e(item.name)}</option>`).join('')}</select></div><div class="field"><label>Queue</label><select name="scope"><option value="all" ${filters.scope === 'all' ? 'selected' : ''}>All Due</option><option value="pyq" ${filters.scope === 'pyq' ? 'selected' : ''}>PYQ Due</option><option value="repeated" ${filters.scope === 'repeated' ? 'selected' : ''}>Repeated Mistakes</option></select></div><button class="button secondary" type="submit">Apply</button></form><div class="recall-primary-action"><div><b>${queue.length} ready in today’s queue</b><span class="subtle">Lower-priority overdue items remain safely queued.</span></div><button class="button large" data-action="start-recall" ${queue.length ? '' : 'disabled'}>Start Recall</button></div></section>
+  <section class="card recall-queue-card"><div class="section-heading"><div><span class="eyebrow">DUE QUEUE</span><h2>Today’s prioritized reviews</h2></div></div>${queue.length ? `<ol class="recall-queue">${queue.slice(0, 12).map((row) => `<li><div><b>${e(row.reason.replaceAll('_', ' '))}</b><small>${row.is_pyq ? 'PYQ · ' : ''}${row.consecutive_incorrect ? `${row.consecutive_incorrect} consecutive wrong · ` : ''}${row.overdue_seconds >= 86400 ? `${Math.floor(row.overdue_seconds / 86400)}d overdue` : row.overdue_seconds > 0 ? 'Due now' : 'Scheduled now'}</small></div><span class="pill">${e(row.srm_state)}</span></li>`).join('')}</ol>${queue.length > 12 ? `<p class="subtle">+ ${queue.length - 12} more in today’s queue</p>` : ''}` : '<div class="empty">Nothing is due in this selection.</div>'}</section>
+  <section class="card recall-settings"><details><summary>Daily load and how Recall works</summary><div class="recall-info"><p><b>Incorrect</b> returns sooner. <b>Correct but unsure</b> gets short reinforcement. <b>Correct and sure</b> earns a longer interval. Repeated mistakes and due PYQs rank higher, without changing accuracy.</p><form id="recall-settings-form" class="recall-filter-row"><input type="hidden" name="timezone_name" value="${e(settings.timezone_name)}" /><div class="field"><label>New/day</label><select name="new_daily_limit">${[10,20,40].map((value) => `<option ${Number(settings.new_daily_limit) === value ? 'selected' : ''}>${value}</option>`).join('')}<option value="custom" ${![10,20,40].includes(Number(settings.new_daily_limit)) ? 'selected' : ''}>Custom</option></select></div><div class="field"><label>Review/day</label><select name="review_daily_limit">${[10,20,40,60].map((value) => `<option ${Number(settings.review_daily_limit) === value ? 'selected' : ''}>${value}</option>`).join('')}<option value="custom" ${![10,20,40,60].includes(Number(settings.review_daily_limit)) ? 'selected' : ''}>Custom</option></select></div><div class="field"><label>Custom new</label><input type="number" name="custom_new" min="1" max="500" value="${e(settings.new_daily_limit)}" /></div><div class="field"><label>Custom reviews</label><input type="number" name="custom_review" min="1" max="500" value="${e(settings.review_daily_limit)}" /></div><button class="button secondary" type="submit">Save limits</button></form></div></details></section>`);
+  document.querySelector('#recall-filter-form').onsubmit = (event) => { event.preventDefault(); const value = Object.fromEntries(new FormData(event.currentTarget)); state.recallFilters = value; recall(); };
+  document.querySelector('#recall-filter-form [name="platform_id"]').onchange = () => { const form = document.querySelector('#recall-filter-form'); state.recallFilters = { ...filters, platform_id: form.elements.platform_id.value, subject_id: '' }; recall(); };
+  document.querySelector('#recall-settings-form').onsubmit = async (event) => {
+    event.preventDefault(); const value = Object.fromEntries(new FormData(event.currentTarget));
+    const newLimit = value.new_daily_limit === 'custom' ? value.custom_new : value.new_daily_limit;
+    const reviewLimit = value.review_daily_limit === 'custom' ? value.custom_review : value.review_daily_limit;
+    const saved = await db.rpc('qbank_srm_update_settings', { p_timezone_name: Intl.DateTimeFormat().resolvedOptions().timeZone || value.timezone_name || 'Asia/Kolkata', p_new_daily_limit: Number(newLimit), p_review_daily_limit: Number(reviewLimit) });
+    if (saved.error) return toast(saved.error.message, 'error'); toast('Recall limits saved.'); recall();
+  };
 }
 
 const TEST_PRESETS = {
@@ -744,22 +798,28 @@ function renderQuestion(question, answer, reveal) {
     const key = String(option.option_key).toUpperCase(); const classes = ['option'];
     if (selected.has(key)) classes.push('selected'); if (reveal && correct.has(key)) classes.push('correct'); if (reveal && selected.has(key) && !correct.has(key)) classes.push('wrong');
     return `<button class="${classes.join(' ')}" data-action="answer" data-key="${e(key)}" ${reveal ? 'disabled' : ''}><b>${e(option.option_key)}.</b><span class="rich-content">${richHtml(option.option_text)}</span></button>`;
-  }).join('')}</div>${multiple && !reveal && state.active.kind === 'practice' ? `<button class="button" data-action="submit-multi-answer" ${selected.size ? '' : 'disabled'}>Submit selected answers</button>` : ''}${reveal ? explanationBlock(question, answer, state.active.explanationOpen) : ''}`;
+  }).join('')}</div>${multiple && !reveal && ['practice', 'recall'].includes(state.active.kind) ? `<button class="button" data-action="submit-multi-answer" ${selected.size ? '' : 'disabled'}>Submit selected answers</button>` : ''}${reveal ? explanationBlock(question, answer, state.active.explanationOpen) : ''}`;
 }
 
 function feedbackControls(answer, reveal, wrong) {
   if (!reveal) return '';
-  const recall = state.active.filters?.statuses?.includes('recall_due');
-  return `<div class="learning-feedback"><div><span class="field-label">Confidence</span><div class="segmented">${['sure', 'unsure', 'guess'].map((value) => `<button data-action="confidence" data-value="${value}" class="${answer.confidence === value ? 'active' : ''}">${value.toUpperCase()}</button>`).join('')}</div></div>${wrong ? `<div><span class="field-label">What happened? <small>Optional</small></span><div class="reason-chips">${[['didnt_know', "Didn't know"], ['forgot', 'Forgot'], ['misread', 'Misread'], ['confused_options', 'Confused options'], ['overthought', 'Overthought'], ['silly_mistake', 'Silly mistake'], ['guess', 'Guess']].map(([value, label]) => `<button data-action="error-reason" data-value="${value}" class="${answer.error_reason === value ? 'active' : ''}">${label}</button>`).join('')}</div></div>` : ''}${recall ? `<div><span class="field-label">Active recall response</span><div class="segmented"><button data-action="recall-response" data-value="forgot">FORGOT</button><button data-action="recall-response" data-value="partial">PARTIAL</button><button data-action="recall-response" data-value="knew">KNEW</button></div></div>` : ''}</div>`;
+  const confidence = wrong ? '' : `<div><span class="field-label">How confident were you?</span><div class="segmented"><button data-action="confidence" data-value="sure" class="${answer.confidence === 'sure' ? 'active' : ''}" ${answer.attemptRecorded ? 'disabled' : ''}>SURE</button><button data-action="confidence" data-value="unsure" class="${answer.confidence === 'unsure' ? 'active' : ''}" ${answer.attemptRecorded ? 'disabled' : ''}>GUESSED / UNSURE</button></div><small class="subtle">If skipped, correct answers use the safe “unsure” schedule.</small></div>`;
+  const mistake = wrong ? `<div><span class="field-label">What happened? <small>Optional</small></span><div class="reason-chips">${[['didnt_know', "Didn't know"], ['forgot', 'Forgot'], ['misread', 'Misread'], ['confused_options', 'Confused options'], ['overthought', 'Overthought'], ['silly_mistake', 'Silly mistake'], ['guess', 'Guess']].map(([value, label]) => `<button data-action="error-reason" data-value="${value}" class="${answer.error_reason === value ? 'active' : ''}">${label}</button>`).join('')}</div></div>` : '';
+  const schedule = answer.srmFeedback ? `<div class="srm-next"><b>Next review: ${e(srmIntervalLabel(answer.srmFeedback.interval_minutes, answer.srmFeedback.due_at))}</b><span>${e(String(answer.srmFeedback.state || 'learning').replaceAll('_', ' '))}</span></div>` : '';
+  return `<div class="learning-feedback">${confidence}${mistake}${schedule}</div>`;
 }
 
 function renderActive() {
   const active = state.active; const question = activeQuestion(); if (!active || !question) return;
-  const answer = active.answers[question.id]; const reveal = active.completedReview || active.kind === 'practice' && Boolean(answer?.selected_option) && (correctKeys(question).length === 1 || answer.submitted);
+  const answer = active.answers[question.id]; const reveal = active.completedReview || ['practice', 'recall'].includes(active.kind) && Boolean(answer?.selected_option) && (correctKeys(question).length === 1 || answer.submitted);
   const answered = Object.values(active.answers).filter((item) => item?.selected_option).length;
   const browsing = active.kind === 'browse';
-  layout(`<section class="question-header"><div><span class="pill">${browsing ? 'Browse' : active.completedReview ? 'Review' : active.kind === 'test' ? e(TEST_PRESETS[active.preset]?.[0] || 'Test') : 'Practice'}</span><h1>${e(active.title || 'Question set')}</h1></div>${browsing ? `<div class="row"><button class="button" data-action="preview-browsed-set">Start test with these exact questions</button><button class="button secondary" data-action="back-to-origin">Back</button></div>` : `<div class="timer-cluster"><div><span>QUESTION TARGET</span><b id="question-timer">00:50</b></div><div><span>TOTAL TARGET</span><b>${timerText(active.questions.length * TARGET_SECONDS)}</b></div></div>`}</section><div class="question-layout"><section class="card question-card"><div class="question-topline"><span>Question ${active.index + 1} of ${active.questions.length}</span><span>${questionMeta(question)}</span></div><div class="progress"><i style="width:${((active.index + 1) / active.questions.length) * 100}%"></i></div>${renderQuestion(question, answer, reveal)}${browsing ? '' : feedbackControls(answer || {}, reveal, selectedKey(answer) !== correctKey(question))}<div class="question-actions"><div class="row"><button class="button ghost ${active.bookmarks.has(question.id) ? 'active-control' : ''}" data-action="bookmark" aria-pressed="${active.bookmarks.has(question.id)}">${active.bookmarks.has(question.id) ? '★ Bookmarked' : '☆ Bookmark'}</button><button class="button ghost ${active.marked.has(question.id) ? 'active-control' : ''}" data-action="mark" aria-pressed="${active.marked.has(question.id)}">${active.marked.has(question.id) ? '✓ Marked for review' : 'Mark for review'}</button><button class="button ghost" data-action="note">Note</button><button class="button ghost" data-action="report">Report</button></div><div class="row"><button class="button secondary" data-action="previous" ${active.index === 0 ? 'disabled' : ''}>Previous</button><button class="button" data-action="next">${active.index === active.questions.length - 1 ? (browsing ? 'Back' : active.completedReview ? 'Back to results' : 'Finish') : 'Next'}</button></div></div></section><aside class="card palette-card"><div class="section-heading"><h3>Question palette</h3><span>${answered}/${active.questions.length}</span></div><div class="palette">${active.questions.slice(0, 500).map((item, index) => `<button data-action="jump" data-index="${index}" class="${index === active.index ? 'current' : ''} ${active.answers[item.id]?.selected_option ? 'answered' : ''} ${active.marked.has(item.id) ? 'marked' : ''}" aria-label="Question ${index + 1}">${index + 1}</button>`).join('')}</div>${active.questions.length > 500 ? '<p class="subtle">Palette shows the first 500 positions; Previous/Next continues through all questions.</p>' : ''}${active.kind === 'test' && !active.completedReview ? `<p class="subtle">${active.questions.length - answered} unanswered</p><button class="button danger full" data-action="submit">Submit test</button>` : ''}</aside></div>`);
-  if (!browsing) startQuestionTimer(); else clearInterval(state.timer);
+  const learning = active.learning.get(question.id) || {};
+  const srmButton = learning.srm_active
+    ? `<button class="button ghost active-control" data-action="srm-remove">In Recall</button><button class="button ghost" data-action="srm-reset">Reset Recall</button>`
+    : '<button class="button ghost" data-action="srm-add">Add to Recall</button>';
+  layout(`<section class="question-header"><div><span class="pill">${browsing ? 'Browse' : active.completedReview ? 'Review' : active.kind === 'recall' ? 'Recall' : active.kind === 'test' ? e(TEST_PRESETS[active.preset]?.[0] || 'Test') : 'Practice'}</span><h1>${e(active.title || 'Question set')}</h1></div>${browsing ? `<div class="row"><button class="button" data-action="preview-browsed-set">Start test with these exact questions</button><button class="button secondary" data-action="back-to-origin">Back</button></div>` : active.kind === 'recall' ? '<span class="pill">Priority order · no timer</span>' : `<div class="timer-cluster"><div><span>QUESTION TARGET</span><b id="question-timer">00:50</b></div><div><span>TOTAL TARGET</span><b>${timerText(active.questions.length * TARGET_SECONDS)}</b></div></div>`}</section><div class="question-layout"><section class="card question-card"><div class="question-topline"><span>Question ${active.index + 1} of ${active.questions.length}</span><span>${questionMeta(question)}</span></div><div class="progress"><i style="width:${((active.index + 1) / active.questions.length) * 100}%"></i></div>${renderQuestion(question, answer, reveal)}${browsing ? '' : feedbackControls(answer || {}, reveal, Boolean(answer?.selected_option) && !isAnswerCorrect(question, answer))}<div class="question-actions"><div class="row"><button class="button ghost ${active.bookmarks.has(question.id) ? 'active-control' : ''}" data-action="bookmark" aria-pressed="${active.bookmarks.has(question.id)}">${active.bookmarks.has(question.id) ? '★ Bookmarked' : '☆ Bookmark'}</button><button class="button ghost ${active.marked.has(question.id) ? 'active-control' : ''}" data-action="mark" aria-pressed="${active.marked.has(question.id)}">${active.marked.has(question.id) ? '✓ Marked for review' : 'Mark for review'}</button>${srmButton}<button class="button ghost" data-action="note">Note</button><button class="button ghost" data-action="report">Report</button></div><div class="row"><button class="button secondary" data-action="previous" ${active.index === 0 ? 'disabled' : ''}>Previous</button><button class="button" data-action="next">${active.index === active.questions.length - 1 ? (browsing ? 'Back' : active.completedReview ? 'Back to results' : 'Finish') : 'Next'}</button></div></div></section><aside class="card palette-card"><div class="section-heading"><h3>Question palette</h3><span>${answered}/${active.questions.length}</span></div><div class="palette">${active.questions.slice(0, 500).map((item, index) => `<button data-action="jump" data-index="${index}" class="${index === active.index ? 'current' : ''} ${active.answers[item.id]?.selected_option ? 'answered' : ''} ${active.marked.has(item.id) ? 'marked' : ''}" aria-label="Question ${index + 1}">${index + 1}</button>`).join('')}</div>${active.questions.length > 500 ? '<p class="subtle">Palette shows the first 500 positions; Previous/Next continues through all questions.</p>' : ''}${active.kind === 'test' && !active.completedReview ? `<p class="subtle">${active.questions.length - answered} unanswered</p><button class="button danger full" data-action="submit">Submit test</button>` : ''}</aside></div>`);
+  if (!browsing && active.kind !== 'recall') startQuestionTimer(); else clearInterval(state.timer);
 }
 
 function startQuestionTimer() {
@@ -778,19 +838,36 @@ function startQuestionTimer() {
 function elapsedOnQuestion() { return Math.max(0, Math.floor((Date.now() - state.active.questionStartedAt) / 1000)); }
 
 async function recordAttempt(question, answer) {
-  const args = { p_question_id: question.id, p_selected_option: answer.selected_option, p_is_correct: isAnswerCorrect(question, answer), p_mode: state.active.kind === 'test' ? 'test' : 'qbank', p_test_session_id: state.active.id || null, p_time_spent_seconds: answer.time_spent_seconds || 0, p_confidence: answer.confidence || null, p_error_reason: answer.error_reason || null };
-  const result = await db.rpc('qbank_record_attempt', args);
-  if (!result.error) return;
+  if (!answer?.selected_option || answer.attemptRecorded) return answer?.srmFeedback || null;
+  answer.client_event_id ||= crypto.randomUUID();
+  const mode = state.active.kind === 'recall' ? 'recall' : state.active.kind === 'test' ? 'test' : 'qbank';
+  const confidence = isAnswerCorrect(question, answer) ? (answer.confidence === 'sure' ? 'sure' : 'unsure') : null;
+  const args = { p_question_id: question.id, p_selected_option: answer.selected_option, p_mode: mode, p_event_id: answer.client_event_id, p_test_session_id: state.active.id || null, p_time_spent_seconds: answer.time_spent_seconds || 0, p_confidence: confidence, p_error_reason: answer.error_reason || null };
+  const result = await db.rpc('qbank_record_attempt_v2', args);
+  if (!result.error) {
+    answer.confidence = confidence; answer.attemptRecorded = true; answer.srmFeedback = result.data;
+    const learning = state.active.learning.get(question.id) || { user_id: state.user.id, question_id: question.id };
+    state.active.learning.set(question.id, { ...learning, srm_active: result.data?.active, srm_state: result.data?.state, srm_due_at: result.data?.due_at, srm_interval_minutes: result.data?.interval_minutes });
+    await saveActiveAnswer(question.id);
+    return result.data;
+  }
   if (isMissingTable(result.error) || /function .* does not exist|schema cache/i.test(result.error.message)) {
-    const saved = await db.from('question_attempts').insert({ user_id: state.user.id, question_id: question.id, selected_option: answer.selected_option, is_correct: args.p_is_correct, mode: args.p_mode, answered_at: new Date().toISOString() });
+    const saved = await db.from('question_attempts').insert({ user_id: state.user.id, question_id: question.id, selected_option: answer.selected_option, is_correct: isAnswerCorrect(question, answer), mode, answered_at: new Date().toISOString() });
     if (saved.error) toast(`Answer sync failed: ${saved.error.message}`, 'error');
   } else toast(result.error.message, 'error');
+  return null;
+}
+
+async function ensureAttemptRecorded(question, answer) {
+  if (!answer?.selected_option || answer.attemptRecorded || state.active.kind === 'browse') return;
+  if (isAnswerCorrect(question, answer) && !answer.confidence) answer.confidence = 'unsure';
+  await recordAttempt(question, answer);
 }
 
 async function saveActiveAnswer(questionId) {
   if (!state.active.id || !state.features.sessions) return;
   const answer = state.active.answers[questionId] || {}; const question = state.active.questions.find((q) => q.id === questionId);
-  const value = { session_id: state.active.id, question_id: questionId, selected_option: answer.selected_option || null, marked_for_review: state.active.marked.has(questionId), answered_at: answer.selected_option ? answer.answered_at || new Date().toISOString() : null, is_correct: answer.selected_option ? isAnswerCorrect(question, answer) : null, time_spent_seconds: answer.time_spent_seconds || 0, confidence: answer.confidence || null, error_reason: answer.error_reason || null };
+  const value = { session_id: state.active.id, question_id: questionId, selected_option: answer.selected_option || null, marked_for_review: state.active.marked.has(questionId), answered_at: answer.selected_option ? answer.answered_at || new Date().toISOString() : null, is_correct: answer.selected_option ? isAnswerCorrect(question, answer) : null, time_spent_seconds: answer.time_spent_seconds || 0, confidence: answer.confidence || null, error_reason: answer.error_reason || null, client_event_id: answer.client_event_id || null };
   const saved = await optional(db.from('test_answers').upsert(value, { onConflict: 'session_id,question_id' }), 'sessions');
   if (!saved.error) await optional(db.from('test_sessions').update({ current_position: state.active.index, last_question_started_at: new Date(state.active.questionStartedAt).toISOString(), updated_at: new Date().toISOString() }).eq('id', state.active.id).eq('user_id', state.user.id), 'sessions');
 }
@@ -801,21 +878,21 @@ async function selectAnswer(key) {
   if (active.kind === 'practice' && existing?.selected_option && (!multiple || existing.submitted)) return;
   const selection = new Set(selectedKeys(existing));
   if (multiple) { if (selection.has(key)) selection.delete(key); else selection.add(key); }
-  const answer = { ...(existing || {}), selected_option: multiple ? [...selection].sort().join(',') : key, answered_at: new Date().toISOString(), time_spent_seconds: Math.max(existing?.time_spent_seconds || 0, elapsedOnQuestion()) };
+  const answer = { ...(existing || {}), client_event_id: existing?.client_event_id || crypto.randomUUID(), selected_option: multiple ? [...selection].sort().join(',') : key, answered_at: new Date().toISOString(), time_spent_seconds: Math.max(existing?.time_spent_seconds || 0, elapsedOnQuestion()) };
   active.answers[question.id] = answer;
-  if (active.kind === 'practice' && !multiple && !existing?.selected_option) await recordAttempt(question, answer);
+  if (['practice', 'recall'].includes(active.kind) && !multiple && !existing?.selected_option && !isAnswerCorrect(question, answer)) await recordAttempt(question, answer);
   await saveActiveAnswer(question.id); active.explanationOpen = false; renderActive();
 }
 
 async function submitMultiAnswer() {
   const question = activeQuestion(); const answer = state.active?.answers?.[question?.id];
-  if (!question || !answer?.selected_option || state.active.kind !== 'practice') return;
-  answer.submitted = true; await recordAttempt(question, answer); await saveActiveAnswer(question.id); state.active.explanationOpen = false; renderActive();
+  if (!question || !answer?.selected_option || !['practice', 'recall'].includes(state.active.kind)) return;
+  answer.submitted = true; if (!isAnswerCorrect(question, answer)) await recordAttempt(question, answer); await saveActiveAnswer(question.id); state.active.explanationOpen = false; renderActive();
 }
 
 async function navigateActive(index) {
   const active = state.active; const current = activeQuestion();
-  if (current && active.kind !== 'browse') { const answer = active.answers[current.id] || {}; answer.time_spent_seconds = Math.max(answer.time_spent_seconds || 0, elapsedOnQuestion()); active.answers[current.id] = answer; await saveActiveAnswer(current.id); }
+  if (current && active.kind !== 'browse') { const answer = active.answers[current.id] || {}; answer.time_spent_seconds = Math.max(answer.time_spent_seconds || 0, elapsedOnQuestion()); active.answers[current.id] = answer; await ensureAttemptRecorded(current, answer); await saveActiveAnswer(current.id); }
   active.index = Math.max(0, Math.min(index, active.questions.length - 1)); active.questionStartedAt = active.kind === 'browse' ? null : Date.now(); active.explanationOpen = false;
   if (active.id) await optional(db.from('test_sessions').update({ current_position: active.index, last_question_started_at: new Date().toISOString() }).eq('id', active.id).eq('user_id', state.user.id), 'sessions');
   renderActive();
@@ -854,10 +931,28 @@ async function toggleMark() {
 
 async function updateAnswerMetadata(field, value) {
   const question = activeQuestion(); const answer = state.active.answers[question.id]; if (!answer) return;
-  answer[field] = answer[field] === value ? null : value; await saveActiveAnswer(question.id);
+  if (field === 'confidence' && answer.attemptRecorded) return;
+  answer[field] = answer[field] === value ? null : value;
+  if (field === 'confidence' && answer[field] && isAnswerCorrect(question, answer)) await recordAttempt(question, answer);
+  await saveActiveAnswer(question.id);
   const column = field === 'confidence' ? 'last_confidence' : 'last_error_reason';
   await optional(db.from('user_question_state').upsert({ user_id: state.user.id, question_id: question.id, [column]: answer[field] }, { onConflict: 'user_id,question_id' }), 'learning');
   renderActive();
+}
+
+async function updateQuestionSrm(action) {
+  const question = activeQuestion(); if (!question) return;
+  if ((action === 'remove' || action === 'reset') && !confirm(`${action === 'remove' ? 'Remove this question from Recall?' : 'Reset Recall progress for this question? Attempt history will be preserved.'}`)) return;
+  const result = await db.rpc('qbank_srm_manual', { p_question_id: question.id, p_action: action, p_event_id: crypto.randomUUID() });
+  if (result.error) return toast(result.error.message, 'error');
+  const current = state.active.learning.get(question.id) || { user_id: state.user.id, question_id: question.id };
+  state.active.learning.set(question.id, { ...current, srm_active: result.data?.active, srm_state: result.data?.state, srm_due_at: result.data?.due_at, srm_interval_minutes: result.data?.interval_minutes });
+  const answer = state.active.answers[question.id];
+  if (answer) {
+    if (action === 'remove') delete answer.srmFeedback;
+    else answer.srmFeedback = { state: result.data?.state, due_at: result.data?.due_at, interval_minutes: result.data?.interval_minutes };
+  }
+  toast(action === 'add' ? 'Added to Recall' : action === 'remove' ? 'Removed from Recall' : 'Recall progress reset'); renderActive();
 }
 
 function modal(title, body, submitLabel = 'Save') {
@@ -891,7 +986,7 @@ async function resumeSession(id) {
     const answers = Object.fromEntries((answersResult.data || []).map((answer) => [answer.question_id, answer])); const personal = await loadPersonalState(questions.map((question) => question.id)); const session = sessionResult.data;
     assertValidation(validateResumeSnapshot({ session, storedRows: itemsResult.data || [], questions, answers: answersResult.data || [] }), 'Resume');
     assertValidation(validateQuestionStateBindings({ questions, answers, bookmarks: personal.bookmarks, marked: new Set([...personal.marked, ...(answersResult.data || []).filter((answer) => answer.marked_for_review).map((answer) => answer.question_id)]) }), 'Resumed question state');
-    state.active = { ...session, kind: session.mode === 'practice' ? 'practice' : 'test', questions, index: Math.min(session.current_position || 0, Math.max(questions.length - 1, 0)), answers, bookmarks: personal.bookmarks, marked: new Set([...personal.marked, ...(answersResult.data || []).filter((x) => x.marked_for_review).map((x) => x.question_id)]), learning: personal.learning, questionStartedAt: Date.now(), explanationOpen: false, completedReview: session.status !== 'in_progress' };
+    state.active = { ...session, kind: ['practice', 'recall'].includes(session.mode) ? session.mode : 'test', questions, index: Math.min(session.current_position || 0, Math.max(questions.length - 1, 0)), answers, bookmarks: personal.bookmarks, marked: new Set([...personal.marked, ...(answersResult.data || []).filter((x) => x.marked_for_review).map((x) => x.question_id)]), learning: personal.learning, questionStartedAt: Date.now(), explanationOpen: false, completedReview: session.status !== 'in_progress' };
     renderActive();
   } catch (error) { toast(error.message || 'Could not resume session.', 'error'); location.hash = '#/home'; }
 }
@@ -900,10 +995,10 @@ async function submitActive(timedOut = false) {
   const active = state.active; if (!active || active.completedReview) return;
   const answeredRows = Object.values(active.answers).filter((a) => a?.selected_option); const unanswered = active.questions.length - answeredRows.length;
   if (!timedOut && !confirm(`Finish this ${active.kind}? ${unanswered} question${unanswered === 1 ? '' : 's'} unanswered.`)) return;
-  clearInterval(state.timer); const current = activeQuestion(); if (current) await saveActiveAnswer(current.id);
+  clearInterval(state.timer); const current = activeQuestion(); if (current) { const currentAnswer = active.answers[current.id]; await ensureAttemptRecorded(current, currentAnswer); await saveActiveAnswer(current.id); }
   let completed = null;
   if (active.id) { const result = await db.rpc('submit_test_session', { p_session_id: active.id, p_timed_out: timedOut }); if (result.error) return toast(result.error.message, 'error'); completed = result.data; }
-  if (active.kind === 'test') for (const question of active.questions) { const answer = active.answers[question.id]; if (answer?.selected_option) await recordAttempt(question, answer); }
+  if (active.kind === 'test') for (const question of active.questions) { const answer = active.answers[question.id]; if (answer?.selected_option) await ensureAttemptRecorded(question, answer); }
   if (Array.isArray(completed)) completed = completed[0] || null;
   const totalCorrect = completed?.total_correct ?? active.questions.filter((q) => isAnswerCorrect(q, active.answers[q.id])).length;
   state.active = { ...active, ...(completed || {}), total_questions: completed?.total_questions ?? active.questions.length, total_correct: totalCorrect, incorrect_count: completed?.incorrect_count ?? answeredRows.length - totalCorrect, unanswered_count: completed?.unanswered_count ?? unanswered, total_time_seconds: completed?.total_time_seconds ?? Math.floor((Date.now() - new Date(active.started_at).getTime()) / 1000), timed_out: completed?.timed_out ?? timedOut, status: completed?.status ?? (timedOut ? 'timed_out' : 'completed'), completedReview: false };
@@ -932,7 +1027,7 @@ async function review() {
     ['correct', 'Correct', rows.filter((x) => x.last_is_correct === true), 'Questions whose current learning state is correct.'],
     ['bookmarked', 'Bookmarked', rows.filter((x) => x.bookmarked), 'Questions saved for later.'],
     ['marked', 'Marked for Review', rows.filter((x) => x.marked_for_review || x.revision), 'Questions explicitly marked.'],
-    ['recall_due', 'Recall Due', rows.filter((x) => x.recall_due_at && x.recall_due_at <= now), 'Question recall items due now.'],
+    ['recall_due', 'Recall Due', rows.filter((x) => x.srm_active && x.srm_due_at && x.srm_due_at <= now), 'Questions currently due in the deterministic Recall queue.'],
     ['difficult', 'Personally Difficult', rows.filter((x) => x.personally_difficult), 'Questions flagged as difficult.'],
     ['slow', 'Slow >50s', rows.filter((x) => Number(x.last_time_seconds) > TARGET_SECONDS), 'Questions whose latest relevant time exceeded 50 seconds.'],
   ];
@@ -955,7 +1050,7 @@ async function review() {
   form.onsubmit = (event) => { event.preventDefault(); const filters = readFilters(form); state.reviewFilters = filters; review(); };
 }
 
-const ANALYTICS_STATUSES = [['all', 'All'], ['attempted', 'Attempted'], ['incorrect', 'Incorrect'], ['correct', 'Correct'], ['bookmarked', 'Bookmarked'], ['marked', 'Marked for Review'], ['recall_due', 'Recall Due']];
+const ANALYTICS_STATUSES = [['all', 'All'], ['new', 'Unattempted'], ['attempted', 'Attempted'], ['incorrect', 'Incorrect'], ['correct', 'Correct'], ['bookmarked', 'Bookmarked'], ['marked', 'Marked for Review'], ['recall_due', 'Recall Due']];
 const ANALYTICS_EXAM_LABELS = { inicet: 'INI-CET', neet_pg: 'NEET PG' };
 
 function analyticsStatusPicker() {
@@ -975,7 +1070,7 @@ async function fetchAnalyticsModel(questionIds) {
     try { attemptRows = await paged(() => db.from('question_attempts').select('question_id,is_correct,answered_at,time_spent_seconds,confidence').eq('user_id', state.user.id).order('answered_at', { ascending: false })); }
     catch { attemptRows = await paged(() => db.from('question_attempts').select('question_id,is_correct,answered_at').eq('user_id', state.user.id).order('answered_at', { ascending: false })); }
     attempts.push(...attemptRows.filter((row) => allowed.has(String(row.question_id))));
-    const stateRows = await optional(paged(() => db.from('user_question_state').select('question_id,bookmarked,marked_for_review,revision,recall_due_at,last_time_seconds,last_confidence').eq('user_id', state.user.id)), 'learning');
+    const stateRows = await optional(paged(() => db.from('user_question_state').select('question_id,bookmarked,marked_for_review,revision,srm_active,srm_due_at,srm_state,srm_consecutive_incorrect,srm_total_reviews,last_time_seconds,last_confidence').eq('user_id', state.user.id)), 'learning');
     learning.push(...(stateRows.data || stateRows || []).filter((row) => allowed.has(String(row.question_id))));
   }
   for (let index = 0; index < questionIds.length && questionIds.length <= 1000; index += 200) {
@@ -984,7 +1079,7 @@ async function fetchAnalyticsModel(questionIds) {
     try { attemptRows = await paged(() => db.from('question_attempts').select('question_id,is_correct,answered_at,time_spent_seconds,confidence').eq('user_id', state.user.id).in('question_id', chunk).order('answered_at', { ascending: false })); }
     catch { attemptRows = await paged(() => db.from('question_attempts').select('question_id,is_correct,answered_at').eq('user_id', state.user.id).in('question_id', chunk).order('answered_at', { ascending: false })); }
     attempts.push(...attemptRows);
-    const stateRows = await optional(db.from('user_question_state').select('question_id,bookmarked,marked_for_review,revision,recall_due_at,last_time_seconds,last_confidence').eq('user_id', state.user.id).in('question_id', chunk), 'learning');
+    const stateRows = await optional(db.from('user_question_state').select('question_id,bookmarked,marked_for_review,revision,srm_active,srm_due_at,srm_state,srm_consecutive_incorrect,srm_total_reviews,last_time_seconds,last_confidence').eq('user_id', state.user.id).in('question_id', chunk), 'learning');
     learning.push(...(stateRows.data || []));
   }
   attempts.sort((a, b) => new Date(b.answered_at || 0) - new Date(a.answered_at || 0));
@@ -998,22 +1093,38 @@ function analyticsMetric(questionIds, model) {
   const attempted = ids.filter((id) => model.latest.has(id));
   const correct = attempted.filter((id) => model.latest.get(id)?.is_correct === true);
   const incorrect = attempted.filter((id) => model.latest.get(id)?.is_correct === false);
+  const unattempted = ids.filter((id) => !model.latest.has(id));
   const bookmarked = ids.filter((id) => model.learning.get(id)?.bookmarked === true);
   const marked = ids.filter((id) => model.learning.get(id)?.marked_for_review === true || model.learning.get(id)?.revision === true);
-  const now = Date.now(); const recallDue = ids.filter((id) => { const due = model.learning.get(id)?.recall_due_at; return due && new Date(due).getTime() <= now; });
+  const now = Date.now(); const recallDue = ids.filter((id) => { const learning = model.learning.get(id); return learning?.srm_active && learning.srm_due_at && new Date(learning.srm_due_at).getTime() <= now; });
   const timed = attempts.filter((row) => row.time_spent_seconds != null);
-  const slow = ids.filter((id) => Number(model.learning.get(id)?.last_time_seconds) > TARGET_SECONDS);
-  const repeatedIncorrect = ids.filter((id) => (model.attemptsByQuestion.get(id) || []).filter((row) => row.is_correct === false).length >= 2);
+  const latestTime = (id) => Number(model.latest.get(id)?.time_spent_seconds ?? model.learning.get(id)?.last_time_seconds ?? 0);
+  const slow = attempted.filter((id) => latestTime(id) > TARGET_SECONDS);
+  const verySlow = attempted.filter((id) => latestTime(id) > TARGET_SECONDS * 2);
+  const fastWrong = incorrect.filter((id) => latestTime(id) > 0 && latestTime(id) < 30);
+  const slowWrong = incorrect.filter((id) => latestTime(id) > 75);
+  const wrongCount = (id) => (model.attemptsByQuestion.get(id) || []).filter((row) => row.is_correct === false).length;
+  const repeatedIncorrect = ids.filter((id) => wrongCount(id) >= 2);
+  const wrongThree = ids.filter((id) => wrongCount(id) >= 3);
+  const recovered = correct.filter((id) => wrongCount(id) > 0);
   const mapping = new Map(state.meta.questionTaxonomy.map((question) => [String(question.id), question]));
-  const pyq = ids.filter((id) => mapping.get(id)?.is_pyq === true);
-  return { ids, attempted, correct, incorrect, bookmarked, marked, recallDue, attempts: attempts.length, latestAccuracy: pct(correct.length, attempted.length), attemptAccuracy: pct(attempts.filter((row) => row.is_correct).length, attempts.length), averageTime: timed.length ? Math.round(timed.reduce((sum, row) => sum + Number(row.time_spent_seconds || 0), 0) / timed.length) : null, slow, repeatedIncorrect, pyq };
+  const pyqIdSet = new Set(filterAnalyticsPopulation([...mapping.values()].filter((question) => ids.includes(question.id)), { pyq: 'yes' }));
+  const pyq = ids.filter((id) => pyqIdSet.has(id));
+  return { ids, attempted, correct, incorrect, unattempted, bookmarked, marked, recallDue, attempts: attempts.length, coverage: pct(attempted.length, ids.length), latestAccuracy: pct(correct.length, attempted.length), latestAccuracyValue: attempted.length ? correct.length / attempted.length : null, attemptAccuracy: pct(attempts.filter((row) => row.is_correct).length, attempts.length), averageTime: timed.length ? Math.round(timed.reduce((sum, row) => sum + Number(row.time_spent_seconds || 0), 0) / timed.length) : null, slow, verySlow, fastWrong, slowWrong, repeatedIncorrect, wrongThree, recovered, pyq };
 }
 
 function analyticsStatusIds(questionIds, statuses, model) {
   const metric = analyticsMetric(questionIds, model);
   const selected = new Set(statuses || []); if (!selected.size || selected.has('all')) return metric.ids;
-  const populations = { attempted: metric.attempted, incorrect: metric.incorrect, correct: metric.correct, bookmarked: metric.bookmarked, marked: metric.marked, recall_due: metric.recallDue };
+  const populations = { new: metric.unattempted, attempted: metric.attempted, incorrect: metric.incorrect, correct: metric.correct, bookmarked: metric.bookmarked, marked: metric.marked, recall_due: metric.recallDue };
   return metric.ids.filter((id) => [...selected].some((status) => (populations[status] || []).includes(id)));
+}
+
+function analyticsActionButton({ title, questionIds, filters, label, secondary = false, open = false }) {
+  const ids = [...new Set((questionIds || []).map(String))];
+  if (!ids.length) return '';
+  const token = registerActionSet({ mode: 'test', preset: 'analytics', title, filters: { ...filters, statuses: ['all'] }, questionIds: ids, origin: '#/analytics' });
+  return `<button class="button ${secondary ? 'secondary ' : ''}compact" data-action="${open ? 'open-action-set' : 'preview-action-set'}" data-set="${e(token)}">${e(label)}</button>`;
 }
 
 function analyticsActionButtons(population) {
@@ -1031,6 +1142,7 @@ function analyticsGroups(level) {
   const view = state.analyticsView; if (view.groups.has(level)) return view.groups.get(level);
   const definition = {
     platform: ['platform_id', state.meta.platforms, false], subject: ['subject_id', state.meta.subjects, false],
+    system: ['system_id', state.meta.systems, false],
     topic: ['topic_ids', state.meta.topics, true], subtopic: ['subtopic_ids', state.meta.subtopics, true],
     source_test: ['source_test_ids', state.meta.sourceTests, true],
   }[level];
@@ -1064,12 +1176,56 @@ function renderAnalyticsBreakdown(level, page = 1) {
   const holder = document.querySelector('#analytics-breakdown-selected'); if (!holder || !state.analyticsView) return;
   const groups = analyticsGroups(level); const visible = groups.slice(0, page * 50);
   holder.innerHTML = visible.length ? visible.map((group) => {
-    const metric = group.metric; const weak = metric.attempted.length >= 2 && metric.correct.length / metric.attempted.length < .6;
-    return `<details class="analytics-breakdown-row"><summary><span><b>${e(group.name)}</b>${weak ? '<span class="pill weak-pill">Weak</span>' : ''}</span><span class="breakdown-performance"><b>${metric.latestAccuracy}</b><small>${metric.attempted.length} / ${metric.ids.length} attempted · ${metric.incorrect.length} incorrect · ${metric.averageTime == null ? '—' : `${metric.averageTime}s`} avg</small></span></summary><div class="analytics-row-detail"><div class="compact-stats"><span>Total attempts <b>${metric.attempts}</b></span><span>Bookmarked <b>${metric.bookmarked.length}</b></span><span>Marked <b>${metric.marked.length}</b></span><span>Repeatedly incorrect <b>${metric.repeatedIncorrect.length}</b></span>${metric.pyq.length ? `<span>PYQ <b>${metric.pyq.length}</b></span>` : ''}</div>${analyticsPopulationControls({ title: group.name, questionIds: group.questionIds, filters: state.analyticsView.filters })}</div></details>`;
+    const metric = group.metric; const enough = metric.attempted.length >= 5; const weak = enough && metric.latestAccuracyValue < .6;
+    return `<details class="analytics-breakdown-row"><summary><span><b>${e(group.name)}</b>${weak ? '<span class="pill weak-pill">Weak</span>' : !enough && metric.attempted.length ? '<span class="pill neutral-pill">Not enough data</span>' : ''}</span><span class="breakdown-performance"><b>${metric.latestAccuracy}</b><small>${metric.attempted.length} / ${metric.ids.length} attempted · ${metric.coverage} coverage · ${metric.incorrect.length} wrong · ${metric.averageTime == null ? '—' : `${metric.averageTime}s`} avg</small></span></summary><div class="analytics-row-detail"><div class="compact-stats"><span>Total attempts <b>${metric.attempts}</b></span><span>Bookmarked <b>${metric.bookmarked.length}</b></span><span>Marked <b>${metric.marked.length}</b></span><span>Repeatedly incorrect <b>${metric.repeatedIncorrect.length}</b></span>${metric.pyq.length ? `<span>PYQ <b>${metric.pyq.length}</b></span>` : ''}</div>${analyticsPopulationControls({ title: group.name, questionIds: group.questionIds, filters: state.analyticsView.filters })}</div></details>`;
   }).join('') + (visible.length < groups.length ? `<button class="button secondary" data-action="analytics-more" data-level="${e(level)}" data-page="${page + 1}">Show next ${Math.min(50, groups.length - visible.length)}</button>` : '') : '<div class="empty">No mapped entries in this population.</div>';
 }
 
-async function analytics() {
+function analyticsAttentionRows(questionIds, model) {
+  const mapping = new Map(state.meta.questionTaxonomy.map((question) => [String(question.id), question]));
+  const definitions = [['subject_id', state.meta.subjects, false], ['source_test_ids', state.meta.sourceTests, true]];
+  const pyqSet = new Set(filterAnalyticsPopulation(state.meta.questionTaxonomy, { pyq: 'yes' }));
+  const rows = [];
+  for (const [field, items, nested] of definitions) {
+    const names = byId(items); const groups = new Map();
+    questionIds.forEach((id) => {
+      const value = mapping.get(String(id))?.[field]; const keys = nested ? value || [] : [value];
+      keys.filter(Boolean).forEach((key) => { if (!groups.has(String(key))) groups.set(String(key), []); groups.get(String(key)).push(String(id)); });
+    });
+    groups.forEach((ids, id) => {
+      const metric = analyticsMetric(ids, model); const pyqMetric = analyticsMetric(ids.filter((value) => pyqSet.has(value)), model);
+      const priority = analyticsStudyPriority({ isPyq: pyqMetric.incorrect.length > 0, currentIncorrect: metric.incorrect.length, repeatedIncorrect: metric.repeatedIncorrect.length, slowIncorrect: metric.slowWrong.length, attempted: metric.attempted.length, available: metric.ids.length, latestAccuracy: metric.latestAccuracyValue, bookmarked: metric.bookmarked.length, marked: metric.marked.length });
+      const meaningful = metric.repeatedIncorrect.length || pyqMetric.incorrect.length || (metric.attempted.length >= 5 && metric.latestAccuracyValue < .7);
+      if (meaningful) rows.push({ id, name: names.get(id)?.name || 'Unclassified', metric, pyqMetric, priority });
+    });
+  }
+  return rows.sort((a, b) => b.priority.score - a.priority.score || b.metric.attempted.length - a.metric.attempted.length).slice(0, 5);
+}
+
+function analyticsTrend(model) {
+  const weeks = new Map();
+  model.attempts.forEach((row) => {
+    const stamp = new Date(row.answered_at || 0); if (!Number.isFinite(stamp.getTime())) return;
+    const start = new Date(stamp); start.setHours(0, 0, 0, 0); start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+    const key = start.toISOString().slice(0, 10); if (!weeks.has(key)) weeks.set(key, new Map());
+    const current = weeks.get(key).get(String(row.question_id));
+    if (!current || new Date(row.answered_at) > new Date(current.answered_at)) weeks.get(key).set(String(row.question_id), row);
+  });
+  return [...weeks].sort(([a], [b]) => a.localeCompare(b)).slice(-6).map(([week, rows]) => {
+    const values = [...rows.values()]; const correct = values.filter((row) => row.is_correct === true).length;
+    return { week, attempted: values.length, accuracy: values.length ? Math.round(correct / values.length * 100) : 0 };
+  });
+}
+
+function analyticsSelectionLabel(filters) {
+  const parts = [];
+  if (filters.platforms?.length) parts.push(filters.platforms.map((id) => state.meta.platforms.find((row) => row.id === id)?.name).filter(Boolean).join(' + '));
+  if (filters.subjects?.length) parts.push(filters.subjects.map((id) => state.meta.subjects.find((row) => row.id === id)?.name).filter(Boolean).join(' + '));
+  if (filters.pyq === 'yes') parts.push('PYQ'); if (filters.pyq === 'no') parts.push('Non-PYQ');
+  return parts.join(' / ') || 'All usable questions';
+}
+
+async function legacyAnalytics() {
   loading('Calculating selected analytics…');
   const filters = state.analyticsFilters || { platforms: [], subjects: [], systems: [], topics: [], subtopics: [], statuses: ['all'], exams: [], years: [], sessions: [], pyq: '', srm: '' };
   const cascade = resolveTaxonomyCascade(state.meta.questionTaxonomy, filters);
@@ -1087,22 +1243,165 @@ async function analytics() {
   const model = await fetchAnalyticsModel(overallIds);
   const overallMetric = analyticsMetric(overallIds, model);
   const metric = analyticsMetric(questionIds, model);
+  const pyqIds = filterAnalyticsPopulation(state.meta.questionTaxonomy, { pyq: 'yes' });
+  const pyqMetric = analyticsMetric(pyqIds, model);
+  const pyqWrong = analyticsActionQuestionIds(pyqMetric, 'review_wrong_pyqs');
+  const pyqPractice = analyticsActionQuestionIds(pyqMetric, 'practice_pyqs');
+  const pyqUnattempted = analyticsActionQuestionIds(pyqMetric, 'unattempted_pyqs');
+  const repeatedMistakes = analyticsActionQuestionIds(overallMetric, 'review_repeated_mistakes');
   const topicSubtopicRedundant = analyticsTopicSubtopicRedundant({ questionIndex: state.meta.questionTaxonomy, topics: state.meta.topics, subtopics: state.meta.subtopics, questionIds });
   state.analyticsView = { questionIds, model, filters: normalizedFilters, groups: new Map(), topicSubtopicRedundant, capabilities };
   const combined = { title: 'Selected analytics population', questionIds, filters: normalizedFilters };
-  const candidates = [['platform', 'Platform'], ['subject', 'Subject'], ['topic', topicSubtopicRedundant ? 'Topic / Subtopic' : 'Topic'], ...(!topicSubtopicRedundant ? [['subtopic', 'Subtopic']] : []), ['source_test', 'Source Test'], ['pyq', 'PYQ']];
+  const candidates = [['platform', 'Platform'], ['subject', 'Subject'], ['system', 'System'], ['topic', topicSubtopicRedundant ? 'Topic / Subtopic' : 'Topic'], ...(!topicSubtopicRedundant ? [['subtopic', 'Subtopic']] : []), ['source_test', 'Source Test'], ['pyq', 'PYQ'], ['exam', 'Exam'], ['year_session', 'Year / session']];
   const breakdowns = candidates.filter(([level]) => analyticsGroups(level).length > 1);
   if (!breakdowns.some(([level]) => level === state.analyticsBreakdown)) state.analyticsBreakdown = null;
-  layout(`<div class="page-heading"><span class="eyebrow">ANALYTICS</span><h1>Overall performance</h1><p>First select the question population. Analytics then summarizes exactly that selection.</p></div><section class="card builder-card"><form id="analytics-filter-form" class="stack"><div class="filters analytics-query-filters">${multiPicker('platforms', 'Platforms', state.meta.platforms)}${multiPicker('subjects', 'Subjects', state.meta.subjects)}${multiPicker('systems', 'Systems (optional)', state.meta.systems)}${multiPicker('topics', 'Topics', state.meta.topics)}${multiPicker('subtopics', 'Subtopics', state.meta.subtopics)}${analyticsStatusPicker()}${analyticsMetadataFields(capabilities)}</div><div class="builder-footer"><div><b>${metric.ids.length.toLocaleString()} questions selected</b><div class="subtle">No fallback questions are substituted when a combination has zero matches.</div></div><div class="row"><button class="button">Apply analytics filters</button><button type="button" class="button ghost" data-action="clear-analytics-filters">Clear</button></div></div></form></section><section class="card analytics-summary"><div class="section-heading"><div><span class="eyebrow">SELECTED POPULATION</span><h2>${metric.ids.length} questions available</h2><p class="subtle">Primary accuracy uses the newest answer for each attempted question.</p></div>${analyticsPopulationControls(combined)}</div><div class="analytics-primary-metrics"><div><span>Mastery accuracy</span><b>${metric.latestAccuracy}</b><small>latest answers</small></div><div><span>Questions attempted</span><b>${metric.attempted.length} / ${metric.ids.length}</b><small>unique questions</small></div><div><span>Currently incorrect</span><b>${metric.incorrect.length}</b><small>latest answer</small></div><div><span>Average time</span><b>${metric.averageTime == null ? '—' : `${metric.averageTime}s`}</b><small>across attempts</small></div></div><div class="analytics-secondary"><span>Bookmarked <b>${metric.bookmarked.length}</b></span><span>Marked for Review <b>${metric.marked.length}</b></span><span>Recall Due <b>${metric.recallDue.length}</b></span>${metric.pyq.length ? `<span>PYQ <b>${metric.pyq.length}</b></span>` : ''}</div><details class="analytics-more-details"><summary>More details</summary><div class="compact-stats"><span>Total attempts <b>${metric.attempts}</b></span><span>Unique correct <b>${metric.correct.length}</b></span><span>Attempt accuracy <b>${metric.attemptAccuracy}</b></span><span>Slow &gt;50s <b>${metric.slow.length}</b></span><span>Repeatedly incorrect <b>${metric.repeatedIncorrect.length}</b></span></div><p class="analytics-rule">Weak area = at least 2 unique attempted questions and latest-answer accuracy below 60%. Repeatedly incorrect = at least 2 incorrect attempts on the same question.</p></details></section><section class="card detailed-analytics"><div class="section-heading"><div><span class="eyebrow">BREAK DOWN THIS SELECTION BY</span><h2>Optional detailed analysis</h2></div>${topicSubtopicRedundant && analyticsGroups('topic').length > 1 ? '<span class="subtle">Topic and Subtopic are equivalent in this selection, so one combined view is shown.</span>' : ''}</div>${breakdowns.length ? `<div class="breakdown-selector">${breakdowns.map(([level, label]) => `<button class="button ${state.analyticsBreakdown === level ? '' : 'secondary'}" data-action="select-analytics-breakdown" data-level="${level}">By ${e(label)}</button>`).join('')}</div><div id="analytics-breakdown-selected" class="analytics-breakdown-content">${state.analyticsBreakdown ? '' : '<div class="empty">Choose one useful breakdown. No rows are rendered by default.</div>'}</div>` : '<div id="analytics-breakdown-selected" class="empty">This selection has no useful multi-group breakdown.</div>'}</section>`);
+  const attention = analyticsAttentionRows(overallIds, model); const trend = analyticsTrend(model);
+  const allAnalyticsFilters = { platforms: [], subjects: [], systems: [], topics: [], subtopics: [], source_tests: [], statuses: ['all'], exams: [], years: [], sessions: [], pyq: '' };
+  const pyqFilters = { ...allAnalyticsFilters, pyq: 'yes' };
+  const pyqActions = `${analyticsActionButton({ title: 'Wrong PYQs', questionIds: pyqWrong, filters: pyqFilters, label: 'Review Wrong PYQs', secondary: true, open: true })}${analyticsActionButton({ title: 'PYQ practice', questionIds: pyqPractice, filters: pyqFilters, label: 'Practice PYQs' })}<button class="button ghost compact" data-action="analyze-pyqs">Analyze PYQs</button>${analyticsActionButton({ title: 'Unattempted PYQs', questionIds: pyqUnattempted, filters: pyqFilters, label: 'Unattempted PYQs', secondary: true })}`;
+  layout(`<div class="page-heading analytics-heading"><span class="eyebrow">ANALYTICS</span><h1>Your next best study move</h1><p>PYQs first, then weaknesses, repeated mistakes and honest coverage.</p></div>
+  <section class="card analytics-pyq"><div class="section-heading"><div><span class="eyebrow">PYQ PERFORMANCE</span><h2>Previous-year question command center</h2><p class="subtle">Only questions supported by real PYQ source metadata are included.</p></div></div><div class="analytics-primary-metrics analytics-pyq-metrics"><div><span>PYQ available</span><b>${pyqMetric.ids.length}</b><small>usable questions</small></div><div><span>Attempted</span><b>${pyqMetric.attempted.length}</b><small>${pyqMetric.coverage} coverage</small></div><div><span>Latest accuracy</span><b>${pyqMetric.latestAccuracy}</b><small>newest answer per question</small></div><div><span>Currently incorrect</span><b>${pyqMetric.incorrect.length}</b><small>${pyqMetric.repeatedIncorrect.length} repeatedly incorrect</small></div></div><div class="analytics-secondary"><span>Bookmarked PYQs <b>${pyqMetric.bookmarked.length}</b></span><span>Marked PYQs <b>${pyqMetric.marked.length}</b></span><span>Average PYQ time <b>${pyqMetric.averageTime == null ? '—' : `${pyqMetric.averageTime}s`}</b></span></div><div class="analytics-command-actions">${pyqActions || '<span class="subtle">No PYQ actions are available yet.</span>'}</div></section>
+  <section class="card analytics-summary" data-analytics-overall><div class="section-heading"><div><span class="eyebrow">OVERALL PERFORMANCE</span><h2>${overallMetric.attempted.length} of ${overallMetric.ids.length} questions covered</h2><p class="subtle">${overallMetric.coverage} coverage and ${overallMetric.latestAccuracy} latest-answer accuracy are separate signals.</p></div></div><div class="analytics-primary-metrics"><div><span>Coverage</span><b>${overallMetric.coverage}</b><small>${overallMetric.attempted.length} unique attempted</small></div><div><span>Latest-answer accuracy</span><b>${overallMetric.latestAccuracy}</b><small>current performance</small></div><div><span>Total attempts</span><b>${overallMetric.attempts}</b><small>${overallMetric.attemptAccuracy} attempt accuracy</small></div><div><span>Currently incorrect</span><b>${overallMetric.incorrect.length}</b><small>${overallMetric.repeatedIncorrect.length} repeated</small></div><div><span>Bookmarked</span><b>${overallMetric.bookmarked.length}</b><small>saved to revisit</small></div><div><span>Average time</span><b>${overallMetric.averageTime == null ? '—' : `${overallMetric.averageTime}s`}</b><small>50s training target</small></div>${overallMetric.recallDue.length ? `<div><span>Recall due</span><b>${overallMetric.recallDue.length}</b><small>existing recall state</small></div>` : ''}</div></section>
+  <section class="card analytics-attention"><div class="section-heading"><div><span class="eyebrow">NEEDS ATTENTION</span><h2>Highest-value areas to revise next</h2><p class="subtle">PYQ mistakes receive extra study priority; raw accuracy is never changed.</p></div></div>${attention.length ? `<div class="attention-list">${attention.map((row) => `<article><div><b>${e(row.name)}</b><span class="priority-label">${e(row.priority.label)}</span><small>${row.metric.attempted.length}/${row.metric.ids.length} attempted · ${row.metric.latestAccuracy} latest accuracy · ${row.pyqMetric.incorrect.length} PYQs wrong · ${row.metric.repeatedIncorrect.length} repeated</small></div>${analyticsActionButton({ title: `${row.name} priority review`, questionIds: row.metric.incorrect.length ? row.metric.incorrect : row.metric.ids, filters: allAnalyticsFilters, label: row.metric.incorrect.length ? 'Review mistakes' : 'Practice', secondary: true, open: row.metric.incorrect.length > 0 })}</article>`).join('')}</div>` : '<div class="empty">Not enough data yet. Attempt at least 5 questions in an area to assess accuracy-based weakness.</div>'}<details class="analytics-more-details"><summary>How priority works</summary><p class="analytics-rule">Deterministic score: current wrong +4, repeated wrong +10, slow-and-wrong +2, bookmark +1, mark +2, low accuracy after 5 attempts up to +14, low coverage +2. A PYQ weakness adds +15, plus +4 per current PYQ mistake and +6 per repeated PYQ mistake.</p></details></section>
+  <section class="card builder-card"><div class="section-heading"><div><span class="eyebrow">ANALYZE A SUBSET</span><h2>Choose an exact question population</h2><p class="subtle">Within a filter: union. Across filters: intersection. Invalid descendants are removed.</p></div></div><form id="analytics-filter-form" class="stack"><div class="filters analytics-query-filters">${multiPicker('platforms', 'Platforms', state.meta.platforms)}${multiPicker('subjects', 'Subjects', state.meta.subjects)}${multiPicker('systems', 'Systems (optional)', state.meta.systems)}${multiPicker('topics', 'Topics', state.meta.topics)}${multiPicker('subtopics', 'Subtopics', state.meta.subtopics)}${analyticsStatusPicker()}${analyticsMetadataFields(capabilities)}</div><div class="builder-footer"><div><b>${metric.ids.length.toLocaleString()} questions selected</b><div class="subtle">No fallback questions are substituted when a combination has zero matches.</div></div><div class="row"><button class="button">Apply filters</button><button type="button" class="button ghost" data-action="clear-analytics-filters">Clear</button></div></div></form><div class="selected-analysis"><div class="section-heading"><div><span class="eyebrow">SELECTED ANALYSIS</span><h2>${e(analyticsSelectionLabel(normalizedFilters))}</h2></div>${analyticsPopulationControls(combined)}</div><div class="compact-stats"><span>Available <b>${metric.ids.length}</b></span><span>Attempted <b>${metric.attempted.length}</b></span><span>Coverage <b>${metric.coverage}</b></span><span>Latest correct <b>${metric.correct.length}</b></span><span>Latest incorrect <b>${metric.incorrect.length}</b></span><span>Latest accuracy <b>${metric.latestAccuracy}</b></span><span>Repeatedly incorrect <b>${metric.repeatedIncorrect.length}</b></span><span>Bookmarked <b>${metric.bookmarked.length}</b></span><span>Average time <b>${metric.averageTime == null ? '—' : `${metric.averageTime}s`}</b></span></div></div><div class="detailed-analytics"><div class="section-heading"><div><span class="eyebrow">BREAK DOWN BY</span><h2>One detail view at a time</h2></div></div>${breakdowns.length ? `<div class="field breakdown-selector"><label for="analytics-breakdown-select">Break down by</label><select id="analytics-breakdown-select"><option value="">Choose a breakdown</option>${breakdowns.map(([level, label]) => `<option value="${e(level)}" ${state.analyticsBreakdown === level ? 'selected' : ''}>${e(label)}</option>`).join('')}</select></div><div id="analytics-breakdown-selected" class="analytics-breakdown-content">${state.analyticsBreakdown ? '' : '<div class="empty">Choose one useful breakdown. No rows are rendered by default.</div>'}</div>` : '<div id="analytics-breakdown-selected" class="empty">This selection has no useful multi-group breakdown.</div>'}</div></section>
+  <section class="card analytics-mistakes"><div class="section-heading"><div><span class="eyebrow">MISTAKES / MASTERY</span><h2>What is changing in your knowledge</h2></div></div><div class="analytics-primary-metrics"><div><span>Currently incorrect</span><b>${overallMetric.incorrect.length}</b><small>newest answer wrong</small></div><div><span>Wrong ≥2 times</span><b>${overallMetric.repeatedIncorrect.length}</b><small>repeated mistakes</small></div><div><span>Wrong ≥3 times</span><b>${overallMetric.wrongThree.length}</b><small>highest remediation need</small></div><div><span>Recovered mistakes</span><b>${overallMetric.recovered.length}</b><small>previously wrong → now correct</small></div></div><div class="compact-stats"><span>PYQ currently incorrect <b>${pyqMetric.incorrect.length}</b></span><span>PYQ repeatedly incorrect <b>${pyqMetric.repeatedIncorrect.length}</b></span><span>Fast + wrong <b>${overallMetric.fastWrong.length}</b></span><span>Slow + wrong <b>${overallMetric.slowWrong.length}</b></span><span>Very slow &gt;100s <b>${overallMetric.verySlow.length}</b></span><span>Marked for review <b>${overallMetric.marked.length}</b></span></div><div class="analytics-command-actions">${analyticsActionButton({ title: 'Repeated mistakes', questionIds: repeatedMistakes, filters: allAnalyticsFilters, label: 'Review Repeated Mistakes', secondary: true, open: true })}${analyticsActionButton({ title: 'Wrong PYQs', questionIds: pyqWrong, filters: pyqFilters, label: 'Review Wrong PYQs', open: true })}</div></section>
+  <section class="card analytics-trend"><div class="section-heading"><div><span class="eyebrow">RECENT TREND</span><h2>Latest-answer accuracy by recent week</h2><p class="subtle">Newest answer per question within each week.</p></div></div>${trend.length ? `<div class="trend-bars">${trend.map((row) => `<div><span>${e(date(`${row.week}T00:00:00Z`))}</span><div><i style="width:${row.accuracy}%"></i></div><b>${row.accuracy}%</b><small>${row.attempted} questions</small></div>`).join('')}</div>` : '<div class="empty">No attempts yet. Your recent trend will appear after you answer questions.</div>'}</section>`);
   const form = document.querySelector('#analytics-filter-form');
-  document.querySelector('.builder-card')?.insertAdjacentHTML('beforebegin', `<section class="card analytics-summary" data-analytics-overall><div class="section-heading"><div><span class="eyebrow">OVERALL ANALYTICS</span><h2>${overallMetric.ids.length} usable questions</h2><p class="subtle">Always reflects the complete usable QBank, independent of the detailed filters below.</p></div></div><div class="analytics-primary-metrics"><div><span>Latest-answer accuracy</span><b>${overallMetric.latestAccuracy}</b><small>newest answer per attempted question</small></div><div><span>Unique attempted</span><b>${overallMetric.attempted.length}</b><small>of ${overallMetric.ids.length} available</small></div><div><span>Latest correct</span><b>${overallMetric.correct.length}</b><small>current question state</small></div><div><span>Latest incorrect</span><b>${overallMetric.incorrect.length}</b><small>current question state</small></div></div><div class="analytics-secondary"><span>Total attempts <b>${overallMetric.attempts}</b></span><span>Attempt accuracy <b>${overallMetric.attemptAccuracy}</b></span><span>Bookmarked <b>${overallMetric.bookmarked.length}</b></span><span>Marked for Review <b>${overallMetric.marked.length}</b></span><span>Recall Due <b>${overallMetric.recallDue.length}</b></span><span>Average time <b>${overallMetric.averageTime == null ? '—' : `${overallMetric.averageTime}s`}</b></span><span>Repeatedly incorrect <b>${overallMetric.repeatedIncorrect.length}</b></span></div></section>`);
   if (state.meta.sourceTests.length) form.querySelector('.analytics-query-filters')?.insertAdjacentHTML('beforeend', multiPicker('source_tests', 'Source Tests', state.meta.sourceTests));
   form.querySelectorAll('input[name="statuses"]').forEach((input) => { input.checked = false; });
   for (const level of ['platforms', 'subjects', 'systems', 'topics', 'subtopics', 'source_tests', 'statuses', 'exams', 'years', 'sessions']) (normalizedFilters[level] || []).forEach((id) => { const input = form.querySelector(`input[name="${level}"][value="${CSS.escape(String(id))}"]`); if (input) input.checked = true; });
   form.elements.pyq.value = normalizedFilters.pyq || '';
   setupDependentFilters(form);
   form.onsubmit = (event) => { event.preventDefault(); state.analyticsFilters = readFilters(form); analytics(); };
+  document.querySelector('#analytics-breakdown-select')?.addEventListener('change', (event) => { state.analyticsBreakdown = event.target.value || null; if (state.analyticsBreakdown) renderAnalyticsBreakdown(state.analyticsBreakdown, 1); else document.querySelector('#analytics-breakdown-selected').innerHTML = '<div class="empty">Choose one useful breakdown. No rows are rendered by default.</div>'; });
   if (state.analyticsBreakdown) renderAnalyticsBreakdown(state.analyticsBreakdown, 1);
+}
+
+function analyticsTabs() {
+  const sections = [['overview', 'Overview'], ['pyq', 'PYQ Analytics'], ['subjects', 'Subject-wise'], ['explore', 'Explore']];
+  return `<nav class="analytics-tabs" aria-label="Analytics sections">${sections.map(([id, label]) => `<button class="${state.analyticsSection === id ? 'active' : ''}" data-action="analytics-section" data-section="${id}">${e(label)}</button>`).join('')}</nav>`;
+}
+
+function metricStrip(items) {
+  return `<div class="metric-strip">${items.map(([label, value, detail = '']) => `<div><span>${e(label)}</span><b>${e(value)}</b>${detail ? `<small>${e(detail)}</small>` : ''}</div>`).join('')}</div>`;
+}
+
+function analyticsSubjectGroups(questionIds, model) {
+  const byQuestion = new Map(state.meta.questionTaxonomy.map((row) => [String(row.id), row])); const groups = new Map();
+  questionIds.forEach((id) => { const subjectId = byQuestion.get(String(id))?.subject_id; if (!subjectId) return; if (!groups.has(subjectId)) groups.set(subjectId, []); groups.get(subjectId).push(String(id)); });
+  return [...groups].map(([id, ids]) => ({ id, name: state.meta.subjects.find((row) => row.id === id)?.name || 'Unclassified', questionIds: ids, metric: analyticsMetric(ids, model) }));
+}
+
+function analyticsMomentum(model) {
+  const now = Date.now(); const windows = [new Map(), new Map()];
+  model.attempts.forEach((row) => {
+    const age = now - new Date(row.answered_at || 0).getTime(); const window = age >= 0 && age < 7 * 86400000 ? 0 : age >= 7 * 86400000 && age < 14 * 86400000 ? 1 : -1;
+    if (window < 0) return; const id = String(row.question_id); const current = windows[window].get(id);
+    if (!current || new Date(row.answered_at) > new Date(current.answered_at)) windows[window].set(id, row);
+  });
+  const summarize = (rows) => { const values = [...rows.values()]; const correct = values.filter((row) => row.is_correct === true).length; const timed = values.filter((row) => row.time_spent_seconds != null); return { questions: values.length, accuracy: values.length ? Math.round(correct / values.length * 100) : null, averageTime: timed.length ? Math.round(timed.reduce((sum, row) => sum + Number(row.time_spent_seconds || 0), 0) / timed.length) : null }; };
+  const current = summarize(windows[0]); const previous = summarize(windows[1]);
+  return { current, previous, delta: current.accuracy != null && previous.accuracy != null ? current.accuracy - previous.accuracy : null };
+}
+
+function overviewAttention(subjectGroups, pyqSet, overallMetric) {
+  const rows = [];
+  subjectGroups.forEach((group) => {
+    const pyqMetric = analyticsMetric(group.questionIds.filter((id) => pyqSet.has(id)), state.analyticsView.model);
+    if (pyqMetric.incorrect.length) {
+      const priority = analyticsStudyPriority({ isPyq: true, currentIncorrect: pyqMetric.incorrect.length, repeatedIncorrect: pyqMetric.repeatedIncorrect.length, attempted: pyqMetric.attempted.length, available: pyqMetric.ids.length, latestAccuracy: pyqMetric.latestAccuracyValue });
+      rows.push({ label: `${group.name} PYQs`, detail: `${pyqMetric.latestAccuracy} latest accuracy · ${pyqMetric.incorrect.length} wrong`, ids: pyqMetric.incorrect, filters: { pyq: 'yes' }, priority: priority.score });
+    }
+    if (group.metric.attempted.length >= 5 && group.metric.latestAccuracyValue < .6) rows.push({ label: group.name, detail: `${group.metric.latestAccuracy} latest accuracy · ${group.metric.coverage} coverage`, ids: group.metric.incorrect, filters: {}, priority: 12 + group.metric.incorrect.length });
+  });
+  if (overallMetric.repeatedIncorrect.length) rows.push({ label: 'Repeated mistakes', detail: `${overallMetric.repeatedIncorrect.length} questions wrong at least twice`, ids: overallMetric.repeatedIncorrect, filters: {}, priority: 18 });
+  if (overallMetric.slowWrong.length) rows.push({ label: 'Slow + wrong questions', detail: `${overallMetric.slowWrong.length} questions took over 75 seconds`, ids: overallMetric.slowWrong, filters: {}, priority: 9 });
+  return rows.sort((a, b) => b.priority - a.priority).slice(0, 5);
+}
+
+function revisionQuestionIds(overallMetric, pyqMetric, subjectGroups, pyqSet) {
+  const weakSubjectIds = new Set(subjectGroups.filter((group) => group.metric.attempted.length >= 5 && group.metric.latestAccuracyValue < .6).flatMap((group) => group.questionIds));
+  const repeatedPyq = pyqMetric.repeatedIncorrect; const repeatedNonPyq = overallMetric.repeatedIncorrect.filter((id) => !pyqSet.has(id));
+  const weakWrong = overallMetric.incorrect.filter((id) => weakSubjectIds.has(id));
+  const bookmarkedWrong = overallMetric.incorrect.filter((id) => overallMetric.bookmarked.includes(id));
+  const unattemptedWeakPyq = pyqMetric.unattempted.filter((id) => weakSubjectIds.has(id)).sort().slice(0, 20);
+  return [...new Set([...pyqMetric.incorrect, ...repeatedPyq, ...repeatedNonPyq, ...weakWrong, ...bookmarkedWrong, ...overallMetric.slowWrong, ...overallMetric.fastWrong, ...unattemptedWeakPyq, ...overallMetric.recallDue])].slice(0, 60);
+}
+
+function renderAnalyticsOverview({ overallMetric, pyqMetric, subjectGroups, pyqSet, model }) {
+  const attention = overviewAttention(subjectGroups, pyqSet, overallMetric); const revisionIds = revisionQuestionIds(overallMetric, pyqMetric, subjectGroups, pyqSet); const momentum = analyticsMomentum(model);
+  const allFilters = { platforms: [], subjects: [], systems: [], topics: [], subtopics: [], source_tests: [], statuses: ['all'], exams: [], years: [], sessions: [], pyq: '' };
+  const revise = analyticsActionButton({ title: 'Priority revision', questionIds: revisionIds, filters: allFilters, label: 'Start Revision' });
+  const mistakeActions = [
+    ['Currently incorrect', overallMetric.incorrect, `${overallMetric.incorrect.length}`], ['Wrong ≥2 times', overallMetric.repeatedIncorrect, `${overallMetric.repeatedIncorrect.length}`], ['Wrong ≥3 times', overallMetric.wrongThree, `${overallMetric.wrongThree.length}`], ['Recovered mistakes', overallMetric.recovered, `${overallMetric.recovered.length}`], ['Fast + wrong', overallMetric.fastWrong, `${overallMetric.fastWrong.length}`], ['Slow + wrong', overallMetric.slowWrong, `${overallMetric.slowWrong.length}`],
+  ];
+  return `<section class="overview-revision"><div><span class="eyebrow">WHAT TO REVISE NOW</span><h2>${revisionIds.length} priority questions</h2><div class="revision-counts"><span>${pyqMetric.incorrect.length} Wrong PYQs</span><span>${overallMetric.repeatedIncorrect.length} Repeated mistakes</span><span>${overallMetric.incorrect.filter((id) => overallMetric.bookmarked.includes(id)).length} Bookmarked + wrong</span><span>${overallMetric.recallDue.length} Recall due</span></div></div>${revise || '<span class="subtle">No revision items yet.</span>'}</section>
+  <section class="analytics-compact"><div class="section-heading"><div><span class="eyebrow">QBANK SNAPSHOT</span><h2>Coverage and current performance</h2></div></div>${metricStrip([['Coverage', `${overallMetric.attempted.length}/${overallMetric.ids.length}`, overallMetric.coverage], ['Latest accuracy', overallMetric.latestAccuracy, 'newest answer'], ['Wrong', overallMetric.incorrect.length], ['Repeated', overallMetric.repeatedIncorrect.length], ['Bookmarked', overallMetric.bookmarked.length], ['Avg time', overallMetric.averageTime == null ? '—' : `${overallMetric.averageTime}s`, `${overallMetric.attemptAccuracy} attempt accuracy`]])}</section>
+  <section class="analytics-compact pyq-snapshot"><div><span class="eyebrow">PYQ SNAPSHOT</span><h2>PYQs</h2><p>${pyqMetric.ids.length} total · ${pyqMetric.attempted.length} attempted · ${pyqMetric.latestAccuracy} accuracy · ${pyqMetric.incorrect.length} wrong</p></div><button class="button compact" data-action="analytics-section" data-section="pyq">Open PYQ Analytics</button></section>
+  <section class="analytics-compact"><div class="section-heading"><div><span class="eyebrow">NEEDS ATTENTION</span><h2>Highest-value study priorities</h2></div></div>${attention.length ? `<ol class="overview-attention">${attention.map((row) => `<li><div><b>${e(row.label)}</b><small>${e(row.detail)}</small></div>${analyticsActionButton({ title: row.label, questionIds: row.ids, filters: { ...allFilters, ...row.filters }, label: 'Review', secondary: true, open: true })}</li>`).join('')}</ol>` : '<div class="empty compact-empty">Not enough data yet. Attempt at least 5 questions to assess area-level weakness.</div>'}</section>
+  <section class="analytics-compact"><div class="section-heading"><div><span class="eyebrow">MISTAKE PATTERNS</span><h2>Spot avoidable errors</h2></div><small class="subtle">Fast &lt;30s · Slow &gt;75s · target ~50s</small></div><div class="pattern-grid">${mistakeActions.map(([label, ids, value]) => `<button data-action="analytics-open-ids" data-label="${e(label)}" data-ids="${e(ids.join(','))}" ${ids.length ? '' : 'disabled'}><span>${e(label)}</span><b>${e(value)}</b></button>`).join('')}</div></section>
+  <section class="analytics-compact"><div class="section-heading"><div><span class="eyebrow">RECENT MOMENTUM</span><h2>Last 7 days</h2></div></div>${metricStrip([['Questions', momentum.current.questions], ['Latest accuracy', momentum.current.accuracy == null ? '—' : `${momentum.current.accuracy}%`], ['vs previous 7d', momentum.delta == null ? '—' : `${momentum.delta >= 0 ? '+' : ''}${momentum.delta}%`], ['Avg time', momentum.current.averageTime == null ? '—' : `${momentum.current.averageTime}s`]])}</section>`;
+}
+
+function renderPyqAnalytics({ pyqMetric, pyqIds, subjectGroups, model }) {
+  const pyqSubjects = subjectGroups.map((group) => ({ ...group, questionIds: group.questionIds.filter((id) => pyqIds.includes(id)) })).filter((group) => group.questionIds.length).map((group) => ({ ...group, metric: analyticsMetric(group.questionIds, model) }));
+  pyqSubjects.forEach((group) => { group.priority = analyticsStudyPriority({ isPyq: true, currentIncorrect: group.metric.incorrect.length, repeatedIncorrect: group.metric.repeatedIncorrect.length, attempted: group.metric.attempted.length, available: group.metric.ids.length, latestAccuracy: group.metric.latestAccuracyValue }); });
+  pyqSubjects.sort((a, b) => b.priority.score - a.priority.score || a.name.localeCompare(b.name));
+  const selected = pyqSubjects.find((group) => group.id === state.analyticsSubjectId);
+  if (!selected) {
+    return `<section class="analytics-compact"><div class="section-heading"><div><span class="eyebrow">PYQ OVERALL</span><h2>Previous-year question performance</h2></div></div>${metricStrip([['Available', pyqMetric.ids.length], ['Attempted', pyqMetric.attempted.length, pyqMetric.coverage], ['Latest accuracy', pyqMetric.latestAccuracy], ['Currently wrong', pyqMetric.incorrect.length], ['Repeated', pyqMetric.repeatedIncorrect.length], ['Recovered', pyqMetric.recovered.length]])}</section><section class="analytics-compact"><div class="section-heading"><div><span class="eyebrow">BY SUBJECT</span><h2>PYQ revision priorities</h2></div></div><div class="subject-list">${pyqSubjects.slice(0, 5).map((group) => `<article><div><b>${e(group.name)}</b><small>${group.metric.ids.length} PYQs · ${group.metric.attempted.length} attempted · ${group.metric.latestAccuracy} accuracy · ${group.metric.incorrect.length} wrong · ${group.metric.repeatedIncorrect.length} repeated</small></div><button class="button secondary compact" data-action="analytics-pyq-subject" data-subject="${e(group.id)}">Open</button></article>`).join('')}</div>${pyqSubjects.length > 5 ? '<button class="button ghost compact" data-action="analytics-view-all-pyq-subjects">View all subjects</button>' : ''}</section>`;
+  }
+  const subjectCapabilities = analyticsMetadataCapabilities(state.meta.questionTaxonomy, selected.questionIds); const mappingIds = new Set(selected.questionIds);
+  state.analyticsView = { questionIds: selected.questionIds, model, filters: { subjects: [selected.id], pyq: 'yes' }, groups: new Map(), topicSubtopicRedundant: false, capabilities: subjectCapabilities };
+  const allowedBreakdowns = [['topic', 'By Topic'], ['exam', 'By Exam'], ['year_session', 'By Year / session'], ['source_test', 'Source Tests']].filter(([level]) => analyticsGroups(level).length);
+  const breakdownRows = state.analyticsPyqBreakdown ? analyticsGroups(state.analyticsPyqBreakdown).slice(0, 50) : [];
+  const filters = { platforms: [], subjects: [selected.id], systems: [], topics: [], subtopics: [], source_tests: [], statuses: ['all'], exams: [], years: [], sessions: [], pyq: 'yes' };
+  return `<button class="text-button" data-action="analytics-pyq-back">← All PYQ subjects</button><section class="analytics-compact"><div class="section-heading"><div><span class="eyebrow">PYQ · ${e(selected.name)}</span><h2>${e(selected.name)} PYQs</h2></div></div>${metricStrip([['Available', selected.metric.ids.length], ['Attempted', selected.metric.attempted.length, selected.metric.coverage], ['Latest accuracy', selected.metric.latestAccuracy], ['Currently wrong', selected.metric.incorrect.length], ['Repeated', selected.metric.repeatedIncorrect.length], ['Recovered', selected.metric.recovered.length], ['Bookmarked', selected.metric.bookmarked.length], ['Avg time', selected.metric.averageTime == null ? '—' : `${selected.metric.averageTime}s`]])}<div class="analytics-command-actions">${analyticsActionButton({ title: `${selected.name} wrong PYQs`, questionIds: selected.metric.incorrect, filters, label: 'Wrong PYQs', open: true })}${analyticsActionButton({ title: `${selected.name} repeated PYQs`, questionIds: selected.metric.repeatedIncorrect, filters, label: 'Repeated PYQs', secondary: true, open: true })}${analyticsActionButton({ title: `${selected.name} unattempted PYQs`, questionIds: selected.metric.unattempted, filters, label: 'Unattempted PYQs', secondary: true })}</div></section><section class="analytics-compact"><div class="section-heading"><div><span class="eyebrow">DRILL DOWN</span><h2>Choose one real metadata view</h2></div></div><div class="breakdown-buttons">${allowedBreakdowns.map(([level, label]) => `<button class="button ${state.analyticsPyqBreakdown === level ? '' : 'secondary'} compact" data-action="analytics-pyq-breakdown" data-level="${e(level)}">${e(label)}</button>`).join('')}</div>${state.analyticsPyqBreakdown ? `<div class="compact-breakdown">${breakdownRows.map((row) => `<article><b>${e(row.name)}</b><span>${row.metric.attempted.length}/${row.metric.ids.length} attempted · ${row.metric.latestAccuracy} accuracy · ${row.metric.incorrect.length} wrong</span></article>`).join('') || '<div class="empty">No mapped data.</div>'}</div>` : '<div class="empty compact-empty">Choose a breakdown. Source Test names appear only here.</div>'}</section>`;
+}
+
+function renderSubjectAnalytics({ overallIds, subjectGroups, pyqSet, model }) {
+  const selected = subjectGroups.find((group) => group.id === state.analyticsSubjectId);
+  if (!selected) return `<section class="analytics-compact"><div class="section-heading"><div><span class="eyebrow">SUBJECT-WISE ANALYTICS</span><h2>Compare real imported subject performance</h2><p class="subtle">Coverage and current accuracy are shown separately.</p></div></div><div class="subject-list">${subjectGroups.sort((a, b) => a.name.localeCompare(b.name)).map((group) => { const pyq = analyticsMetric(group.questionIds.filter((id) => pyqSet.has(id)), model); return `<article><div><b>${e(group.name)}</b><small>${group.metric.coverage} coverage · ${group.metric.latestAccuracy} latest accuracy · ${pyq.latestAccuracy} PYQ accuracy · ${group.metric.incorrect.length} wrong · ${group.metric.repeatedIncorrect.length} repeated</small></div><button class="button secondary compact" data-action="analytics-subject" data-subject="${e(group.id)}">Open</button></article>`; }).join('')}</div></section>`;
+  const mapping = new Map(state.meta.questionTaxonomy.map((row) => [String(row.id), row])); const platformGroups = new Map();
+  selected.questionIds.forEach((id) => { const platform = mapping.get(String(id))?.platform_id; if (!platformGroups.has(platform)) platformGroups.set(platform, []); platformGroups.get(platform).push(id); });
+  const platforms = [...platformGroups].map(([id, ids]) => ({ id, name: state.meta.platforms.find((row) => row.id === id)?.name || 'Unclassified', metric: analyticsMetric(ids, model), ids }));
+  const disagreement = analyticsPlatformDisagreement(platforms.map((row) => ({ attempted: row.metric.attempted.length, latestAccuracy: row.metric.latestAccuracyValue })));
+  const pyqMetric = analyticsMetric(selected.questionIds.filter((id) => pyqSet.has(id)), model); const allFilters = { platforms: [], subjects: [selected.id], systems: [], topics: [], subtopics: [], source_tests: [], statuses: ['all'], exams: [], years: [], sessions: [], pyq: '' };
+  state.analyticsView = { questionIds: selected.questionIds, model, filters: allFilters, groups: new Map(), topicSubtopicRedundant: false, capabilities: analyticsMetadataCapabilities(state.meta.questionTaxonomy, selected.questionIds) };
+  const canonical = [['system', 'By System'], ['topic', 'By Topic'], ['subtopic', 'By Subtopic']].filter(([level]) => analyticsGroups(level).length > 1);
+  return `<button class="text-button" data-action="analytics-subject-back">← All subjects</button><section class="analytics-compact"><div class="section-heading"><div><span class="eyebrow">${e(selected.name.toUpperCase())} ANALYTICS</span><h2>All platforms</h2></div>${analyticsActionButton({ title: `${selected.name} mistakes`, questionIds: selected.metric.incorrect, filters: allFilters, label: 'Review Subject Mistakes', open: true })}</div>${metricStrip([['Coverage', selected.metric.coverage], ['Accuracy', selected.metric.latestAccuracy], ['Wrong', selected.metric.incorrect.length], ['Repeated', selected.metric.repeatedIncorrect.length], ['Recovered', selected.metric.recovered.length], ['PYQ accuracy', pyqMetric.latestAccuracy], ['Avg time', selected.metric.averageTime == null ? '—' : `${selected.metric.averageTime}s`]])}</section><section class="analytics-compact"><div class="section-heading"><div><span class="eyebrow">PLATFORM COMPARISON</span><h2>Is the weakness platform-dependent?</h2></div></div><div class="platform-list">${platforms.map((row) => `<article><div><b>${e(row.name)}</b><small>${row.metric.coverage} coverage · ${row.metric.latestAccuracy} accuracy · ${row.metric.incorrect.length} wrong · ${row.metric.attempted.length} attempted</small></div>${analyticsActionButton({ title: `${selected.name} · ${row.name} mistakes`, questionIds: row.metric.incorrect, filters: { ...allFilters, platforms: [row.id] }, label: 'Review mistakes', secondary: true, open: true })}</article>`).join('')}</div>${disagreement ? `<div class="study-signal"><b>Performance varies markedly across platforms</b><span>At least 5 questions were attempted on each compared platform and latest accuracy differs by 20+ percentage points.</span></div>` : '<p class="subtle">Platform disagreement requires at least 5 attempted questions on two platforms and a 20+ point accuracy gap.</p>'}</section>${canonical.length ? `<section class="analytics-compact"><div class="section-heading"><div><span class="eyebrow">CANONICAL TAXONOMY</span><h2>Mapped subject detail</h2></div></div>${canonical.map(([level, label]) => `<details><summary>${e(label)}</summary><div class="compact-breakdown">${analyticsGroups(level).slice(0, 20).map((row) => `<article><b>${e(row.name)}</b><span>${row.metric.coverage} coverage · ${row.metric.latestAccuracy} accuracy · ${row.metric.incorrect.length} wrong</span></article>`).join('')}</div></details>`).join('')}</section>` : ''}`;
+}
+
+async function renderAnalyticsExplore(overallIds, model) {
+  const filters = state.analyticsFilters || { platforms: [], subjects: [], systems: [], topics: [], subtopics: [], source_tests: [], statuses: ['all'], exams: [], years: [], sessions: [], pyq: '', srm: '' };
+  const cascade = resolveTaxonomyCascade(state.meta.questionTaxonomy, filters); const capabilities = analyticsMetadataCapabilities(state.meta.questionTaxonomy, cascade.matchingQuestionIds);
+  const normalizedFilters = { ...filters, ...cascade.selected, statuses: filters.statuses?.length ? filters.statuses : ['all'], exams: (filters.exams || []).filter((value) => capabilities.exams.includes(String(value))), years: (filters.years || []).filter((value) => capabilities.years.includes(String(value))), sessions: (filters.sessions || []).filter((value) => capabilities.sessions.includes(String(value))), year: '', search: '', source: '' };
+  const questionIds = await matchingQuestionIds(normalizedFilters); const metric = analyticsMetric(questionIds, model); const topicSubtopicRedundant = analyticsTopicSubtopicRedundant({ questionIndex: state.meta.questionTaxonomy, topics: state.meta.topics, subtopics: state.meta.subtopics, questionIds });
+  state.analyticsView = { questionIds, model, filters: normalizedFilters, groups: new Map(), topicSubtopicRedundant, capabilities };
+  const candidates = [['platform', 'Platform'], ['subject', 'Subject'], ['system', 'System'], ['topic', topicSubtopicRedundant ? 'Topic / Subtopic' : 'Topic'], ...(!topicSubtopicRedundant ? [['subtopic', 'Subtopic']] : []), ['source_test', 'Source Test'], ['pyq', 'PYQ'], ['exam', 'Exam'], ['year_session', 'Year / session']]; const breakdowns = candidates.filter(([level]) => analyticsGroups(level).length > 1);
+  if (!breakdowns.some(([level]) => level === state.analyticsBreakdown)) state.analyticsBreakdown = null;
+  return { html: `<section class="analytics-compact"><div class="section-heading"><div><span class="eyebrow">ANALYZE</span><h2>Choose what you want to analyze</h2></div></div><form id="analytics-filter-form" class="stack"><div class="filters analytics-query-filters">${multiPicker('platforms', 'Platforms', state.meta.platforms)}${multiPicker('subjects', 'Subjects', state.meta.subjects)}${multiPicker('systems', 'Systems (optional)', state.meta.systems)}${multiPicker('topics', 'Topics', state.meta.topics)}${multiPicker('subtopics', 'Subtopics', state.meta.subtopics)}${analyticsStatusPicker()}${analyticsMetadataFields(capabilities)}${state.meta.sourceTests.length ? multiPicker('source_tests', 'Source Tests', state.meta.sourceTests) : ''}</div><div class="builder-footer"><div><b>${metric.ids.length.toLocaleString()} questions selected</b><div class="subtle">No fallback questions are substituted.</div></div><div class="row"><button class="button">Apply filters</button><button type="button" class="button ghost" data-action="clear-analytics-filters">Clear</button></div></div></form><div class="selected-analysis"><div class="section-heading"><div><span class="eyebrow">SELECTED ANALYSIS</span><h2>${e(analyticsSelectionLabel(normalizedFilters))}</h2></div>${analyticsPopulationControls({ title: 'Selected analytics population', questionIds, filters: normalizedFilters })}</div>${metricStrip([['Available', metric.ids.length], ['Attempted', metric.attempted.length, metric.coverage], ['Latest accuracy', metric.latestAccuracy], ['Currently wrong', metric.incorrect.length], ['Repeated', metric.repeatedIncorrect.length], ['Recovered', metric.recovered.length], ['Bookmarked', metric.bookmarked.length], ['Avg time', metric.averageTime == null ? '—' : `${metric.averageTime}s`]])}</div><div class="detailed-analytics">${breakdowns.length ? `<div class="field breakdown-selector"><label for="analytics-breakdown-select">Break down by</label><select id="analytics-breakdown-select"><option value="">Choose a breakdown</option>${breakdowns.map(([level, label]) => `<option value="${e(level)}" ${state.analyticsBreakdown === level ? 'selected' : ''}>${e(label)}</option>`).join('')}</select></div><div id="analytics-breakdown-selected">${state.analyticsBreakdown ? '' : '<div class="empty compact-empty">Choose one useful breakdown.</div>'}</div>` : '<div id="analytics-breakdown-selected" class="empty compact-empty">This selection has no useful multi-group breakdown.</div>'}</div></section>`, normalizedFilters };
+}
+
+async function analytics() {
+  loading('Calculating analytics…');
+  const allFilters = { platforms: [], subjects: [], systems: [], topics: [], subtopics: [], source_tests: [], statuses: ['all'], exams: [], years: [], sessions: [], pyq: '', year: '', search: '', source: '' };
+  const overallIds = await matchingQuestionIds(allFilters); const model = await fetchAnalyticsModel(overallIds); const overallMetric = analyticsMetric(overallIds, model); const pyqIds = filterAnalyticsPopulation(state.meta.questionTaxonomy, { pyq: 'yes' }); const pyqMetric = analyticsMetric(pyqIds, model); const pyqSet = new Set(pyqIds); const subjectGroups = analyticsSubjectGroups(overallIds, model);
+  state.analyticsView = { questionIds: overallIds, model, filters: allFilters, groups: new Map(), topicSubtopicRedundant: false, capabilities: analyticsMetadataCapabilities(state.meta.questionTaxonomy, overallIds) };
+  let content; let explore = null;
+  if (state.analyticsSection === 'pyq') content = renderPyqAnalytics({ pyqMetric, pyqIds, subjectGroups, model });
+  else if (state.analyticsSection === 'subjects') content = renderSubjectAnalytics({ overallIds, subjectGroups, pyqSet, model });
+  else if (state.analyticsSection === 'explore') { explore = await renderAnalyticsExplore(overallIds, model); content = explore.html; }
+  else content = renderAnalyticsOverview({ overallMetric, pyqMetric, subjectGroups, pyqSet, model });
+  layout(`<div class="page-heading analytics-heading"><span class="eyebrow">ANALYTICS</span><h1>Turn performance into a study plan</h1></div>${analyticsTabs()}<div class="analytics-view">${content}</div>`);
+  if (state.analyticsSection === 'explore') {
+    const form = document.querySelector('#analytics-filter-form');
+    for (const level of ['platforms', 'subjects', 'systems', 'topics', 'subtopics', 'source_tests', 'statuses', 'exams', 'years', 'sessions']) (explore.normalizedFilters[level] || []).forEach((id) => { const input = form.querySelector(`input[name="${level}"][value="${CSS.escape(String(id))}"]`); if (input) input.checked = true; });
+    form.querySelectorAll('input[name="statuses"]').forEach((input) => { input.checked = (explore.normalizedFilters.statuses || []).includes(input.value); });
+    form.elements.pyq.value = explore.normalizedFilters.pyq || ''; setupDependentFilters(form); form.onsubmit = (event) => { event.preventDefault(); state.analyticsFilters = readFilters(form); analytics(); };
+    document.querySelector('#analytics-breakdown-select')?.addEventListener('change', (event) => { state.analyticsBreakdown = event.target.value || null; if (state.analyticsBreakdown) renderAnalyticsBreakdown(state.analyticsBreakdown, 1); else document.querySelector('#analytics-breakdown-selected').innerHTML = '<div class="empty compact-empty">Choose one useful breakdown.</div>'; });
+    if (state.analyticsBreakdown) renderAnalyticsBreakdown(state.analyticsBreakdown, 1);
+  }
 }
 
 function taxonomyOptions(items, first) { return `<option value="">${e(first)}</option>${items.map((item) => `<option value="${e(item.id)}">${e(item.name)}</option>`).join('')}`; }
@@ -1176,7 +1475,7 @@ async function render() {
   clearInterval(state.timer); state.route = route(); if (!state.user) return auth();
   try {
     await loadMeta();
-    if (state.route === 'home') return home(); if (state.route === 'qbank') return qbank(); if (state.route === 'tests') return tests(); if (state.route === 'review') return review(); if (state.route === 'analytics') return analytics(); if (state.route === 'my-bank' || state.route === 'manage') return myBank(); if (state.route === 'history') return history(); return home();
+    if (state.route === 'home') return home(); if (state.route === 'qbank') return qbank(); if (state.route === 'tests') return tests(); if (state.route === 'recall') return recall(); if (state.route === 'review') return review(); if (state.route === 'analytics') return analytics(); if (state.route === 'my-bank' || state.route === 'manage') return myBank(); if (state.route === 'history') return history(); return home();
   } catch (error) { console.error(error); layout(`<div class="card notice"><b>Something went wrong.</b><p>${e(error.message || 'Please try again.')}</p><button class="button secondary" data-action="retry">Try again</button></div>`); }
 }
 
@@ -1208,9 +1507,10 @@ document.addEventListener('click', async (event) => {
   if (action === 'jump') await navigateActive(Number(target.dataset.index)); if (action === 'bookmark') await toggleBookmark(); if (action === 'mark') await toggleMark();
   if (action === 'toggle-explanation') { state.active.explanationOpen = !state.active.explanationOpen; renderActive(); }
   if (action === 'confidence') await updateAnswerMetadata('confidence', target.dataset.value); if (action === 'error-reason') await updateAnswerMetadata('error_reason', target.dataset.value);
-  if (action === 'recall-response') await recordRecallResponse(target.dataset.value);
+  if (action === 'srm-add') await updateQuestionSrm('add'); if (action === 'srm-remove') await updateQuestionSrm('remove'); if (action === 'srm-reset') await updateQuestionSrm('reset');
   if (action === 'note') await noteModal(); if (action === 'report') reportModal(); if (action === 'close-modal') document.querySelector('#modal')?.remove(); if (action === 'submit') await submitActive(false); if (action === 'resume') await resumeSession(target.dataset.id);
   if (action === 'start-pending-test') await startPendingSession();
+  if (action === 'start-recall') await createSession({ mode: 'recall', preset: 'recall', title: 'Recall review', filters: { platforms: state.recallFilters.platform_id ? [state.recallFilters.platform_id] : [], subjects: state.recallFilters.subject_id ? [state.recallFilters.subject_id] : [], systems: [], topics: [], subtopics: [], source_tests: [], statuses: ['all'], pyq: state.recallFilters.scope === 'pyq' ? 'yes' : '', year: '', search: '', source: '' }, requested: 'all', autoSubmit: false, questionIds: state.recallQueue.map((row) => row.question_id), origin: '#/recall' });
   if (action === 'cancel-question-set') { const origin = state.pendingSet?.origin || '#/qbank'; state.pendingSet = null; goToHash(origin); }
   if (action === 'back-to-origin') goToHash(state.active?.origin || '#/qbank');
   if (action === 'preview-browsed-set') await createSession({ mode: state.active.testMode || 'test', preset: state.active.preset, title: state.active.title, filters: state.active.filters, questionIds: state.active.questionIds, requested: state.active.questionIds.length, autoSubmit: state.active.testMode !== 'practice', origin: state.active.origin });
@@ -1220,6 +1520,14 @@ document.addEventListener('click', async (event) => {
   }
   if (action === 'clear-review-filters') { state.reviewFilters = null; await review(); }
   if (action === 'clear-analytics-filters') { state.analyticsFilters = null; state.analyticsBreakdown = null; await analytics(); }
+  if (action === 'analyze-pyqs') { state.analyticsFilters = { platforms: [], subjects: [], systems: [], topics: [], subtopics: [], source_tests: [], statuses: ['all'], exams: [], years: [], sessions: [], pyq: 'yes' }; state.analyticsBreakdown = 'source_test'; await analytics(); }
+  if (action === 'analytics-section') { state.analyticsSection = target.dataset.section; state.analyticsSubjectId = null; state.analyticsPyqBreakdown = null; state.analyticsBreakdown = null; await analytics(); }
+  if (action === 'analytics-pyq-subject') { state.analyticsSubjectId = target.dataset.subject; state.analyticsPyqBreakdown = null; await analytics(); }
+  if (action === 'analytics-pyq-back') { state.analyticsSubjectId = null; state.analyticsPyqBreakdown = null; await analytics(); }
+  if (action === 'analytics-pyq-breakdown') { state.analyticsPyqBreakdown = target.dataset.level; await analytics(); }
+  if (action === 'analytics-subject') { state.analyticsSubjectId = target.dataset.subject; await analytics(); }
+  if (action === 'analytics-subject-back') { state.analyticsSubjectId = null; await analytics(); }
+  if (action === 'analytics-open-ids') { const questionIds = String(target.dataset.ids || '').split(',').filter(Boolean); await openQuestionSet({ mode: 'test', preset: 'analytics', title: target.dataset.label || 'Analytics review', filters: { platforms: [], subjects: [], systems: [], topics: [], subtopics: [], source_tests: [], statuses: ['all'], exams: [], years: [], sessions: [], pyq: '' }, questionIds, origin: '#/analytics' }); }
   if (action === 'select-analytics-breakdown') { state.analyticsBreakdown = target.dataset.level; document.querySelectorAll('[data-action="select-analytics-breakdown"]').forEach((button) => { button.classList.toggle('secondary', button !== target); }); renderAnalyticsBreakdown(state.analyticsBreakdown, 1); }
   if (action === 'analytics-more') renderAnalyticsBreakdown(target.dataset.level, Number(target.dataset.page) || 1);
   if (action === 'review-result') { state.active.index = 0; state.active.completedReview = true; state.active.questionStartedAt = Date.now(); renderActive(); }

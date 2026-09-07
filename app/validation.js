@@ -4,6 +4,40 @@ const ids = (questions) => (questions || []).map((question) => String(question.i
 
 const stringIds = (values) => [...new Set((values || []).map(String).filter(Boolean))];
 
+export function normalizeOptionKeys(value, availableKeys = []) {
+  const available = new Set((availableKeys || []).map((key) => String(key).trim().toUpperCase()).filter(Boolean));
+  const values = Array.isArray(value) ? value : String(value ?? '').split(/\s*(?:,|;|\||\+)\s*/);
+  const normalized = values.flatMap((item) => {
+    const raw = String(item ?? '').trim().toUpperCase();
+    if (!raw) return [];
+    if (available.has(raw) || (!available.size && /^[A-Z0-9]+$/.test(raw))) return [raw];
+    const prefix = raw.match(/^([A-Z0-9]+)(?=\s*[.):\-]|\s)/)?.[1] || '';
+    return prefix && (!available.size || available.has(prefix)) ? [prefix] : [];
+  });
+  return [...new Set(normalized)].sort();
+}
+
+export function canonicalCorrectOptionKeys(question = {}) {
+  const options = question.options || [];
+  const available = options.map((option) => option.option_key);
+  const canonical = options.filter((option) => option.is_correct === true).map((option) => option.option_key);
+  if (canonical.length) return normalizeOptionKeys(canonical, available);
+  const declared = normalizeOptionKeys(question.correct_option_keys, available);
+  if (declared.length) return declared;
+  const legacy = normalizeOptionKeys(question.correct_answer, available);
+  if (legacy.length) return legacy;
+  const answerText = cleanText(question.correct_answer).toLowerCase();
+  const textMatch = options.find((option) => cleanText(option.option_text).toLowerCase() === answerText);
+  return textMatch ? normalizeOptionKeys([textMatch.option_key], available) : [];
+}
+
+export function isCanonicalAnswerCorrect(question = {}, selectedOption = '') {
+  const available = (question.options || []).map((option) => option.option_key);
+  const expected = canonicalCorrectOptionKeys(question);
+  const selected = normalizeOptionKeys(selectedOption?.selected_option ?? selectedOption, available);
+  return expected.length > 0 && expected.length === selected.length && expected.every((key, index) => key === selected[index]);
+}
+
 export function buildTaxonomyIndex(questionRows = []) {
   return (questionRows || []).map((question) => ({
     id: String(question.id),
@@ -154,8 +188,8 @@ export function validateGeneratedQuestionSet({
     if (options.length < 2) contentFailures.push(`${question.id}:fewer_than_two_options`);
     if (new Set(keys).size !== options.length) contentFailures.push(`${question.id}:duplicate_or_blank_option_key`);
     if (options.some((option) => !cleanText(option.option_text))) contentFailures.push(`${question.id}:blank_option_text`);
-    const correct = String(question.correct_answer || '').trim().charAt(0).toUpperCase();
-    if (!correct || !keys.includes(correct)) contentFailures.push(`${question.id}:invalid_correct_answer`);
+    const correct = canonicalCorrectOptionKeys(question);
+    if (!correct.length || correct.some((key) => !keys.includes(key))) contentFailures.push(`${question.id}:invalid_correct_answer`);
   }
   checks.push(result('generated.usable_question_structure', contentFailures));
   return { status: checks.every((check) => check.status === 'PASS') ? 'PASS' : 'FAIL', checks };
@@ -230,6 +264,105 @@ export function deriveAnalyticsPopulations({ questionIds = [], attempts = [], le
     recall_due: all.filter((id) => { const due = stateByQuestion.get(id)?.recall_due_at; return due && new Date(due).getTime() <= now; }),
     totalAttempts: ordered.length,
   };
+}
+
+export function analyticsStudyPriority({
+  isPyq = false, currentIncorrect = 0, repeatedIncorrect = 0, slowIncorrect = 0,
+  attempted = 0, available = 0, latestAccuracy = null, bookmarked = 0, marked = 0,
+} = {}) {
+  const accuracyPenalty = attempted >= 5 && Number.isFinite(latestAccuracy)
+    ? Math.max(0, Math.round((0.7 - latestAccuracy) * 20))
+    : 0;
+  const coverageGap = attempted >= 5 && available > 0 && attempted / available < 0.5 ? 2 : 0;
+  const score = currentIncorrect * 4 + repeatedIncorrect * 10 + slowIncorrect * 2
+    + bookmarked + marked * 2 + accuracyPenalty + coverageGap
+    + (isPyq ? 15 + currentIncorrect * 4 + repeatedIncorrect * 6 : 0);
+  const label = score >= 30 ? 'VERY HIGH PRIORITY'
+    : score >= 15 ? 'HIGH PRIORITY'
+      : score >= 5 ? 'WATCH' : 'INSUFFICIENT DATA';
+  return { score, label };
+}
+
+export function analyticsActionQuestionIds(metric = {}, action = '') {
+  const populations = {
+    practice_pyqs: metric.ids || [],
+    unattempted_pyqs: metric.unattempted || [],
+    review_wrong_pyqs: metric.incorrect || [],
+    review_incorrect: metric.incorrect || [],
+    review_repeated_mistakes: metric.repeatedIncorrect || [],
+  };
+  return stringIds(populations[action] || []);
+}
+
+export function analyticsPlatformDisagreement(platformMetrics = [], minimumAttempts = 5, threshold = 0.2) {
+  const eligible = platformMetrics.filter((metric) => Number(metric?.attempted) >= minimumAttempts && Number.isFinite(metric?.latestAccuracy));
+  if (eligible.length < 2) return false;
+  const values = eligible.map((metric) => Number(metric.latestAccuracy));
+  return Math.max(...values) - Math.min(...values) >= threshold;
+}
+
+export function srmTransition(current = {}, event = {}) {
+  const result = event.result;
+  const confidence = result === 'correct' && event.confidence === 'sure' ? 'sure' : result === 'correct' ? 'unsure' : null;
+  const state = current.state || 'new';
+  const interval = Math.max(0, Number(current.intervalMinutes) || 0);
+  const active = current.active === true;
+  const isPyq = event.isPyq === true;
+  if (result === 'manual_add') return { state: active ? state : 'new', intervalMinutes: 0, active: true };
+  if (result === 'manual_remove') return { state, intervalMinutes: interval, active: false };
+  if (result === 'manual_reset') return { state: 'new', intervalMinutes: 0, active: true, consecutiveCorrect: 0, consecutiveIncorrect: 0, lapseCount: 0 };
+  if (result === 'correct' && confidence === 'sure' && !active && !isPyq) return { state: 'new', intervalMinutes: 0, active: false, confidence };
+  if (result === 'incorrect') {
+    const immediateUsed = Number(current.immediateRepeatsToday || 0) >= 1;
+    return { state: 'relearning', intervalMinutes: immediateUsed ? 1440 : 10, active: true, confidence: null,
+      consecutiveCorrect: 0, consecutiveIncorrect: Number(current.consecutiveIncorrect || 0) + 1,
+      lapseCount: Number(current.lapseCount || 0) + (['review', 'mature'].includes(state) ? 1 : 0),
+      immediateRepeatsToday: immediateUsed ? Number(current.immediateRepeatsToday || 0) : 1 };
+  }
+  let nextInterval; let nextState;
+  if (state === 'relearning') { nextInterval = 1440; nextState = 'learning'; }
+  else if (state === 'learning' && String(current.enrolledReason || '').startsWith('incorrect') && Number(current.consecutiveCorrect || 0) >= 1 && confidence === 'sure') {
+    nextInterval = 10080; nextState = 'review';
+  } else if (confidence === 'unsure') {
+    nextInterval = interval < 1440 ? 1440 : interval < 4320 ? 4320 : interval < 10080 ? 10080 : 20160;
+    nextState = nextInterval >= 10080 ? 'review' : 'learning';
+  } else {
+    nextInterval = interval < 4320 ? 4320 : interval < 10080 ? 10080 : interval < 20160 ? 20160 : interval < 43200 ? 43200 : 86400;
+    nextState = nextInterval >= 43200 ? 'mature' : 'review';
+  }
+  return { state: nextState, intervalMinutes: nextInterval, active: true, confidence,
+    consecutiveCorrect: Number(current.consecutiveCorrect || 0) + 1, consecutiveIncorrect: 0,
+    lapseCount: Number(current.lapseCount || 0), immediateRepeatsToday: 0 };
+}
+
+export function rankSrmQueue(rows = []) {
+  const priorityClass = (row) => row.isPyq && row.consecutiveIncorrect >= 2 ? 7
+    : row.isPyq && row.lastResult === 'incorrect' ? 6
+      : !row.isPyq && row.consecutiveIncorrect >= 2 ? 5
+        : row.lastResult === 'incorrect' ? 4
+          : row.isPyq && row.confidence === 'unsure' ? 3 : row.isPyq ? 2 : 1;
+  return [...rows].map((row) => ({ ...row, priorityClass: priorityClass(row) })).sort((left, right) =>
+    Number(right.overdueSeconds || 0) - Number(left.overdueSeconds || 0)
+    || right.priorityClass - left.priorityClass
+    || Number(right.consecutiveIncorrect || 0) - Number(left.consecutiveIncorrect || 0)
+    || Number(right.marked === true) - Number(left.marked === true)
+    || Number(right.bookmarked === true) - Number(left.bookmarked === true)
+    || String(left.questionId).localeCompare(String(right.questionId)));
+}
+
+export function validateSrmQueue(rows = []) {
+  const ids = rows.map((row) => String(row.questionId || row.question_id || ''));
+  const failures = [];
+  if (ids.some((id) => !id)) failures.push('missing_question_id');
+  if (ids.length !== new Set(ids).size) failures.push('duplicate_question_id');
+  rows.forEach((row) => { if (row.isUsable === false || row.is_usable === false) failures.push(`${row.questionId || row.question_id}:quarantined`); });
+  const check = result('srm.queue_invariants', failures, `${rows.length} due items`);
+  return { status: check.status, checks: [check] };
+}
+
+export function sameSrmLocalDate(left, right, timezone = 'UTC') {
+  const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' });
+  return formatter.format(new Date(left)) === formatter.format(new Date(right));
 }
 
 export function analyticsTopicSubtopicRedundant({ questionIndex = [], topics = [], subtopics = [], questionIds = [] }) {

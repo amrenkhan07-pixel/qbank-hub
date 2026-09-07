@@ -31,11 +31,29 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 
-VERSION = "1.0.0"
+VERSION = "2.0.0"
 SCHEMA_VERSION = 1
 PLATFORM = "PrepLadder"
 DEFAULT_SUBJECT = "Anaesthesia"
 ANAESTHESIA_ALIASES = {"anaesthesia", "anesthesia", "anaesthesiology", "anesthesiology", "anasthesia"}
+PATHOLOGY_ALIASES = {"pathology"}
+ALREADY_IMPORTED_SUBJECTS = {"Anaesthesia", "Pathology"}
+SUBJECT_ALIASES = {
+    "gynaecologyobstetrics": "Obstetrics & Gynecology",
+    "obstetricsgynaecology": "Obstetrics & Gynecology",
+    "obstetricsgynecology": "Obstetrics & Gynecology",
+    "psm": "Community Medicine",
+    "communitymedicine": "Community Medicine",
+    "orthopaedics": "Orthopedics",
+    "orthopedics": "Orthopedics",
+}
+EXPECTED_MASTER_TOTALS = {
+    "subjects": 19,
+    "source_tests": 1129,
+    "question_occurrences": 23118,
+    "pyq_tests": 265,
+    "pyq_occurrences": 7671,
+}
 DEFAULT_URL = "https://flulljensjugfcxmeczu.supabase.co"
 BUCKET = "qbank-payloads"
 NAMESPACE = uuid.UUID("58a63f95-2078-4a4d-aa42-a8d660ef1317")
@@ -114,7 +132,41 @@ def slug(value: str) -> str:
 
 def canonical_subject(value: str) -> str:
     normalized = re.sub(r"[^a-z]", "", unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode().casefold())
-    return DEFAULT_SUBJECT if normalized in ANAESTHESIA_ALIASES else str(value or "").strip()
+    if normalized in ANAESTHESIA_ALIASES:
+        return "Anaesthesia"
+    if normalized in PATHOLOGY_ALIASES:
+        return "Pathology"
+    if normalized in SUBJECT_ALIASES:
+        return SUBJECT_ALIASES[normalized]
+    return str(value or "").strip()
+
+
+def discover_subjects(source: Path) -> List[Dict[str, Any]]:
+    folders = extract_folder_tree(source).get("folders") or []
+    subjects = []
+    seen = set()
+    for folder in folders:
+        source_name = str(folder.get("name") or "").strip()
+        canonical = canonical_subject(source_name)
+        if not source_name or not canonical:
+            raise ValueError("source contains a blank subject folder")
+        if canonical in seen:
+            raise ValueError(f"multiple source subjects map to canonical subject: {canonical}")
+        seen.add(canonical)
+        subjects.append({"source_subject": source_name, "canonical_subject": canonical, "declared_tests": len(folder.get("tests") or [])})
+    return subjects
+
+
+def load_source_context(source: Path) -> Dict[str, Any]:
+    folder_tree = extract_folder_tree(source)
+    tests_by_subject: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for test in iter_source_tests(source):
+        tests_by_subject[canonical_subject(source_subject(test))].append(test)
+    return {
+        "source_hash": sha256_file(source),
+        "folder_tree": folder_tree,
+        "tests_by_subject": tests_by_subject,
+    }
 
 
 def _find_assignment(mapping: mmap.mmap, marker: bytes, occurrence: int = 1) -> int:
@@ -256,18 +308,18 @@ class PilotPlan:
     object_bytes: Dict[str, bytes]
 
 
-def build_plan(source: Path, subject: str = DEFAULT_SUBJECT) -> PilotPlan:
+def build_plan(source: Path, subject: str = DEFAULT_SUBJECT, context: Optional[Dict[str, Any]] = None) -> PilotPlan:
     subject = canonical_subject(subject)
-    source_hash = sha256_file(source)
+    source_hash = context["source_hash"] if context else sha256_file(source)
     source_size = source.stat().st_size
-    folder_tree = extract_folder_tree(source)
+    folder_tree = context["folder_tree"] if context else extract_folder_tree(source)
     folders = folder_tree.get("folders") or []
     folder = next((item for item in folders if canonical_subject(str(item.get("name") or "")) == subject), None)
     if not folder:
         raise ValueError(f"subject not found in FOLDER_TREE: {subject}")
     declared_tests = folder.get("tests") or []
     declared_by_id = {str(test.get("id")): test for test in declared_tests}
-    tests = [test for test in iter_source_tests(source) if canonical_subject(source_subject(test)) == subject]
+    tests = list(context["tests_by_subject"].get(subject, [])) if context else [test for test in iter_source_tests(source) if canonical_subject(source_subject(test)) == subject]
     errors: List[str] = []
     warnings: List[str] = []
     unsupported = Counter()
@@ -284,6 +336,7 @@ def build_plan(source: Path, subject: str = DEFAULT_SUBJECT) -> PilotPlan:
     media = Counter()
     pyq_occurrences = 0
     multi_correct = []
+    quarantined_occurrences = []
     raw_payload_bytes = 0
     normalized_estimate = 0
 
@@ -314,11 +367,18 @@ def build_plan(source: Path, subject: str = DEFAULT_SUBJECT) -> PilotPlan:
         pending_for_object = []
         for position, question in enumerate(questions, 1):
             unsupported.update(f"question.{key}" for key in set(question) - KNOWN_QUESTION_FIELDS)
-            errors.extend(validate_question(question, test_id, position))
+            question_errors = validate_question(question, test_id, position)
             payload = canonical_payload(question)
             payload_json = stable_json(payload).encode("utf-8")
             content_hash = sha256_bytes(payload_json)
             source_id = str(question.get("id") or "").strip()
+            if question_errors:
+                quarantined_occurrences.append({
+                    "test_id": test_id,
+                    "position": position,
+                    "source_question_id": source_id,
+                    "reasons": question_errors,
+                })
             source_id_rows[source_id].append((content_hash, test_id, position))
             raw_payload_bytes += len(json.dumps(question, ensure_ascii=False).encode("utf-8"))
             normalized_estimate += len(payload_json) + len(source_id) + 240 + len(payload["options"]) * 96
@@ -346,6 +406,8 @@ def build_plan(source: Path, subject: str = DEFAULT_SUBJECT) -> PilotPlan:
                     "media_status": "MEDIA_REFERENCED" if payload["media"] or payload.get("audio") or payload.get("video") else "NO_MEDIA",
                     "first_source_test_id": test_uuid, "first_source_test_title": title,
                     "is_pyq": is_pyq,
+                    "is_usable": not question_errors,
+                    "unusable_reason": None if not question_errors else "SOURCE_CONTENT_INCOMPLETE",
                 }
                 content_first[content_hash] = version
                 versions.append(version)
@@ -354,6 +416,9 @@ def build_plan(source: Path, subject: str = DEFAULT_SUBJECT) -> PilotPlan:
             else:
                 question_uuid = content_first[content_hash]["question_id"]
                 content_first[content_hash]["is_pyq"] = content_first[content_hash]["is_pyq"] or is_pyq
+                if question_errors:
+                    content_first[content_hash]["is_usable"] = False
+                    content_first[content_hash]["unusable_reason"] = "SOURCE_CONTENT_INCOMPLETE"
             occurrence_key = sha256_bytes(f"{stable_key}|{position}|{source_id}|{content_hash}".encode())
             occurrences.append({
                 "id": deterministic_uuid("occurrence", occurrence_key), "occurrence_key": occurrence_key,
@@ -388,10 +453,14 @@ def build_plan(source: Path, subject: str = DEFAULT_SUBJECT) -> PilotPlan:
         warnings.append(f"pilot contains {len(multi_correct)} multi-correct occurrences")
     minified_bytes = sum(item["raw_bytes"] for item in objects)
     compressed_bytes = sum(item["stored_bytes"] for item in objects)
+    quarantined_version_ids = sorted({
+        row["question_id"] for row in versions if not row["is_usable"]
+    })
     manifest = {
         "schema_version": SCHEMA_VERSION, "importer_version": VERSION,
         "source_filename": source.name, "source_sha256": source_hash, "source_bytes": source_size,
-        "platform": PLATFORM, "subject": subject, "status": "validated" if not errors else "invalid",
+        "platform": PLATFORM, "subject": subject, "source_subject": str(folder.get("name") or ""),
+        "status": "validated" if not errors else "invalid",
         "source_test_count": len(source_tests), "occurrence_count": len(occurrences),
         "content_version_count": len(versions), "payload_object_count": len(objects),
         "payload_stored_bytes": compressed_bytes,
@@ -399,7 +468,7 @@ def build_plan(source: Path, subject: str = DEFAULT_SUBJECT) -> PilotPlan:
     report = {
         "generated_at": now_iso(), "database_modified": False, "storage_modified": False,
         "source": {"filename": source.name, "path": str(source), "sha256": source_hash, "bytes": source_size, "uploaded_to_cloud": False},
-        "scope": {"platform": PLATFORM, "subject": subject},
+        "scope": {"platform": PLATFORM, "subject": subject, "source_subject": str(folder.get("name") or "")},
         "counts": {
             "source_tests": len(source_tests), "question_occurrences": len(occurrences),
             "unique_source_ids": len(source_id_rows), "unique_content_versions": len(versions),
@@ -409,6 +478,9 @@ def build_plan(source: Path, subject: str = DEFAULT_SUBJECT) -> PilotPlan:
             "differing_content_duplicate_groups": len(differing_groups),
             "exact_payload_duplicates_saved": len(occurrences) - len(versions),
             "multi_correct_occurrences": len(multi_correct),
+            "usable_content_versions": len(versions) - len(quarantined_version_ids),
+            "quarantined_content_versions": len(quarantined_version_ids),
+            "quarantined_occurrences": len(quarantined_occurrences),
         },
         "media": dict(sorted(media.items())), "multi_correct_examples": multi_correct[:20],
         "unsupported_fields": dict(sorted(unsupported.items())),
@@ -421,6 +493,8 @@ def build_plan(source: Path, subject: str = DEFAULT_SUBJECT) -> PilotPlan:
             "gzip_savings_bytes": minified_bytes - compressed_bytes,
             "payload_deduplication_savings_occurrences": exact_duplicate_occurrences,
         },
+        "quarantined_questions": quarantined_occurrences,
+        "quarantined_question_ids": quarantined_version_ids,
         "structural_errors": errors, "warnings": warnings,
         "valid": not errors,
         "duplicate_examples": {key: rows for key, rows in list(duplicate_groups.items())[:20]},
@@ -432,8 +506,9 @@ def build_plan(source: Path, subject: str = DEFAULT_SUBJECT) -> PilotPlan:
 
 def write_plan(plan: PilotPlan, output: Path) -> Tuple[Path, Path]:
     output.mkdir(parents=True, exist_ok=True)
-    report_path = output / "prepladder-anaesthesia-report.json"
-    manifest_path = output / "prepladder-anaesthesia-manifest.json"
+    subject_slug = slug(plan.manifest["subject"])
+    report_path = output / f"prepladder-{subject_slug}-report.json"
+    manifest_path = output / f"prepladder-{subject_slug}-manifest.json"
     report_path.write_text(json.dumps(plan.report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     manifest_path.write_text(json.dumps(plan.manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     payload_root = output / "payloads"
@@ -527,7 +602,8 @@ def delete_objects(paths: Iterable[str], url: str, key: str) -> None:
 
 
 def import_plan(plan: PilotPlan, url: str, key: str, acknowledgement: str) -> Dict[str, Any]:
-    if acknowledgement != "IMPORT PREPLADDER ANAESTHESIA ONLY":
+    expected_acknowledgement = f"IMPORT PREPLADDER {plan.manifest['subject'].upper()} ONLY"
+    if acknowledgement != expected_acknowledgement:
         raise ValueError("exact import acknowledgement is required")
     if not plan.report["valid"]:
         raise ValueError("structurally invalid source cannot be imported")
@@ -542,18 +618,127 @@ def import_plan(plan: PilotPlan, url: str, key: str, acknowledgement: str) -> Di
         raise
 
 
+def load_plan(output: Path, subject: str) -> PilotPlan:
+    subject_slug = slug(subject)
+    report_path = output / f"prepladder-{subject_slug}-report.json"
+    manifest_path = output / f"prepladder-{subject_slug}-manifest.json"
+    if not report_path.is_file() or not manifest_path.is_file():
+        raise ValueError(f"validated artifacts are missing for {subject}")
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not report.get("valid") or manifest.get("status") != "validated":
+        raise ValueError(f"validated artifacts are not importable for {subject}")
+    object_bytes = {}
+    for row in manifest.get("objects") or []:
+        path = output / "payloads" / row["object_path"]
+        if not path.is_file():
+            raise ValueError(f"payload artifact is missing: {row['object_path']}")
+        content = path.read_bytes()
+        if len(content) != row["stored_bytes"] or sha256_bytes(content) != row["sha256"]:
+            raise ValueError(f"payload artifact checksum failed: {row['object_path']}")
+        object_bytes[row["object_path"]] = content
+    return PilotPlan(report=report, manifest=manifest, objects=manifest.get("objects") or [], object_bytes=object_bytes)
+
+
+def committed_subjects(url: str, key: str, source_hash: str) -> set:
+    query = urllib.parse.urlencode({
+        "select": "subject", "status": "eq.committed", "source_sha256": f"eq.{source_hash}", "limit": "100",
+    })
+    body, _ = api_request(url, key, f"/rest/v1/qbank_hybrid_import_runs?{query}")
+    return {str(row.get("subject")) for row in json.loads(body or b"[]")}
+
+
+def remote_import_stats(url: str, key: str) -> Dict[str, Any]:
+    value = rpc(url, key, "qbank_prepladder_import_stats", {})
+    return value or {}
+
+
+def bulk_summary(plans: Sequence[PilotPlan], discovered: Sequence[Dict[str, Any]], require_master_totals: bool = True) -> Dict[str, Any]:
+    totals = {
+        "subjects": len(plans), "source_tests": 0, "question_occurrences": 0,
+        "unique_source_ids": 0, "unique_content_versions": 0, "usable_content_versions": 0,
+        "quarantined_content_versions": 0, "quarantined_occurrences": 0,
+        "pyq_tests": 0, "pyq_occurrences": 0, "multi_correct_occurrences": 0,
+        "raw_json_bytes": 0, "minified_payload_bytes": 0, "gzip_payload_bytes": 0,
+        "estimated_db_bytes": 0, "payload_objects": 0,
+    }
+    subjects = []
+    source_names = {row["canonical_subject"]: row["source_subject"] for row in discovered}
+    for plan in plans:
+        counts = plan.report["counts"]
+        storage = plan.report["storage_benchmark"]
+        row = {
+            "source_subject": source_names.get(plan.manifest["subject"], plan.manifest.get("source_subject")),
+            "subject": plan.manifest["subject"], "already_present": plan.manifest["subject"] in ALREADY_IMPORTED_SUBJECTS,
+            "status": "PASS" if plan.report["valid"] else "FAIL", **counts,
+            "gzip_payload_bytes": storage["gzip_payload_bytes"],
+            "raw_json_bytes": storage["raw_source_question_json_bytes"],
+            "minified_payload_bytes": storage["minified_payload_bytes"],
+            "estimated_db_bytes": storage["normalized_postgres_estimated_bytes"],
+            "payload_objects": storage["object_count"], "media": plan.report.get("media") or {},
+        }
+        subjects.append(row)
+        for key in ("source_tests", "question_occurrences", "unique_source_ids", "unique_content_versions",
+                    "usable_content_versions", "quarantined_content_versions", "quarantined_occurrences",
+                    "pyq_tests", "pyq_occurrences", "multi_correct_occurrences"):
+            totals[key] += int(counts.get(key, 0))
+        totals["gzip_payload_bytes"] += int(storage["gzip_payload_bytes"])
+        totals["raw_json_bytes"] += int(storage["raw_source_question_json_bytes"])
+        totals["minified_payload_bytes"] += int(storage["minified_payload_bytes"])
+        totals["estimated_db_bytes"] += int(storage["normalized_postgres_estimated_bytes"])
+        totals["payload_objects"] += int(storage["object_count"])
+    reconciliation = {
+        key: {"expected": expected, "actual": totals[key], "pass": totals[key] == expected}
+        for key, expected in EXPECTED_MASTER_TOTALS.items()
+    }
+    return {
+        "generated_at": now_iso(), "source_sha256": plans[0].manifest["source_sha256"] if plans else None,
+        "subjects": subjects, "totals": totals, "expected_master_totals": EXPECTED_MASTER_TOTALS,
+        "reconciliation": reconciliation,
+        "valid": bool(plans) and all(plan.report["valid"] for plan in plans)
+          and (not require_master_totals or all(row["pass"] for row in reconciliation.values())),
+    }
+
+
+def print_subject_progress(phase: str, plans: Sequence[PilotPlan]) -> None:
+    print(phase, file=sys.stderr, flush=True)
+    for index, plan in enumerate(plans, 1):
+        status = "PASS" if plan.report["valid"] else "FAIL"
+        print(f"[{index}/{len(plans)}] {plan.manifest['subject']} {status}", file=sys.stderr, flush=True)
+
+
+def write_bulk_summary(summary: Dict[str, Any], output: Path) -> Path:
+    output.mkdir(parents=True, exist_ok=True)
+    path = output / "prepladder-bulk-summary.json"
+    path.write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="PrepLadder hybrid payload importer (dry-run by default)")
     parser.add_argument("--source", default="import-source/PREP_q_banks.html")
-    parser.add_argument("--subject", default=DEFAULT_SUBJECT)
+    parser.add_argument("--subject")
+    parser.add_argument("--all-remaining", action="store_true")
+    parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--summary", action="store_true")
+    parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--output")
-    parser.add_argument("--import", dest="do_import", action="store_true")
+    parser.add_argument("--import", "--commit", dest="do_import", action="store_true")
     parser.add_argument("--acknowledge", default="")
     parser.add_argument("--url", default=os.environ.get("SUPABASE_URL", DEFAULT_URL))
     args = parser.parse_args(argv)
+    output = Path(args.output).expanduser().resolve() if args.output else Path(tempfile.mkdtemp(prefix="qbank-prepladder-"))
+    if args.summary:
+        summary_path = output / "prepladder-bulk-summary.json"
+        if not summary_path.is_file():
+            parser.error(f"summary not found: {summary_path}")
+        print(stable_json(json.loads(summary_path.read_text(encoding="utf-8"))))
+        return 0
+    if args.subject and args.all_remaining:
+        parser.error("choose either --subject or --all-remaining")
+    if args.resume and not (args.all_remaining and args.do_import):
+        parser.error("--resume requires --all-remaining --commit")
     source = Path(args.source).expanduser().resolve()
-    if canonical_subject(args.subject) != DEFAULT_SUBJECT:
-        parser.error("pilot safety boundary permits Anaesthesia only")
     try:
         validate_source_access(source)
     except ValueError as error:
@@ -567,16 +752,65 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         except (ValueError, RuntimeError, urllib.error.URLError) as error:
             parser.error(f"IMPORT PREFLIGHT FAILED before parsing: {error}")
         print(stable_json({"phase": "preflight", **preflight}), file=sys.stderr, flush=True)
-    plan = build_plan(source, args.subject)
-    output = Path(args.output).resolve() if args.output else Path(tempfile.mkdtemp(prefix="qbank-prepladder-"))
-    report_path, manifest_path = write_plan(plan, output)
-    result = None
+    discovered = discover_subjects(source)
+    canonical_names = [row["canonical_subject"] for row in discovered]
+    requested = canonical_subject(args.subject or DEFAULT_SUBJECT)
+    if requested not in canonical_names:
+        parser.error(f"subject not found in source: {requested}")
+
+    plans: List[PilotPlan]
+    summary_path = output / "prepladder-bulk-summary.json"
+    if args.resume and summary_path.is_file():
+        saved = json.loads(summary_path.read_text(encoding="utf-8"))
+        if sha256_file(source) != saved.get("source_sha256"):
+            parser.error("source changed since validated dry-run")
+        plans = [load_plan(output, name) for name in canonical_names]
+    else:
+        context = load_source_context(source)
+        plan_names = canonical_names if args.all_remaining else [requested]
+        plans = [build_plan(source, name, context=context) for name in plan_names]
+        for plan in plans:
+            write_plan(plan, output)
+        saved = bulk_summary(plans, discovered, require_master_totals=args.all_remaining)
+        summary_path = write_bulk_summary(saved, output)
+    print_subject_progress("DRY RUN", plans)
+    summary = bulk_summary(plans, discovered, require_master_totals=args.all_remaining)
+    write_bulk_summary(summary, output)
+    if not summary["valid"]:
+        failed = [row for row in summary["subjects"] if row["status"] == "FAIL"]
+        print(stable_json({"valid": False, "phase": "dry_run", "failures": failed, "reconciliation": summary["reconciliation"], "summary": str(summary_path)}))
+        return 2
+
+    selected = [plan for plan in plans if plan.manifest["subject"] not in ALREADY_IMPORTED_SUBJECTS] if args.all_remaining else [next(plan for plan in plans if plan.manifest["subject"] == requested)]
+    results = []
     if args.do_import:
-        result = import_plan(plan, args.url, service_key, args.acknowledge)
-        plan.report.update({"database_modified": True, "storage_modified": True, "preflight": preflight, "import_result": result})
-        report_path.write_text(json.dumps(plan.report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(stable_json({"valid": plan.report["valid"], "counts": plan.report["counts"], "storage_benchmark": plan.report["storage_benchmark"], "report": str(report_path), "manifest": str(manifest_path), "imported": bool(result)}))
-    return 0 if plan.report["valid"] else 2
+        if args.all_remaining and args.acknowledge not in ("", "IMPORT PREPLADDER ALL REMAINING"):
+            parser.error("bulk acknowledgement must be exactly: IMPORT PREPLADDER ALL REMAINING")
+        committed = committed_subjects(args.url, service_key, summary["source_sha256"])
+        print("LIVE IMPORT", file=sys.stderr, flush=True)
+        for index, plan in enumerate(selected, 1):
+            subject = plan.manifest["subject"]
+            if subject in committed:
+                print(f"[{index}/{len(selected)}] {subject} ALREADY COMMITTED", file=sys.stderr, flush=True)
+                results.append({"subject": subject, "status": "already_committed"})
+                continue
+            stats_before = remote_import_stats(args.url, service_key)
+            projected = int(stats_before.get("database_bytes", 0)) + int(plan.report["storage_benchmark"]["normalized_postgres_estimated_bytes"])
+            if projected >= 400 * 1024 * 1024:
+                raise RuntimeError(f"database safety threshold would be exceeded before {subject}")
+            result = import_plan(plan, args.url, service_key, f"IMPORT PREPLADDER {subject.upper()} ONLY")
+            stats_after = remote_import_stats(args.url, service_key)
+            result.update({"subject": subject, "stats_before": stats_before, "stats_after": stats_after})
+            results.append(result)
+            print(f"[{index}/{len(selected)}] {subject} COMMITTED", file=sys.stderr, flush=True)
+    print(stable_json({
+        "valid": True, "phase": "import" if args.do_import else "dry_run", "summary": str(summary_path),
+        "selected_subjects": [plan.manifest["subject"] for plan in selected], "import_results": results,
+        "totals": summary["totals"], "reconciliation": summary["reconciliation"],
+        "database_modified": any(row.get("status") == "committed" or row.get("commit", {}).get("status") == "committed" for row in results),
+        "source_uploaded": False,
+    }))
+    return 0
 
 
 if __name__ == "__main__":

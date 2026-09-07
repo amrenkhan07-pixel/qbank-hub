@@ -287,7 +287,7 @@ begin
       source_test_label, source_subtopic_label,
       source_identity, source_fingerprint, content_fingerprint,
       question_text, options, correct_answer, explanation_html,
-      question_images, exam_year, exam_shift, is_pyq,
+      question_images, explanation_images, video_url, exam_year, exam_shift, is_pyq,
       content_origin, status
     ) values (
       v_platform_id, v_subject_id, v_system_id, v_topic_id,
@@ -295,7 +295,8 @@ begin
       nullif(btrim(v_row ->> 'source_test_label'), ''), nullif(btrim(v_row ->> 'subtopic'), ''),
       v_row ->> 'source_identity', v_row ->> 'source_fingerprint', v_row ->> 'content_fingerprint',
       v_row ->> 'question_text', v_row -> 'options', upper(v_row ->> 'correct_answer'), v_row ->> 'explanation_html',
-      coalesce(v_row -> 'question_images', '[]'::jsonb), nullif(v_row ->> 'exam_year', '')::integer,
+      coalesce(v_row -> 'question_images', '[]'::jsonb), coalesce(v_row -> 'explanation_images', '[]'::jsonb),
+      nullif(btrim(v_row ->> 'video_url'), ''), nullif(v_row ->> 'exam_year', '')::integer,
       nullif(btrim(v_row ->> 'exam_shift'), ''), coalesce((v_row ->> 'is_pyq')::boolean, false),
       'imported', 'published'
     ) returning id into v_question_id;

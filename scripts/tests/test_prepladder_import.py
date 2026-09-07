@@ -7,6 +7,9 @@ from unittest.mock import patch
 from pathlib import Path
 
 from scripts.prepladder_import import (
+    ALREADY_IMPORTED_SUBJECTS,
+    EXPECTED_MASTER_TOTALS,
+    bulk_summary,
     build_plan,
     canonical_subject,
     canonical_payload,
@@ -14,10 +17,13 @@ from scripts.prepladder_import import (
     deterministic_uuid,
     extract_folder_tree,
     credential_kind,
+    discover_subjects,
     import_preflight,
     iter_source_tests,
+    load_plan,
     sha256_bytes,
     validate_question,
+    write_plan,
 )
 
 
@@ -126,27 +132,80 @@ class PrepLadderImporterTests(unittest.TestCase):
         self.assertEqual(deterministic_uuid("question", "identity"), deterministic_uuid("question", "identity"))
         self.assertNotEqual(deterministic_uuid("question", "identity"), deterministic_uuid("occurrence", "identity"))
 
-    def test_structural_corruption_blocks_import(self):
+    def test_source_index_mismatch_blocks_import(self):
         tests = list(iter_source_tests(self.source))
-        tests[0]["questions"][0]["options"] = []
         tree = extract_folder_tree(self.source)
+        tree["folders"][0]["tests"][0]["num_questions"] = 99
         self.source.write_text(
             "<script>const FOLDER_TREE = " + json.dumps(tree) + ";\n// const TESTS_LIST = [...] }\nconst TESTS_LIST = " + json.dumps(tests) + ";</script>", encoding="utf-8"
         )
         plan = build_plan(self.source)
         self.assertFalse(plan.report["valid"])
-        self.assertTrue(any("invalid option count" in error for error in plan.report["structural_errors"]))
+        self.assertTrue(any("declared 99 questions" in error for error in plan.report["structural_errors"]))
 
     def test_anaesthesia_aliases_share_one_canonical_identity(self):
         for spelling in ("Anaesthesia", "Anesthesia", "Anaesthesiology", "Anesthesiology", "Anasthesia"):
             self.assertEqual(canonical_subject(spelling), "Anaesthesia")
         self.assertEqual(build_plan(self.source, "Anesthesia").manifest["subject"], "Anaesthesia")
 
+    def test_pathology_identity_is_canonical_and_subject_isolated(self):
+        self.assertEqual(canonical_subject(" pathology "), "Pathology")
+        with self.assertRaisesRegex(ValueError, "subject not found"):
+            build_plan(self.source, "Pathology")
+
+    def test_master_aliases_map_to_existing_canonical_subjects(self):
+        self.assertEqual(canonical_subject("Gynaecology _ Obstetrics"), "Obstetrics & Gynecology")
+        self.assertEqual(canonical_subject("Orthopaedics"), "Orthopedics")
+        self.assertEqual(canonical_subject("PSM"), "Community Medicine")
+        self.assertEqual(ALREADY_IMPORTED_SUBJECTS, {"Anaesthesia", "Pathology"})
+
+    def test_subject_discovery_preserves_source_and_canonical_names(self):
+        subjects = discover_subjects(self.source)
+        self.assertEqual(subjects, [
+            {"source_subject": "Anaesthesia", "canonical_subject": "Anaesthesia", "declared_tests": 2},
+            {"source_subject": "Anatomy", "canonical_subject": "Anatomy", "declared_tests": 1},
+        ])
+
+    def test_bulk_summary_hard_gate_requires_master_reconciliation(self):
+        discovered = discover_subjects(self.source)
+        plans = [build_plan(self.source, row["canonical_subject"]) for row in discovered]
+        self.assertTrue(bulk_summary(plans, discovered, require_master_totals=False)["valid"])
+        gated = bulk_summary(plans, discovered, require_master_totals=True)
+        self.assertFalse(gated["valid"])
+        self.assertEqual(gated["expected_master_totals"], EXPECTED_MASTER_TOTALS)
+
+    def test_resume_artifacts_are_checksum_verified(self):
+        plan = build_plan(self.source)
+        output = Path(self.directory.name) / "artifacts"
+        write_plan(plan, output)
+        loaded = load_plan(output, "Anaesthesia")
+        self.assertEqual(loaded.manifest, plan.manifest)
+        payload = output / "payloads" / loaded.objects[0]["object_path"]
+        payload.write_bytes(payload.read_bytes() + b"corrupt")
+        with self.assertRaisesRegex(ValueError, "checksum failed"):
+            load_plan(output, "Anaesthesia")
+
     def test_blank_required_option_is_rejected_before_commit(self):
         row = question("broken")
         row["options"][2]["text"] = "<span> </span>"
         errors = validate_question(row, "fixture", 1)
         self.assertTrue(any("blank required option content" in error for error in errors))
+
+    def test_source_incomplete_question_is_preserved_but_quarantined(self):
+        tests = list(iter_source_tests(self.source))
+        tests[0]["questions"][0]["options"][2]["text"] = "<span> </span>"
+        tree = extract_folder_tree(self.source)
+        self.source.write_text(
+            "<script>const FOLDER_TREE = " + json.dumps(tree) + ";\n// const TESTS_LIST = [...] }\nconst TESTS_LIST = " + json.dumps(tests) + ";</script>", encoding="utf-8"
+        )
+        plan = build_plan(self.source)
+        self.assertTrue(plan.report["valid"])
+        self.assertEqual(plan.report["counts"]["quarantined_content_versions"], 1)
+        self.assertEqual(plan.report["counts"]["quarantined_occurrences"], 1)
+        self.assertEqual(plan.report["structural_errors"], [])
+        version = next(row for row in plan.manifest["versions"] if not row["is_usable"])
+        self.assertEqual(version["unusable_reason"], "SOURCE_CONTENT_INCOMPLETE")
+        self.assertEqual(len(plan.manifest["occurrences"]), 4)
 
     def test_media_references_are_preserved_without_binary_download(self):
         row = question("media", question_images=["https://example.test/q.png"], explanation_images=["https://example.test/e.png"], audio={"url": "https://example.test/a.mp3"})

@@ -52,6 +52,34 @@ class QBankImporterTests(unittest.TestCase):
         self.assertEqual(first["taxonomy"]["subtopic"], "Intubation")
         self.assertIn("capnography", normalized_text(first["explanation_html"]))
 
+    def test_parser_extracts_escaped_embedded_cerebellum_arrays_and_media(self):
+        embedded = """&lt;h1&gt;Abdomen &amp;amp; Pelvis&lt;/h1&gt;
+        &lt;script&gt;questions = [{&quot;text&quot;:&quot;Stem&quot;,&quot;options&quot;:[
+        {&quot;label&quot;:&quot;A&quot;,&quot;text&quot;:&quot;One&quot;,&quot;correct&quot;:false},
+        {&quot;label&quot;:&quot;B&quot;,&quot;text&quot;:&quot;Two&quot;,&quot;correct&quot;:true}],
+        &quot;correct_answer&quot;:&quot;B. Two&quot;,&quot;question_images&quot;:[&quot;https://example.test/q.jpg&quot;],
+        &quot;explanation_images&quot;:[&quot;https://example.test/e.jpg&quot;],&quot;explanation&quot;:&quot;Why&quot;,&quot;video&quot;:&quot;&quot;}];&lt;/script&gt;"""
+        metadata = {**self.metadata, "subject": "Anatomy", "source_collection": "Cerebellum Anatomy"}
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "anatomy.html"
+            source.write_text(embedded, encoding="utf-8")
+            parsed = parse_html(source, metadata, DEFAULT_PROFILE)
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0]["source_id"], "cereb_anatomy_1")
+        self.assertEqual(parsed[0]["taxonomy"]["topic"], "Abdomen & Pelvis")
+        self.assertEqual(parsed[0]["taxonomy"]["subtopic"], "Abdomen & Pelvis")
+        self.assertEqual(parsed[0]["correct_answer"], "B")
+        self.assertEqual(parsed[0]["question_images"], ["https://example.test/q.jpg"])
+        self.assertEqual(parsed[0]["explanation_images"], ["https://example.test/e.jpg"])
+
+    def test_content_fingerprint_ignores_collection_and_normalizes_full_answer(self):
+        left = json.loads(json.dumps(self.parsed[0]))
+        right = json.loads(json.dumps(left))
+        left["source_collection"] = ""
+        right["source_collection"] = "Different collection label"
+        right["correct_answer"] = f"{left['correct_answer']}. {left['options'][1]['text']}"
+        self.assertEqual(content_fingerprint(left), content_fingerprint(right))
+
     def test_classifies_all_safety_categories(self):
         rows = classify_questions(self.parsed, self.snapshot)
         self.assertEqual([row["classification"] for row in rows], [

@@ -231,8 +231,9 @@ def extract_correct(block: Node, options: Sequence[Dict[str, Any]], profile: Dic
 
 
 def parse_html(source: Path, metadata: Dict[str, str], profile: Dict[str, Any]) -> List[Dict[str, Any]]:
+    raw_source = source.read_text(encoding="utf-8", errors="replace")
     parser = TreeParser()
-    parser.feed(source.read_text(encoding="utf-8", errors="replace"))
+    parser.feed(raw_source)
     candidate_sets = [parser.root.find_all([selector]) for selector in profile["question_selectors"]]
     blocks: List[Node] = max(candidate_sets, key=len, default=[])
     questions: List[Dict[str, Any]] = []
@@ -271,7 +272,84 @@ def parse_html(source: Path, metadata: Dict[str, str], profile: Dict[str, Any]) 
             "exam_year": attr(block, "data-exam-year", "data-year"),
             "exam_session": attr(block, "data-exam-session", "data-session", "data-shift"),
         })
+    if questions:
+        return questions
+    return parse_embedded_question_arrays(raw_source, metadata)
+
+
+def parse_embedded_question_arrays(raw_source: str, metadata: Dict[str, str]) -> List[Dict[str, Any]]:
+    """Parse exported Cerebellum pages whose question data is HTML-escaped JSON in JavaScript."""
+    decoded = html.unescape(raw_source)
+    assignment = re.compile(r"\bquestions\s*=\s*")
+    decoder = json.JSONDecoder()
+    cursor = 0
+    questions: List[Dict[str, Any]] = []
+    while match := assignment.search(decoded, cursor):
+        try:
+            rows, consumed = decoder.raw_decode(decoded[match.end():])
+        except json.JSONDecodeError:
+            cursor = match.end()
+            continue
+        cursor = match.end() + consumed
+        if not isinstance(rows, list) or not rows:
+            continue
+        preceding = decoded[max(0, match.start() - 20000):match.start()]
+        headings = re.findall(r"<h1[^>]*>(.*?)</h1>", preceding, re.I | re.S)
+        section = html.unescape(clean(TAG.sub(" ", headings[-1] if headings else "")))
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            position = len(questions) + 1
+            options = []
+            correct = ""
+            for option_position, option in enumerate(row.get("options") or []):
+                if not isinstance(option, dict):
+                    continue
+                key = clean(option.get("label")).upper() or chr(ord("A") + option_position)
+                option_html = str(option.get("text") or "")
+                options.append({"key": key, "text": clean(TAG.sub(" ", option_html)), "html": option_html})
+                if option.get("correct") is True:
+                    correct = key
+            if not correct:
+                answer_match = re.match(r"\s*([A-H])(?:\s*[\).:\-])?", clean(row.get("correct_answer")), re.I)
+                correct = answer_match.group(1).upper() if answer_match else ""
+            platform_prefix = normalized_name(metadata.get("platform"))
+            if platform_prefix == "cerebellum":
+                platform_prefix = "cereb"
+            prefix = "_".join(filter(None, (platform_prefix, normalized_name(metadata.get("subject")))))
+            question_images = [clean(value) for value in (row.get("question_images") or []) if clean(value)]
+            explanation_images = [clean(value) for value in (row.get("explanation_images") or []) if clean(value)]
+            questions.append({
+                "position": position,
+                "source_id": f"{prefix}_{position}" if prefix else str(position),
+                "source_reference": metadata.get("source_reference", ""),
+                "source_collection": metadata.get("source_collection", ""),
+                "source_test_label": section,
+                "stem_html": str(row.get("text") or ""),
+                "options": options,
+                "correct_answer": correct,
+                "explanation_html": str(row.get("explanation") or ""),
+                "images": question_images,
+                "question_images": question_images,
+                "explanation_images": explanation_images,
+                "video_url": clean(row.get("video")),
+                "taxonomy": {
+                    "platform": clean(metadata.get("platform")),
+                    "subject": clean(metadata.get("subject")),
+                    "system": clean(metadata.get("system")),
+                    "topic": clean(metadata.get("topic") or section),
+                    "subtopic": clean(metadata.get("subtopic") or section),
+                },
+                "is_pyq": False,
+                "exam_year": "",
+                "exam_session": "",
+            })
     return questions
+
+
+def correct_key(value: Any) -> str:
+    match = re.match(r"\s*([A-H])(?:\s*[\).:\-])?", clean(value), re.I)
+    return match.group(1).upper() if match else clean(value).upper()
 
 
 def content_fingerprint(question: Dict[str, Any]) -> str:
@@ -281,10 +359,9 @@ def content_fingerprint(question: Dict[str, Any]) -> str:
         "system": normalized_name(question["taxonomy"].get("system")),
         "topic": normalized_name(question["taxonomy"].get("topic")),
         "subtopic": normalized_name(question["taxonomy"].get("subtopic")),
-        "collection": normalized_text(question.get("source_collection")),
         "stem": normalized_text(question.get("stem_html")),
         "options": [(row["key"].upper(), normalized_text(row.get("text") or row.get("html"))) for row in question.get("options", [])],
-        "answer": clean(question.get("correct_answer")).upper(),
+        "answer": correct_key(question.get("correct_answer")),
     }
     return sha256_text(stable_json(canonical))
 
@@ -367,7 +444,7 @@ def prepare_existing(snapshot: Dict[str, Any]) -> Dict[str, Any]:
                 "subtopic": sorted(subtopics_by_question.get(row["id"], []))[0] if subtopics_by_question.get(row["id"]) else "",
             },
             "source_collection": row.get("source_collection", ""), "stem_html": row.get("question_text", ""),
-            "options": options_by_question.get(row["id"], []), "correct_answer": row.get("correct_answer", ""),
+            "options": options_by_question.get(row["id"], []), "correct_answer": correct_key(row.get("correct_answer", "")),
         }
         existing["computed_content_fingerprint"] = row.get("content_fingerprint") or content_fingerprint(existing_question)
         scope = (row.get("platform_id"), row.get("subject_id"), normalized_text(row.get("source_question_id")))
@@ -387,6 +464,7 @@ def classify_questions(questions: List[Dict[str, Any]], snapshot: Dict[str, Any]
     platforms = {normalized_name(row["name"]): row["id"] for row in snapshot.get("platforms", [])}
     subjects = {normalized_name(row["name"]): row["id"] for row in snapshot.get("subjects", [])}
     source_seen: Dict[str, Dict[str, Any]] = {}
+    content_seen: Dict[str, Dict[str, Any]] = {}
     results: List[Dict[str, Any]] = []
     for question in questions:
         item = dict(question)
@@ -428,7 +506,10 @@ def classify_questions(questions: List[Dict[str, Any]], snapshot: Dict[str, Any]
                     classification, reason = "POSSIBLE DUPLICATE", "content matches an existing record under a different identity"
             elif indexes["by_stem"].get(normalized_text(item.get("stem_html"))):
                 classification, reason = "POSSIBLE DUPLICATE", "normalized stem matches existing content; manual review required"
+            elif content_fp in content_seen:
+                classification, reason = "POSSIBLE DUPLICATE", "content is duplicated under a different identity inside source file"
         source_seen.setdefault(identity, item)
+        content_seen.setdefault(content_fp, item)
         item.update({"classification": classification, "reason": reason, "existing_question_id": existing_id})
         results.append(item)
     return results
@@ -549,7 +630,7 @@ def fetch_rows(url: str, key: str, table: str, select: str, page_size: int = 100
 
 def count_table(url: str, key: str, table: str, query: str = "") -> int:
     separator = "&" if query else "?"
-    _, headers = api_request(url, key, f"/rest/v1/{table}{query}{separator}select=id&limit=1", extra_headers={"Prefer": "count=exact", "Range": "0-0"})
+    _, headers = api_request(url, key, f"/rest/v1/{table}{query}{separator}select=*&limit=1", extra_headers={"Prefer": "count=exact", "Range": "0-0"})
     match = re.search(r"/(\d+)$", headers.get("Content-Range", ""))
     return int(match.group(1)) if match else 0
 
@@ -639,7 +720,9 @@ def import_payload(classified: List[Dict[str, Any]], report: Dict[str, Any], rev
             "platform": item["taxonomy"]["platform"], "subject": item["taxonomy"]["subject"], "system": item["taxonomy"].get("system") or None,
             "topic": item["taxonomy"].get("topic") or None, "subtopic": item["taxonomy"].get("subtopic") or None,
             "question_text": item["stem_html"], "options": item["options"], "correct_answer": item["correct_answer"],
-            "explanation_html": item.get("explanation_html") or None, "question_images": item.get("images", []),
+            "explanation_html": item.get("explanation_html") or None,
+            "question_images": item.get("question_images", item.get("images", [])),
+            "explanation_images": item.get("explanation_images", []), "video_url": item.get("video_url") or None,
             "is_pyq": bool(item.get("is_pyq")), "exam_year": int(item["exam_year"]) if str(item.get("exam_year", "")).isdigit() else None,
             "exam_shift": item.get("exam_session") or None,
         })

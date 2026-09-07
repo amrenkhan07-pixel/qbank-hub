@@ -178,9 +178,104 @@ checks(check_name, failures, detail) as (
   where not q.is_usable
 
   union all select 'prepladder.usable_population_counts',
-    case when count(*) filter (where lower(p.name)='prepladder')=383 and count(*)=801 then 0 else 1 end,
+    case when
+      count(*) filter (where lower(p.name)='prepladder') = (
+        select count(*) from public.qbank_question_payloads qp
+        join public.questions hq on hq.id=qp.question_id where hq.is_usable
+      )
+      and count(*) = (select count(*) from public.questions where is_usable)
+    then 0 else 1 end,
     format('%s total usable; %s PrepLadder usable', count(*), count(*) filter (where lower(p.name)='prepladder'))
   from public.questions q join public.platforms p on p.id=q.platform_id where q.is_usable
+
+  union all select 'prepladder.pathology_subject_identity',
+    case when count(*)=1 then 0 else 1 end,
+    format('%s canonical Pathology subject rows',count(*))
+  from public.subjects where lower(btrim(name))='pathology'
+
+  union all select 'prepladder.pathology_source_test_counts',
+    case when count(*)=95 and count(*) filter (where t.is_pyq)=22 then 0 else 1 end,
+    format('%s source tests; %s PYQ tests',count(*),count(*) filter (where t.is_pyq))
+  from public.qbank_source_tests t
+  join public.platforms p on p.id=t.platform_id
+  join public.subjects s on s.id=t.subject_id
+  where lower(p.name)='prepladder' and s.name='Pathology'
+
+  union all select 'prepladder.pathology_occurrence_counts',
+    case when count(*)=1775 and count(*) filter (where o.is_pyq)=518 then 0 else 1 end,
+    format('%s occurrences; %s PYQ occurrences',count(*),count(*) filter (where o.is_pyq))
+  from public.qbank_source_occurrences o
+  join public.qbank_source_tests t on t.id=o.source_test_id
+  join public.platforms p on p.id=t.platform_id
+  join public.subjects s on s.id=t.subject_id
+  where o.is_current and lower(p.name)='prepladder' and s.name='Pathology'
+
+  union all select 'prepladder.pathology_quarantine_counts',
+    case when count(*)=1749 and count(*) filter (where q.is_usable)=1741
+      and count(*) filter (where not q.is_usable and q.unusable_reason='SOURCE_CONTENT_INCOMPLETE')=8 then 0 else 1 end,
+    format('%s versions; %s usable; %s quarantined',count(*),count(*) filter (where q.is_usable),count(*) filter (where not q.is_usable))
+  from public.qbank_question_payloads qp
+  join public.questions q on q.id=qp.question_id
+  join public.platforms p on p.id=qp.platform_id
+  join public.subjects s on s.id=qp.subject_id
+  where lower(p.name)='prepladder' and s.name='Pathology'
+
+  union all select 'prepladder.pathology_source_test_isolation',count(*),
+    format('%s Pathology source tests have invalid subject provenance',count(*))
+  from public.qbank_source_tests t
+  join public.platforms p on p.id=t.platform_id
+  join public.subjects s on s.id=t.subject_id
+  where lower(p.name)='prepladder' and s.name='Pathology'
+    and coalesce(t.source_path->>0,'')<>'Pathology'
+
+  union all select 'prepladder.master_totals',
+    case when
+      count(distinct s.id)=19
+      and count(distinct t.id)=1129
+      and count(*) filter (where t.is_pyq)=265
+      and (select count(*) from public.qbank_source_occurrences o
+           join public.qbank_source_tests st on st.id=o.source_test_id
+           where o.is_current and st.platform_id=p.id)=23118
+      and (select count(*) from public.qbank_source_occurrences o
+           join public.qbank_source_tests st on st.id=o.source_test_id
+           where o.is_current and o.is_pyq and st.platform_id=p.id)=7671
+    then 0 else 1 end,
+    format('%s subjects; %s tests; %s PYQ tests',count(distinct s.id),count(distinct t.id),count(*) filter (where t.is_pyq))
+  from public.platforms p
+  join public.platform_subjects ps on ps.platform_id=p.id
+  join public.subjects s on s.id=ps.subject_id
+  left join public.qbank_source_tests t on t.platform_id=p.id and t.subject_id=s.id
+  where lower(p.name)='prepladder'
+  group by p.id
+
+  union all select 'prepladder.master_version_totals',
+    case when count(*)=22844 and count(*) filter (where q.is_usable)=22808
+      and count(*) filter (where not q.is_usable)=36
+      and count(*) filter (where qp.is_multi_correct)=6 then 0 else 1 end,
+    format('%s versions; %s usable; %s quarantined; %s multi-correct',count(*),count(*) filter (where q.is_usable),count(*) filter (where not q.is_usable),count(*) filter (where qp.is_multi_correct))
+  from public.qbank_question_payloads qp
+  join public.questions q on q.id=qp.question_id
+  join public.platforms p on p.id=qp.platform_id
+  where lower(p.name)='prepladder'
+
+  union all select 'prepladder.master_payload_storage',
+    case when count(*)=1129 and coalesce(sum(po.stored_bytes),0)=22572812 then 0 else 1 end,
+    format('%s payload objects; %s stored bytes',count(*),coalesce(sum(po.stored_bytes),0))
+  from public.qbank_payload_objects po
+  where po.status='committed'
+
+  union all select 'prepladder.all_subject_source_isolation',count(*),
+    format('%s source tests have source-path/subject alias mismatch',count(*))
+  from public.qbank_source_tests t
+  join public.platforms p on p.id=t.platform_id
+  join public.subjects s on s.id=t.subject_id
+  where lower(p.name)='prepladder'
+    and case coalesce(t.source_path->>0,'')
+      when 'Gynaecology _ Obstetrics' then 'Obstetrics & Gynecology'
+      when 'Orthopaedics' then 'Orthopedics'
+      when 'PSM' then 'Community Medicine'
+      else coalesce(t.source_path->>0,'')
+    end <> s.name
 
   union all select 'hybrid.current_occurrence_positions_unique', count(*), format('%s duplicate current source-test positions', count(*))
   from (
@@ -358,6 +453,38 @@ checks(check_name, failures, detail) as (
     case when (select count(*) from public.question_subtopics) = (select coalesce(sum(question_count), 0) from (select subtopic_id, count(distinct question_id) question_count from public.question_subtopics group by subtopic_id) x) then 0 else 1 end,
     'subtopic group counts must reproduce distinct question-subtopic mappings'
 
+  union all select 'analytics.quarantined_attempts_excluded', count(*), format('%s attempts reference unusable/quarantined questions', count(*))
+  from public.question_attempts a
+  join public.questions q on q.id = a.question_id
+  where not q.is_usable
+
+  union all select 'analytics.pyq_source_metadata_consistent', count(*), format('%s current occurrences disagree with their source test PYQ status', count(*))
+  from public.qbank_source_occurrences o
+  join public.qbank_source_tests t on t.id = o.source_test_id
+  where o.is_current and o.is_pyq is distinct from t.is_pyq
+
+  union all select 'analytics.source_test_subject_isolation', count(*), format('%s current source occurrences cross platform/subject boundaries', count(*))
+  from public.qbank_source_occurrences o
+  join public.qbank_source_tests t on t.id = o.source_test_id
+  join public.questions q on q.id = o.question_id
+  where o.is_current and (q.platform_id is distinct from t.platform_id or q.subject_id is distinct from t.subject_id)
+
+  union all select 'analytics.recovered_population_is_currently_correct', count(*), format('%s recovered mistakes are not currently correct', count(*))
+  from latest_attempt latest
+  where latest.is_correct
+    and exists (select 1 from public.question_attempts old where old.user_id = latest.user_id and old.question_id = latest.question_id and not old.is_correct)
+    and latest.is_correct is not true
+
+  union all select 'analytics.pyq_population_has_source_truth', count(*), format('%s usable PYQ questions have neither question nor source-test PYQ metadata', count(*))
+  from public.questions q
+  where q.is_usable and q.is_pyq
+    and not exists (
+      select 1 from public.qbank_source_occurrences o
+      join public.qbank_source_tests t on t.id = o.source_test_id
+      where o.question_id = q.id and o.is_current and (o.is_pyq or t.is_pyq)
+    )
+    and exists (select 1 from public.qbank_question_payloads p where p.question_id = q.id)
+
   union all select 'personal.content_separation', count(*), format('%s personal/import ownership violations', count(*))
   from public.questions q
   where (q.content_origin = 'user' and q.created_by is null)
@@ -374,6 +501,34 @@ checks(check_name, failures, detail) as (
     select 1 from information_schema.columns c
     where c.table_schema = 'public' and c.table_name = 'test_sessions' and c.column_name = expected.column_name
   )
+
+  union all select 'srm.canonical_one_row_per_question', count(*), format('%s duplicate active user/question SRM rows', count(*))
+  from (select user_id,question_id from public.user_question_state where srm_active group by user_id,question_id having count(*)>1) x
+
+  union all select 'srm.no_duplicate_event_ids', count(*), format('%s duplicate user/event identities', count(*))
+  from (select user_id,event_id from public.qbank_srm_events group by user_id,event_id having count(*)>1) x
+
+  union all select 'srm.no_quarantined_items', count(*), format('%s active SRM rows reference unusable questions', count(*))
+  from public.user_question_state s join public.questions q on q.id=s.question_id where s.srm_active and not q.is_usable
+
+  union all select 'srm.due_state_consistent', count(*), format('%s active/inactive due-state mismatches', count(*))
+  from public.user_question_state where (srm_active and srm_due_at is null) or (not srm_active and srm_due_at is not null)
+
+  union all select 'srm.legacy_due_mirror_consistent', count(*), format('%s canonical and compatibility due timestamps differ', count(*))
+  from public.user_question_state where srm_active and srm_due_at is distinct from recall_due_at
+
+  union all select 'srm.event_question_identity_valid', count(*), format('%s SRM events have broken canonical question identity', count(*))
+  from public.qbank_srm_events e left join public.questions q on q.id=e.question_id where q.id is null
+
+  union all select 'srm.event_transitions_complete', count(*), format('%s processed events lack a next state', count(*))
+  from public.qbank_srm_events where next_state is null or interval_minutes is null
+
+  union all select 'srm.settings_timezone_valid', count(*), format('%s invalid timezone settings', count(*))
+  from public.user_srm_settings s left join pg_timezone_names z on z.name=s.timezone_name where z.name is null
+
+  union all select 'srm.required_indexes_present', case when count(*)=3 then 0 else 1 end,
+    format('%s/3 required SRM indexes present',count(*))
+  from pg_indexes where schemaname='public' and indexname in ('user_question_state_srm_due_idx','user_question_state_srm_priority_idx','qbank_srm_events_user_occurred_idx')
 )
 select case when failures = 0 then 'PASS' else 'FAIL' end as status,
        check_name,
