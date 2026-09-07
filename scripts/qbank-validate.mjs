@@ -295,6 +295,7 @@ check('timer.single_interval_and_cleanup', /function startActiveTimers\(\) \{\s*
 check('timer.question_zero_pauses_total', /if \(questionRemaining === 0\) pauseTotalTimer\(active, questionDeadline\)/.test(appSource) && /active\.totalTimerStartedAt = null/.test(appSource));
 check('timer.next_question_resumes_total', /if \(active\.kind !== 'browse'\) resumeTotalTimer\(active, active\.questionStartedAt\)/.test(appSource));
 check('timer.paused_state_has_no_background_interval', /if \(questionRemaining === 0\) stopActiveTimer\(\)/.test(appSource) && /setInterval\(tick, 250\)/.test(appSource));
+check('timer.paused_total_survives_spa_resume', appSource.includes("const existingActive = state.active?.id === id ? state.active : null") && appSource.includes('const resumePaused = Boolean(existingActive && existingActive.totalTimerStartedAt == null)') && appSource.includes('totalTimerStartedAt: !resumePaused'));
 check('timer.labels_are_explicit', appSource.includes('QUESTION TIMER') && appSource.includes('TOTAL TIMER') && !appSource.includes('QUESTION TARGET'));
 check('frontend.shared_exact_question_set_actions', appSource.includes('prepareQuestionSet') && appSource.includes('actionSetButtons') && appSource.includes('questionIds: selectedIds'));
 check('frontend.same_hash_origin_rerenders', /const goToHash = \(target\) => \{ if \(location\.hash === target\) render\(\)/.test(appSource));

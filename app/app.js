@@ -991,6 +991,7 @@ function reportModal() {
 }
 
 async function resumeSession(id) {
+  const existingActive = state.active?.id === id ? state.active : null;
   loading('Restoring your exact session…');
   try {
     const sessionResult = await db.from('test_sessions').select('*').eq('id', id).eq('user_id', state.user.id).single(); if (sessionResult.error) throw sessionResult.error;
@@ -1001,8 +1002,11 @@ async function resumeSession(id) {
     assertValidation(validateResumeSnapshot({ session, storedRows: itemsResult.data || [], questions, answers: answersResult.data || [] }), 'Resume');
     assertValidation(validateQuestionStateBindings({ questions, answers, bookmarks: personal.bookmarks, marked: new Set([...personal.marked, ...(answersResult.data || []).filter((answer) => answer.marked_for_review).map((answer) => answer.question_id)]) }), 'Resumed question state');
     const resumedAt = Date.now();
-    const elapsedBeforeResume = Math.min(questions.length * TARGET_SECONDS * 1000, Math.max(0, resumedAt - new Date(session.started_at).getTime()));
-    state.active = { ...session, kind: ['practice', 'recall'].includes(session.mode) ? session.mode : 'test', questions, index: Math.min(session.current_position || 0, Math.max(questions.length - 1, 0)), answers, bookmarks: personal.bookmarks, marked: new Set([...personal.marked, ...(answersResult.data || []).filter((x) => x.marked_for_review).map((x) => x.question_id)]), learning: personal.learning, questionStartedAt: resumedAt, totalTimeUsedMs: elapsedBeforeResume, totalTimerStartedAt: elapsedBeforeResume < questions.length * TARGET_SECONDS * 1000 ? resumedAt : null, explanationOpen: false, completedReview: session.status !== 'in_progress' };
+    const elapsedBeforeResume = existingActive
+      ? totalTimeUsed(existingActive, resumedAt)
+      : Math.min(questions.length * TARGET_SECONDS * 1000, Math.max(0, resumedAt - new Date(session.started_at).getTime()));
+    const resumePaused = Boolean(existingActive && existingActive.totalTimerStartedAt == null);
+    state.active = { ...session, kind: ['practice', 'recall'].includes(session.mode) ? session.mode : 'test', questions, index: Math.min(session.current_position || 0, Math.max(questions.length - 1, 0)), answers, bookmarks: personal.bookmarks, marked: new Set([...personal.marked, ...(answersResult.data || []).filter((x) => x.marked_for_review).map((x) => x.question_id)]), learning: personal.learning, questionStartedAt: resumedAt, totalTimeUsedMs: elapsedBeforeResume, totalTimerStartedAt: !resumePaused && elapsedBeforeResume < questions.length * TARGET_SECONDS * 1000 ? resumedAt : null, explanationOpen: false, completedReview: session.status !== 'in_progress' };
     renderActive();
   } catch (error) { toast(error.message || 'Could not resume session.', 'error'); location.hash = '#/home'; }
 }
