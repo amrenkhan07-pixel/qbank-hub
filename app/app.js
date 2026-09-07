@@ -576,7 +576,8 @@ async function loadPersonalState(questionIds) {
 async function startPendingSession() {
   const questionSet = state.pendingSet; if (!questionSet) return;
   const { mode, preset, title, filters, autoSubmit, questions } = questionSet;
-  const now = new Date().toISOString();
+  const startedMs = Date.now();
+  const now = new Date(startedMs).toISOString();
   const payload = {
     user_id: state.user.id, title, mode, status: 'in_progress', filters, total_questions: questions.length,
     duration_minutes: Math.max(1, Math.ceil(questions.length * TARGET_SECONDS / 60)), started_at: now,
@@ -601,7 +602,8 @@ async function startPendingSession() {
   state.active = {
     ...payload, ...(session || {}), kind: mode, questions, index: 0, answers: {},
     bookmarks: personal.bookmarks, marked: personal.marked, learning: personal.learning,
-    questionStartedAt: Date.now(), explanationOpen: false, completedReview: false,
+    questionStartedAt: startedMs, totalTimeUsedMs: 0, totalTimerStartedAt: startedMs,
+    explanationOpen: false, completedReview: false,
   };
   state.pendingSet = null;
   renderActive();
@@ -800,26 +802,49 @@ function stopActiveTimer() {
   state.timer = null;
 }
 
+function totalTimerLimit(active) { return active.questions.length * TARGET_SECONDS * 1000; }
+
+function totalTimeUsed(active, at = Date.now()) {
+  const running = active.totalTimerStartedAt == null ? 0 : Math.max(0, at - active.totalTimerStartedAt);
+  return Math.min(totalTimerLimit(active), Math.max(0, Number(active.totalTimeUsedMs) || 0) + running);
+}
+
+function totalTimeRemaining(active, at = Date.now()) {
+  return Math.ceil(Math.max(0, totalTimerLimit(active) - totalTimeUsed(active, at)) / 1000);
+}
+
+function pauseTotalTimer(active, at = Date.now()) {
+  if (active.totalTimerStartedAt == null) return;
+  active.totalTimeUsedMs = totalTimeUsed(active, at);
+  active.totalTimerStartedAt = null;
+}
+
+function resumeTotalTimer(active, at = Date.now()) {
+  if (active.totalTimerStartedAt == null && totalTimeRemaining(active, at) > 0) active.totalTimerStartedAt = at;
+}
+
 function startActiveTimers() {
   stopActiveTimer();
   const tick = () => {
     const active = state.active;
     if (!active || active.completedReview || active.status !== 'in_progress') return stopActiveTimer();
-    const questionElapsed = Math.floor((Date.now() - active.questionStartedAt) / 1000);
-    const questionRemaining = Math.max(0, TARGET_SECONDS - questionElapsed);
-    const totalSeconds = active.questions.length * TARGET_SECONDS;
-    const sessionElapsed = Math.floor((Date.now() - new Date(active.started_at).getTime()) / 1000);
-    const totalRemaining = Math.max(0, totalSeconds - sessionElapsed);
+    const now = Date.now();
+    const questionDeadline = active.questionStartedAt + TARGET_SECONDS * 1000;
+    const questionRemaining = Math.ceil(Math.max(0, questionDeadline - now) / 1000);
+    if (questionRemaining === 0) pauseTotalTimer(active, questionDeadline);
+    const totalRemaining = totalTimeRemaining(active, questionRemaining === 0 ? questionDeadline : now);
     const questionNode = document.querySelector('#question-timer');
     const totalNode = document.querySelector('#total-timer');
     if (questionNode) { questionNode.textContent = timerText(questionRemaining); questionNode.classList.toggle('low', questionRemaining <= 10); questionNode.classList.toggle('expired', questionRemaining === 0); }
     if (totalNode) { totalNode.textContent = timerText(totalRemaining); totalNode.classList.toggle('low', totalRemaining <= Math.min(60, TARGET_SECONDS)); totalNode.classList.toggle('expired', totalRemaining === 0); }
+    if (questionRemaining === 0) stopActiveTimer();
     if (totalRemaining === 0 && active.kind === 'test' && active.auto_submit) {
       stopActiveTimer();
       submitActive(true);
     }
   };
-  tick(); state.timer = setInterval(tick, 1000);
+  tick();
+  if (state.active?.questionStartedAt + TARGET_SECONDS * 1000 > Date.now()) state.timer = setInterval(tick, 250);
 }
 
 function elapsedOnQuestion() { return Math.max(0, Math.floor((Date.now() - state.active.questionStartedAt) / 1000)); }
@@ -880,7 +905,9 @@ async function submitMultiAnswer() {
 async function navigateActive(index) {
   const active = state.active; const current = activeQuestion();
   if (current && active.kind !== 'browse') { const answer = active.answers[current.id] || {}; answer.time_spent_seconds = Math.max(answer.time_spent_seconds || 0, elapsedOnQuestion()); active.answers[current.id] = answer; await ensureAttemptRecorded(current, answer); await saveActiveAnswer(current.id); }
-  active.index = Math.max(0, Math.min(index, active.questions.length - 1)); active.questionStartedAt = active.kind === 'browse' ? null : Date.now(); active.explanationOpen = false;
+  active.index = Math.max(0, Math.min(index, active.questions.length - 1)); active.questionStartedAt = active.kind === 'browse' ? null : Date.now();
+  if (active.kind !== 'browse') resumeTotalTimer(active, active.questionStartedAt);
+  active.explanationOpen = false;
   if (active.id) await optional(db.from('test_sessions').update({ current_position: active.index, last_question_started_at: new Date().toISOString() }).eq('id', active.id).eq('user_id', state.user.id), 'sessions');
   renderActive();
 }
@@ -973,7 +1000,9 @@ async function resumeSession(id) {
     const answers = Object.fromEntries((answersResult.data || []).map((answer) => [answer.question_id, answer])); const personal = await loadPersonalState(questions.map((question) => question.id)); const session = sessionResult.data;
     assertValidation(validateResumeSnapshot({ session, storedRows: itemsResult.data || [], questions, answers: answersResult.data || [] }), 'Resume');
     assertValidation(validateQuestionStateBindings({ questions, answers, bookmarks: personal.bookmarks, marked: new Set([...personal.marked, ...(answersResult.data || []).filter((answer) => answer.marked_for_review).map((answer) => answer.question_id)]) }), 'Resumed question state');
-    state.active = { ...session, kind: ['practice', 'recall'].includes(session.mode) ? session.mode : 'test', questions, index: Math.min(session.current_position || 0, Math.max(questions.length - 1, 0)), answers, bookmarks: personal.bookmarks, marked: new Set([...personal.marked, ...(answersResult.data || []).filter((x) => x.marked_for_review).map((x) => x.question_id)]), learning: personal.learning, questionStartedAt: Date.now(), explanationOpen: false, completedReview: session.status !== 'in_progress' };
+    const resumedAt = Date.now();
+    const elapsedBeforeResume = Math.min(questions.length * TARGET_SECONDS * 1000, Math.max(0, resumedAt - new Date(session.started_at).getTime()));
+    state.active = { ...session, kind: ['practice', 'recall'].includes(session.mode) ? session.mode : 'test', questions, index: Math.min(session.current_position || 0, Math.max(questions.length - 1, 0)), answers, bookmarks: personal.bookmarks, marked: new Set([...personal.marked, ...(answersResult.data || []).filter((x) => x.marked_for_review).map((x) => x.question_id)]), learning: personal.learning, questionStartedAt: resumedAt, totalTimeUsedMs: elapsedBeforeResume, totalTimerStartedAt: elapsedBeforeResume < questions.length * TARGET_SECONDS * 1000 ? resumedAt : null, explanationOpen: false, completedReview: session.status !== 'in_progress' };
     renderActive();
   } catch (error) { toast(error.message || 'Could not resume session.', 'error'); location.hash = '#/home'; }
 }
