@@ -790,18 +790,33 @@ function renderActive() {
   const srmButton = learning.srm_active
     ? `<button class="button ghost active-control" data-action="srm-remove">In Recall</button><button class="button ghost" data-action="srm-reset">Reset Recall</button>`
     : '<button class="button ghost" data-action="srm-add">Add to Recall</button>';
-  layout(`<section class="question-header"><div><span class="pill">${browsing ? 'Browse' : active.completedReview ? 'Review' : active.kind === 'recall' ? 'Recall' : active.kind === 'test' ? e(TEST_PRESETS[active.preset]?.[0] || 'Test') : 'Practice'}</span><h1>${e(active.title || 'Question set')}</h1></div>${browsing ? `<div class="row"><button class="button" data-action="preview-browsed-set">Start test with these exact questions</button><button class="button secondary" data-action="back-to-origin">Back</button></div>` : active.kind === 'recall' ? '<span class="pill">Priority order · no timer</span>' : `<div class="timer-cluster"><div><span>QUESTION TARGET</span><b id="question-timer">00:50</b></div><div><span>TOTAL TARGET</span><b>${timerText(active.questions.length * TARGET_SECONDS)}</b></div></div>`}</section><div class="question-layout"><section class="card question-card"><div class="question-topline"><span>Question ${active.index + 1} of ${active.questions.length}</span><span>${questionMeta(question)}</span></div><div class="progress"><i style="width:${((active.index + 1) / active.questions.length) * 100}%"></i></div>${renderQuestion(question, answer, reveal)}${browsing ? '' : feedbackControls(answer || {}, reveal, Boolean(answer?.selected_option) && !isAnswerCorrect(question, answer))}<div class="question-actions"><div class="row"><button class="button ghost ${active.bookmarks.has(question.id) ? 'active-control' : ''}" data-action="bookmark" aria-pressed="${active.bookmarks.has(question.id)}">${active.bookmarks.has(question.id) ? '★ Bookmarked' : '☆ Bookmark'}</button><button class="button ghost ${active.marked.has(question.id) ? 'active-control' : ''}" data-action="mark" aria-pressed="${active.marked.has(question.id)}">${active.marked.has(question.id) ? '✓ Marked for review' : 'Mark for review'}</button>${srmButton}<button class="button ghost" data-action="note">Note</button><button class="button ghost" data-action="report">Report</button></div><div class="row"><button class="button secondary" data-action="previous" ${active.index === 0 ? 'disabled' : ''}>Previous</button><button class="button" data-action="next">${active.index === active.questions.length - 1 ? (browsing ? 'Back' : active.completedReview ? 'Back to results' : 'Finish') : 'Next'}</button></div></div></section><aside class="card palette-card"><div class="section-heading"><h3>Question palette</h3><span>${answered}/${active.questions.length}</span></div><div class="palette">${active.questions.slice(0, 500).map((item, index) => `<button data-action="jump" data-index="${index}" class="${index === active.index ? 'current' : ''} ${active.answers[item.id]?.selected_option ? 'answered' : ''} ${active.marked.has(item.id) ? 'marked' : ''}" aria-label="Question ${index + 1}">${index + 1}</button>`).join('')}</div>${active.questions.length > 500 ? '<p class="subtle">Palette shows the first 500 positions; Previous/Next continues through all questions.</p>' : ''}${active.kind === 'test' && !active.completedReview ? `<p class="subtle">${active.questions.length - answered} unanswered</p><button class="button danger full" data-action="submit">Submit test</button>` : ''}</aside></div>`);
-  if (!browsing && active.kind !== 'recall') startQuestionTimer(); else clearInterval(state.timer);
+  const timerRunning = !browsing && active.kind !== 'recall' && !active.completedReview && active.status === 'in_progress';
+  layout(`<section class="question-header"><div><span class="pill">${browsing ? 'Browse' : active.completedReview ? 'Review' : active.kind === 'recall' ? 'Recall' : active.kind === 'test' ? e(TEST_PRESETS[active.preset]?.[0] || 'Test') : 'Practice'}</span><h1>${e(active.title || 'Question set')}</h1></div>${browsing ? `<div class="row"><button class="button" data-action="preview-browsed-set">Start test with these exact questions</button><button class="button secondary" data-action="back-to-origin">Back</button></div>` : active.kind === 'recall' ? '<span class="pill">Priority order · no timer</span>' : timerRunning ? `<div class="timer-cluster"><div><span>QUESTION TIMER</span><b id="question-timer">00:50</b></div><div><span>TOTAL TIMER</span><b id="total-timer">${timerText(active.questions.length * TARGET_SECONDS)}</b></div></div>` : ''}</section><div class="question-layout"><section class="card question-card"><div class="question-topline"><span>Question ${active.index + 1} of ${active.questions.length}</span><span>${questionMeta(question)}</span></div><div class="progress"><i style="width:${((active.index + 1) / active.questions.length) * 100}%"></i></div>${renderQuestion(question, answer, reveal)}${browsing ? '' : feedbackControls(answer || {}, reveal, Boolean(answer?.selected_option) && !isAnswerCorrect(question, answer))}<div class="question-actions"><div class="row"><button class="button ghost ${active.bookmarks.has(question.id) ? 'active-control' : ''}" data-action="bookmark" aria-pressed="${active.bookmarks.has(question.id)}">${active.bookmarks.has(question.id) ? '★ Bookmarked' : '☆ Bookmark'}</button><button class="button ghost ${active.marked.has(question.id) ? 'active-control' : ''}" data-action="mark" aria-pressed="${active.marked.has(question.id)}">${active.marked.has(question.id) ? '✓ Marked for review' : 'Mark for review'}</button>${srmButton}<button class="button ghost" data-action="note">Note</button><button class="button ghost" data-action="report">Report</button></div><div class="row"><button class="button secondary" data-action="previous" ${active.index === 0 ? 'disabled' : ''}>Previous</button><button class="button" data-action="next">${active.index === active.questions.length - 1 ? (browsing ? 'Back' : active.completedReview ? 'Back to results' : 'Finish') : 'Next'}</button></div></div></section><aside class="card palette-card"><div class="section-heading"><h3>Question palette</h3><span>${answered}/${active.questions.length}</span></div><div class="palette">${active.questions.slice(0, 500).map((item, index) => `<button data-action="jump" data-index="${index}" class="${index === active.index ? 'current' : ''} ${active.answers[item.id]?.selected_option ? 'answered' : ''} ${active.marked.has(item.id) ? 'marked' : ''}" aria-label="Question ${index + 1}">${index + 1}</button>`).join('')}</div>${active.questions.length > 500 ? '<p class="subtle">Palette shows the first 500 positions; Previous/Next continues through all questions.</p>' : ''}${active.kind === 'test' && !active.completedReview ? `<p class="subtle">${active.questions.length - answered} unanswered</p><button class="button danger full" data-action="submit">Submit test</button>` : ''}</aside></div>`);
+  if (timerRunning) startActiveTimers(); else stopActiveTimer();
 }
 
-function startQuestionTimer() {
+function stopActiveTimer() {
   clearInterval(state.timer);
+  state.timer = null;
+}
+
+function startActiveTimers() {
+  stopActiveTimer();
   const tick = () => {
-    const elapsed = Math.floor((Date.now() - state.active.questionStartedAt) / 1000); const remaining = Math.max(0, TARGET_SECONDS - elapsed);
-    const node = document.querySelector('#question-timer'); if (node) { node.textContent = timerText(remaining); node.classList.toggle('low', remaining <= 10); node.classList.toggle('expired', remaining === 0); }
-    if (state.active.kind === 'test' && state.active.auto_submit) {
-      const used = Math.floor((Date.now() - new Date(state.active.started_at).getTime()) / 1000);
-      if (used >= state.active.questions.length * TARGET_SECONDS) submitActive(true);
+    const active = state.active;
+    if (!active || active.completedReview || active.status !== 'in_progress') return stopActiveTimer();
+    const questionElapsed = Math.floor((Date.now() - active.questionStartedAt) / 1000);
+    const questionRemaining = Math.max(0, TARGET_SECONDS - questionElapsed);
+    const totalSeconds = active.questions.length * TARGET_SECONDS;
+    const sessionElapsed = Math.floor((Date.now() - new Date(active.started_at).getTime()) / 1000);
+    const totalRemaining = Math.max(0, totalSeconds - sessionElapsed);
+    const questionNode = document.querySelector('#question-timer');
+    const totalNode = document.querySelector('#total-timer');
+    if (questionNode) { questionNode.textContent = timerText(questionRemaining); questionNode.classList.toggle('low', questionRemaining <= 10); questionNode.classList.toggle('expired', questionRemaining === 0); }
+    if (totalNode) { totalNode.textContent = timerText(totalRemaining); totalNode.classList.toggle('low', totalRemaining <= Math.min(60, TARGET_SECONDS)); totalNode.classList.toggle('expired', totalRemaining === 0); }
+    if (totalRemaining === 0 && active.kind === 'test' && active.auto_submit) {
+      stopActiveTimer();
+      submitActive(true);
     }
   };
   tick(); state.timer = setInterval(tick, 1000);
@@ -967,7 +982,7 @@ async function submitActive(timedOut = false) {
   const active = state.active; if (!active || active.completedReview) return;
   const answeredRows = Object.values(active.answers).filter((a) => a?.selected_option); const unanswered = active.questions.length - answeredRows.length;
   if (!timedOut && !confirm(`Finish this ${active.kind}? ${unanswered} question${unanswered === 1 ? '' : 's'} unanswered.`)) return;
-  clearInterval(state.timer); const current = activeQuestion(); if (current) { const currentAnswer = active.answers[current.id]; await ensureAttemptRecorded(current, currentAnswer); await saveActiveAnswer(current.id); }
+  stopActiveTimer(); const current = activeQuestion(); if (current) { const currentAnswer = active.answers[current.id]; await ensureAttemptRecorded(current, currentAnswer); await saveActiveAnswer(current.id); }
   let completed = null;
   if (active.id) { const result = await db.rpc('submit_test_session', { p_session_id: active.id, p_timed_out: timedOut }); if (result.error) return toast(result.error.message, 'error'); completed = result.data; }
   if (active.kind === 'test') for (const question of active.questions) { const answer = active.answers[question.id]; if (answer?.selected_option) await ensureAttemptRecorded(question, answer); }
@@ -1451,7 +1466,7 @@ async function recordRecallResponse(value) {
 }
 
 async function render() {
-  clearInterval(state.timer); state.route = route(); if (!state.user) return auth();
+  stopActiveTimer(); state.route = route(); if (!state.user) return auth();
   try {
     await loadMeta();
     if (state.route === 'home') return home(); if (state.route === 'qbank') return qbank(); if (state.route === 'tests') return tests(); if (state.route === 'recall') return recall(); if (state.route === 'review') return review(); if (state.route === 'analytics') return analytics(); if (state.route === 'my-bank' || state.route === 'manage') return myBank(); if (state.route === 'history') return history(); return home();

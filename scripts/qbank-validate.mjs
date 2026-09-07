@@ -287,7 +287,12 @@ check('frontend.session_persists_subtopic_filters', /test_sessions'\)\.insert\([
 check('frontend.analytics_preserves_subtopic_context', serverPopulationMigration.includes("p_dimension not in ('platform','subject','system','topic','subtopic','source_test','pyq','exam','year_session')") && serverPopulationMigration.includes('question_subtopics qs'));
 check('frontend.retake_preserves_filter_context', /preset: state\.active\.preset[\s\S]*filters: state\.active\.filters/.test(appSource));
 check('frontend.ready_defers_session_creation', /function readyScreen[\s\S]*start-pending-test[\s\S]*async function createSession[\s\S]*readyScreen\(await prepareQuestionSet[\s\S]*async function startPendingSession[\s\S]*test_sessions'\)\.insert/.test(appSource));
-check('frontend.browse_has_no_timer_or_session', /kind: 'browse'[\s\S]*questionStartedAt: null[\s\S]*if \(!browsing && active\.kind !== 'recall'\) startQuestionTimer\(\)/.test(appSource));
+check('frontend.browse_has_no_timer_or_session', /kind: 'browse'[\s\S]*questionStartedAt: null/.test(appSource) && appSource.includes("const timerRunning = !browsing && active.kind !== 'recall' && !active.completedReview && active.status === 'in_progress'"));
+check('timer.question_and_total_are_live', appSource.includes('id="question-timer"') && appSource.includes('id="total-timer"') && appSource.includes('function startActiveTimers()'));
+check('timer.total_uses_session_start_without_question_reset', /sessionElapsed = Math\.floor\(\(Date\.now\(\) - new Date\(active\.started_at\)\.getTime\(\)\) \/ 1000\)/.test(appSource) && /questions\.length \* TARGET_SECONDS/.test(appSource));
+check('timer.question_resets_on_navigation', /active\.questionStartedAt = active\.kind === 'browse' \? null : Date\.now\(\)/.test(appSource));
+check('timer.single_interval_and_cleanup', /function startActiveTimers\(\) \{\s*stopActiveTimer\(\)/.test(appSource) && /function stopActiveTimer\(\) \{\s*clearInterval\(state\.timer\);\s*state\.timer = null;/.test(appSource) && /stopActiveTimer\(\); const current = activeQuestion\(\)/.test(appSource));
+check('timer.labels_are_explicit', appSource.includes('QUESTION TIMER') && appSource.includes('TOTAL TIMER') && !appSource.includes('QUESTION TARGET'));
 check('frontend.shared_exact_question_set_actions', appSource.includes('prepareQuestionSet') && appSource.includes('actionSetButtons') && appSource.includes('questionIds: selectedIds'));
 check('frontend.same_hash_origin_rerenders', /const goToHash = \(target\) => \{ if \(location\.hash === target\) render\(\)/.test(appSource));
 check('frontend.review_taxonomy_multiselect', appSource.includes('id="review-filter-form"') && appSource.includes("multiPicker('subtopics'"));
@@ -346,7 +351,7 @@ check('browser.taxonomy_dom_regression_installed', appSource.includes('runTaxono
   && domRegressionSource.includes('invalidChildPruning')
   && domRegressionSource.includes('zeroCountLabelsHidden'));
 check('frontend.cascade_modules_cache_busted', appSource.includes("./validation.js?v=20260902-srm2")
-  && readFileSync(resolve(root, 'index.html'), 'utf8').includes('./app/app.js?v=20260907-server-population'));
+  && readFileSync(resolve(root, 'index.html'), 'utf8').includes('./app/app.js?v=20260908-live-timers'));
 check('correctness.frontend_uses_canonical_option_flags', appSource.includes("select('question_id,option_key,option_text,is_correct')") && appSource.includes('isCanonicalAnswerCorrect'));
 check('correctness.rpc_uses_exact_normalized_sets', correctnessMigration.includes('qbank_is_answer_correct') && correctnessMigration.includes('qbank_correct_option_keys') && !correctnessMigration.includes('bool_or(o.is_correct)'));
 check('srm.canonical_state_extended_not_duplicated', /alter table public\.user_question_state[\s\S]*srm_active/.test(srmMigration) && !/create table if not exists public\.question_srm_state/i.test(srmMigration));
