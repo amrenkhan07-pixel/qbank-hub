@@ -513,10 +513,10 @@ checks(check_name, failures, detail) as (
   from pg_class c join pg_namespace n on n.oid=c.relnamespace
   where n.nspname='public' and c.relname in ('canonical_questions','canonical_question_versions','canonical_taxonomy_versions','canonical_taxonomy_nodes','canonical_question_taxonomy_assignments')
 
-  union all select 'canonical.client_roles_revoked', count(*),
-    format('%s anon/authenticated grants remain', count(*))
+  union all select 'canonical.sensitive_client_roles_revoked', count(*),
+    format('%s anon/authenticated grants remain on identity/assignment tables', count(*))
   from information_schema.role_table_grants
-  where table_schema='public' and table_name in ('canonical_questions','canonical_question_versions','canonical_taxonomy_versions','canonical_taxonomy_nodes','canonical_question_taxonomy_assignments') and grantee in ('anon','authenticated')
+  where table_schema='public' and table_name in ('canonical_questions','canonical_question_versions','canonical_question_taxonomy_assignments') and grantee in ('anon','authenticated')
 
   union all select 'canonical.version_links_are_unique', count(*) - count(distinct question_id),
     format('%s duplicate content-version links', count(*) - count(distinct question_id))
@@ -530,6 +530,23 @@ checks(check_name, failures, detail) as (
     format('%s/1 canonical hierarchy trigger present', count(*))
   from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace
   where n.nspname='public' and c.relname='canonical_taxonomy_nodes' and t.tgname='canonical_taxonomy_nodes_validate_parent' and not t.tgisinternal
+
+  union all select 'taxonomy_v1.draft_exists', case when count(*)=1 then 0 else 1 end,
+    format('%s/1 v1 draft version present',count(*))
+  from public.canonical_taxonomy_versions where version_key='canonical-medical-v1' and status='draft'
+
+  union all select 'taxonomy_v1.19_subjects', abs(19-count(*)), format('%s/19 canonical subjects',count(*))
+  from public.canonical_taxonomy_nodes n join public.canonical_taxonomy_versions v on v.id=n.taxonomy_version_id
+  where v.version_key='canonical-medical-v1' and n.node_type='subject'
+
+  union all select 'taxonomy_v1.no_assignments', count(*), format('%s assignments written',count(*))
+  from public.canonical_question_taxonomy_assignments a join public.canonical_taxonomy_versions v on v.id=a.taxonomy_version_id
+  where v.version_key='canonical-medical-v1'
+
+  union all select 'taxonomy_v1.review_rpcs',
+    case when to_regprocedure('public.qbank_taxonomy_review(text)') is not null
+      and to_regprocedure('public.qbank_taxonomy_classification_dry_run(text,integer)') is not null then 0 else 1 end,
+    'bounded review and dry-run RPCs must exist'
 
   union all select 'performance.server_population_contract',
     case when to_regprocedure('public.qbank_resolve_population(jsonb,boolean,integer,integer,text)') is not null

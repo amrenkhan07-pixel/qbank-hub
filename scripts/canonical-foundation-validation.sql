@@ -14,13 +14,11 @@ with checks as (
     )
 
   union all
-  select 'canonical.tables_are_empty',
+  select 'canonical.question_identity_and_assignments_are_empty',
     (select count(*) from public.canonical_questions)
       + (select count(*) from public.canonical_question_versions)
-      + (select count(*) from public.canonical_taxonomy_versions)
-      + (select count(*) from public.canonical_taxonomy_nodes)
       + (select count(*) from public.canonical_question_taxonomy_assignments),
-    'No source questions were automatically merged or classified'
+    'No source questions were automatically merged or classified; draft taxonomy rows are allowed'
 
   union all
   select 'canonical.rls_enabled',
@@ -38,7 +36,7 @@ with checks as (
     )
 
   union all
-  select 'canonical.client_roles_revoked',
+  select 'canonical.sensitive_client_roles_revoked',
     count(*),
     format('%s anon/authenticated grants remain', count(*))
   from information_schema.role_table_grants
@@ -46,8 +44,6 @@ with checks as (
     and table_name in (
       'canonical_questions',
       'canonical_question_versions',
-      'canonical_taxonomy_versions',
-      'canonical_taxonomy_nodes',
       'canonical_question_taxonomy_assignments'
     )
     and grantee in ('anon', 'authenticated')

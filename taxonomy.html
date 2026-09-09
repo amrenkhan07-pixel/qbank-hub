@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Canonical Taxonomy Review · QBank Hub</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%234f46e5'/%3E%3Cpath d='M18 18h19a10 10 0 0 1 0 20H25v8h-7V18zm7 7v6h12a3 3 0 0 0 0-6H25z' fill='white'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="./app/taxonomy-browser.css?v=20260909-v1" />
+  </head>
+  <body>
+    <header class="review-header">
+      <a class="brand" href="./index.html#/home">QBank <span>Hub</span></a>
+      <div>
+        <span class="internal-badge">Internal review</span>
+        <a class="back-link" href="./index.html#/home">Return to QBank</a>
+      </div>
+    </header>
+    <main>
+      <section class="hero">
+        <p class="eyebrow">Canonical medical classification</p>
+        <h1>Taxonomy review browser</h1>
+        <p>This draft is platform-independent. It does not change source tests, imported content, question assignments, or learner progress.</p>
+        <div id="version-line" class="version-line" aria-live="polite">Loading taxonomy version…</div>
+      </section>
+
+      <div id="auth-message" class="notice" hidden></div>
+      <div id="error-message" class="notice error" hidden></div>
+
+      <section id="summary" class="summary-grid" aria-label="Taxonomy node counts"></section>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <div><p class="eyebrow">Hierarchy</p><h2>Subject → optional System → Topic → Subtopic</h2></div>
+          <div class="controls"><button id="expand-all" type="button">Expand all</button><button id="collapse-all" type="button">Collapse all</button></div>
+        </div>
+        <label class="search-label">Find a node or path <input id="tree-search" type="search" placeholder="e.g. Glomerular disease" /></label>
+        <div id="taxonomy-tree" class="taxonomy-tree" aria-live="polite"><p class="loading">Loading hierarchy…</p></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <div><p class="eyebrow">Read-only classification dry run</p><h2>Representative live-question sample</h2></div>
+          <span id="sample-size" class="sample-size">Loading…</span>
+        </div>
+        <p class="muted">Deterministic, balanced by subject and PYQ status. Confidence is transparent phrase-evidence dominance and coverage—not a claim of clinical certainty. No assignment is written.</p>
+        <div id="metrics" class="summary-grid compact"></div>
+        <div id="issues" class="issues"></div>
+        <div class="table-tools">
+          <label>Subject <select id="sample-subject"><option value="">All subjects</option></select></label>
+          <label>Status <select id="sample-status"><option value="">All results</option><option value="high">High confidence</option><option value="ambiguous">Ambiguous</option><option value="unclassifiable">Unclassifiable</option></select></label>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Question ID</th><th>Source / platform</th><th>Existing subject</th><th>System</th><th>Topic</th><th>Subtopic</th><th>Canonical path</th><th>Confidence</th><th>Review flags</th><th>Evidence</th></tr></thead>
+            <tbody id="sample-rows"><tr><td colspan="10" class="loading">Loading dry run…</td></tr></tbody>
+          </table>
+        </div>
+        <p id="table-note" class="muted"></p>
+      </section>
+    </main>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.4"></script>
+    <script type="module" src="./app/taxonomy-browser.js?v=20260909-v1"></script>
+  </body>
+</html>

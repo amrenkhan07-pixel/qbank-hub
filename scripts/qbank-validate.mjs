@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { analyticsActionQuestionIds, analyticsMetadataCapabilities, analyticsPlatformDisagreement, analyticsStudyPriority, analyticsTopicSubtopicRedundant, buildTaxonomyIndex, canonicalCorrectOptionKeys, deriveAnalyticsPopulations, filterAnalyticsPopulation, isCanonicalAnswerCorrect, rankSrmQueue, resolveTaxonomyCascade, sameSrmLocalDate, srmTransition, validateAnalyticsDrilldown, validateGeneratedQuestionSet, validateQuestionSetLifecycle, validateQuestionStateBindings, validateResumeSnapshot, validateSrmQueue } from '../app/validation.js';
+import { flattenTaxonomy, taxonomy as taxonomyV1Catalog, taxonomyVersion } from './taxonomy-v1-catalog.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
@@ -278,6 +279,10 @@ const correctnessMigration = readFileSync(resolve(root, 'supabase/migrations/202
 const serverPopulationMigration = readFileSync(resolve(root, 'supabase/migrations/202609070001_qbank_server_population.sql'), 'utf8');
 const canonicalFoundationMigration = readFileSync(resolve(root, 'supabase/migrations/20260908214712_global_canonical_taxonomy_foundation.sql'), 'utf8');
 const canonicalIndexMigration = readFileSync(resolve(root, 'supabase/migrations/20260908220401_canonical_assignment_node_fk_index.sql'), 'utf8');
+const taxonomyV1Migration = readFileSync(resolve(root, 'supabase/migrations/20260909155548_canonical_medical_taxonomy_v1_draft.sql'), 'utf8');
+const taxonomyBrowserSource = readFileSync(resolve(root, 'app/taxonomy-browser.js'), 'utf8');
+const taxonomyBrowserHtml = readFileSync(resolve(root, 'taxonomy.html'), 'utf8');
+const taxonomyV1Rows = flattenTaxonomy();
 check('frontend.canonical_learning_state_table', !appSource.includes("from('question_learning_state')"), 'expected user_question_state');
 check('frontend.live_session_total_columns', !/\bquestion_count\b|\bcorrect_count\b/.test(appSource), 'expected total_questions/total_correct');
 check('frontend.generated_set_guard_installed', appSource.includes('validateGeneratedQuestionSet'));
@@ -357,6 +362,16 @@ check('canonical.classification_provenance', ['classifier_name', 'classifier_ver
 check('canonical.multiple_concepts_one_primary_path', canonicalFoundationMigration.includes('canonical_assignment_current_node_uidx') && canonicalFoundationMigration.includes('canonical_assignment_primary_uidx') && canonicalFoundationMigration.includes('where is_current and is_primary'));
 check('canonical.service_only_and_rls', (canonicalFoundationMigration.match(/enable row level security/g) || []).length === 5 && canonicalFoundationMigration.includes('revoke all on table public.canonical_questions from public, anon, authenticated') && canonicalFoundationMigration.includes('grant all on table public.canonical_questions to service_role'));
 check('canonical.composite_foreign_key_is_indexed', canonicalIndexMigration.includes('(taxonomy_node_id, taxonomy_version_id)'));
+check('taxonomy_v1.exactly_19_subjects', taxonomyV1Catalog.length === 19 && taxonomyV1Rows.filter((row) => row.type === 'subject').length === 19);
+check('taxonomy_v1.versioned_draft', taxonomyVersion.name === 'Canonical Taxonomy v1' && taxonomyVersion.status === 'draft' && taxonomyV1Migration.includes("'canonical-medical-v1'"));
+check('taxonomy_v1.optional_system_supported', taxonomyV1Migration.includes("new.node_type = 'topic' and parent_type not in ('subject','system')") && taxonomyV1Rows.some((row) => row.type === 'topic' && row.parentCode?.includes('subject.') && !row.parentCode.includes('.system.')));
+check('taxonomy_v1.no_source_test_taxonomy_coupling', !/qbank_source_tests|qbank_source_occurrences/.test(taxonomyV1Migration) && !taxonomyV1Rows.some((row) => /source test/i.test(row.name)));
+check('taxonomy_v1.no_question_or_learning_writes', !/(insert into|update|delete from|alter table) public\.(questions|question_options|question_attempts|test_sessions|user_question_state|bookmarks|qbank_source_occurrences)/i.test(taxonomyV1Migration));
+check('taxonomy_v1.no_bulk_assignments', !/insert into public\.canonical_question_taxonomy_assignments/i.test(taxonomyV1Migration));
+check('taxonomy_v1.global_evidence_separate_from_user_signals', taxonomyV1Migration.includes('canonical_global_evidence') && ['neet_pg_pyq','inicet_pyq','grand_test','curated_subject_test','platform_recurrence','core_btr'].every((signal) => taxonomyV1Migration.includes(signal)) && !/canonical_global_evidence[\s\S]*user_id/.test(taxonomyV1Migration));
+check('taxonomy_v1.concept_relations_srm_ready', taxonomyV1Migration.includes('canonical_taxonomy_node_relations') && ['related','confusable','prerequisite'].every((relation) => taxonomyV1Migration.includes(relation)));
+check('taxonomy_v1.server_bounded_dry_run', taxonomyV1Migration.includes('qbank_taxonomy_classification_dry_run') && taxonomyV1Migration.includes('least(greatest(p_limit,1),500)') && taxonomyV1Migration.includes('No reviewed draft rule matched'));
+check('taxonomy_v1.read_only_browser_is_separate', taxonomyBrowserHtml.includes('Taxonomy review browser') && !appSource.includes('taxonomy.html') && taxonomyBrowserSource.includes("db.rpc('qbank_taxonomy_review'") && taxonomyBrowserSource.includes('p_limit:380'));
 check('frontend.hidden_taxonomy_rows_not_displayed', /row\.hidden = !visible;[\s\S]*row\.style\.display = visible \? '' : 'none'/.test(appSource));
 check('frontend.hidden_attribute_overrides_check_row_display', /html\s+\[hidden\]\s*\{\s*display:\s*none\s*!important;?\s*\}/.test(stylesSource));
 check('browser.taxonomy_dom_regression_installed', appSource.includes('runTaxonomyDomRegression')
