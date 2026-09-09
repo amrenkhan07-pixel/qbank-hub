@@ -502,6 +502,35 @@ checks(check_name, failures, detail) as (
     where c.table_schema = 'public' and c.table_name = 'test_sessions' and c.column_name = expected.column_name
   )
 
+  union all select 'canonical.foundation_tables',
+    case when count(*) = 5 then 0 else 1 end,
+    format('%s/5 canonical foundation tables present', count(*))
+  from information_schema.tables
+  where table_schema = 'public' and table_name in ('canonical_questions','canonical_question_versions','canonical_taxonomy_versions','canonical_taxonomy_nodes','canonical_question_taxonomy_assignments')
+
+  union all select 'canonical.rls_enabled', count(*) filter (where not c.relrowsecurity),
+    format('%s/5 canonical tables have RLS', count(*) filter (where c.relrowsecurity))
+  from pg_class c join pg_namespace n on n.oid=c.relnamespace
+  where n.nspname='public' and c.relname in ('canonical_questions','canonical_question_versions','canonical_taxonomy_versions','canonical_taxonomy_nodes','canonical_question_taxonomy_assignments')
+
+  union all select 'canonical.client_roles_revoked', count(*),
+    format('%s anon/authenticated grants remain', count(*))
+  from information_schema.role_table_grants
+  where table_schema='public' and table_name in ('canonical_questions','canonical_question_versions','canonical_taxonomy_versions','canonical_taxonomy_nodes','canonical_question_taxonomy_assignments') and grantee in ('anon','authenticated')
+
+  union all select 'canonical.version_links_are_unique', count(*) - count(distinct question_id),
+    format('%s duplicate content-version links', count(*) - count(distinct question_id))
+  from public.canonical_question_versions
+
+  union all select 'canonical.one_current_primary_path', count(*),
+    format('%s duplicate current primary paths', count(*))
+  from (select canonical_question_id,taxonomy_version_id from public.canonical_question_taxonomy_assignments where is_current and is_primary group by 1,2 having count(*)>1) conflicts
+
+  union all select 'canonical.hierarchy_trigger', case when count(*)=1 then 0 else 1 end,
+    format('%s/1 canonical hierarchy trigger present', count(*))
+  from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace
+  where n.nspname='public' and c.relname='canonical_taxonomy_nodes' and t.tgname='canonical_taxonomy_nodes_validate_parent' and not t.tgisinternal
+
   union all select 'performance.server_population_contract',
     case when to_regprocedure('public.qbank_resolve_population(jsonb,boolean,integer,integer,text)') is not null
       and to_regprocedure('public.qbank_filter_facets(jsonb)') is not null

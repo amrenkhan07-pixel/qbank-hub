@@ -276,6 +276,8 @@ const prepBulkMigration = readFileSync(resolve(root, 'supabase/migrations/202609
 const srmMigration = readFileSync(resolve(root, 'supabase/migrations/202609020003_qbank_srm_engine.sql'), 'utf8');
 const correctnessMigration = readFileSync(resolve(root, 'supabase/migrations/202609020004_qbank_answer_correctness.sql'), 'utf8');
 const serverPopulationMigration = readFileSync(resolve(root, 'supabase/migrations/202609070001_qbank_server_population.sql'), 'utf8');
+const canonicalFoundationMigration = readFileSync(resolve(root, 'supabase/migrations/20260908214712_global_canonical_taxonomy_foundation.sql'), 'utf8');
+const canonicalIndexMigration = readFileSync(resolve(root, 'supabase/migrations/20260908220401_canonical_assignment_node_fk_index.sql'), 'utf8');
 check('frontend.canonical_learning_state_table', !appSource.includes("from('question_learning_state')"), 'expected user_question_state');
 check('frontend.live_session_total_columns', !/\bquestion_count\b|\bcorrect_count\b/.test(appSource), 'expected total_questions/total_correct');
 check('frontend.generated_set_guard_installed', appSource.includes('validateGeneratedQuestionSet'));
@@ -347,6 +349,14 @@ check('performance.requested_set_is_server_bounded', /requestedLimit[\s\S]*inclu
 check('performance.facets_are_server_aggregated', appSource.includes("db.rpc('qbank_filter_facets'") && serverPopulationMigration.includes("'subtopics'") && serverPopulationMigration.includes("'source_tests'"));
 check('performance.analytics_groups_are_lazy_server_queries', appSource.includes("db.rpc('qbank_population_groups'") && /if \(!state\.analyticsView\.groups\.has\(level\)\)/.test(appSource));
 check('performance.filter_change_requests_are_coalesced', appSource.includes('clearTimeout(state.filterTimer)') && appSource.includes('setTimeout(() => { form.__cascadeReady = update()'));
+check('canonical.source_occurrence_model_is_untouched', !/alter table public\.qbank_source_occurrences|update public\.qbank_source_occurrences|delete from public\.qbank_source_occurrences/i.test(canonicalFoundationMigration));
+check('canonical.existing_questions_are_not_rewritten', !/alter table public\.questions|update public\.questions|delete from public\.questions|insert into public\.questions/i.test(canonicalFoundationMigration));
+check('canonical.global_identity_and_version_links', canonicalFoundationMigration.includes('create table if not exists public.canonical_questions') && canonicalFoundationMigration.includes('create table if not exists public.canonical_question_versions') && canonicalFoundationMigration.includes('question_id uuid not null unique'));
+check('canonical.versioned_taxonomy_hierarchy', canonicalFoundationMigration.includes('create table if not exists public.canonical_taxonomy_versions') && canonicalFoundationMigration.includes('create table if not exists public.canonical_taxonomy_nodes') && canonicalFoundationMigration.includes("node_type in ('subject', 'system', 'topic', 'subtopic')") && canonicalFoundationMigration.includes('qbank_validate_canonical_taxonomy_parent'));
+check('canonical.classification_provenance', ['classifier_name', 'classifier_version', 'confidence', 'assigned_at', 'manual_override', 'supersedes_assignment_id'].every((field) => canonicalFoundationMigration.includes(field)));
+check('canonical.multiple_concepts_one_primary_path', canonicalFoundationMigration.includes('canonical_assignment_current_node_uidx') && canonicalFoundationMigration.includes('canonical_assignment_primary_uidx') && canonicalFoundationMigration.includes('where is_current and is_primary'));
+check('canonical.service_only_and_rls', (canonicalFoundationMigration.match(/enable row level security/g) || []).length === 5 && canonicalFoundationMigration.includes('revoke all on table public.canonical_questions from public, anon, authenticated') && canonicalFoundationMigration.includes('grant all on table public.canonical_questions to service_role'));
+check('canonical.composite_foreign_key_is_indexed', canonicalIndexMigration.includes('(taxonomy_node_id, taxonomy_version_id)'));
 check('frontend.hidden_taxonomy_rows_not_displayed', /row\.hidden = !visible;[\s\S]*row\.style\.display = visible \? '' : 'none'/.test(appSource));
 check('frontend.hidden_attribute_overrides_check_row_display', /html\s+\[hidden\]\s*\{\s*display:\s*none\s*!important;?\s*\}/.test(stylesSource));
 check('browser.taxonomy_dom_regression_installed', appSource.includes('runTaxonomyDomRegression')
