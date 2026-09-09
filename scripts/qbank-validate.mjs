@@ -281,6 +281,7 @@ const canonicalFoundationMigration = readFileSync(resolve(root, 'supabase/migrat
 const canonicalIndexMigration = readFileSync(resolve(root, 'supabase/migrations/20260908220401_canonical_assignment_node_fk_index.sql'), 'utf8');
 const taxonomyV1Migration = readFileSync(resolve(root, 'supabase/migrations/20260909155548_canonical_medical_taxonomy_v1_draft.sql'), 'utf8');
 const taxonomyReviewMigration = readFileSync(resolve(root, 'supabase/migrations/20260909193535_canonical_taxonomy_review_workflow.sql'), 'utf8');
+const taxonomyEvidenceMigration = readFileSync(resolve(root, 'supabase/migrations/20260909205424_taxonomy_source_evidence_strategy.sql'), 'utf8');
 const taxonomyBrowserSource = readFileSync(resolve(root, 'app/taxonomy-browser.js'), 'utf8');
 const taxonomyBrowserHtml = readFileSync(resolve(root, 'taxonomy.html'), 'utf8');
 const taxonomyQuestionFunction = readFileSync(resolve(root, 'supabase/functions/taxonomy-review-question/index.ts'), 'utf8');
@@ -383,6 +384,12 @@ check('taxonomy_review.search_and_filters_are_server_side', ['p_search','p_subje
 check('taxonomy_review.draft_override_is_not_assignment', taxonomyReviewMigration.includes('canonical_taxonomy_draft_reviews') && !/insert into public\.canonical_question_taxonomy_assignments/i.test(taxonomyReviewMigration));
 check('taxonomy_review.manual_path_is_validated', taxonomyReviewMigration.includes('Corrected system is outside the selected subject') && taxonomyReviewMigration.includes('Corrected subtopic is outside the selected topic'));
 check('taxonomy_review.quick_navigation_installed', ['next-unreviewed','next-low','next-ambiguous','previous-question','next-question'].every((id) => taxonomyBrowserHtml.includes(id)));
+check('taxonomy_review.friendly_ids_preserve_uuid', taxonomyBrowserSource.includes("function friendlyId(value)") && taxonomyBrowserSource.includes("`Q-${String(value||'').replaceAll('-','').slice(0,8).toUpperCase()}`") && taxonomyBrowserHtml.includes('id="full-question-id"') && taxonomyBrowserHtml.includes('id="copy-question-id"') && taxonomyEvidenceMigration.includes("'^Q-[0-9A-F]{8}$'"));
+check('taxonomy_review.source_evidence_is_prior_not_taxonomy', taxonomyEvidenceMigration.includes('source_topic_supported') && taxonomyEvidenceMigration.includes('source_test') && !/insert into public\.canonical_taxonomy_nodes/i.test(taxonomyEvidenceMigration));
+check('taxonomy_review.content_can_override_source', taxonomyEvidenceMigration.includes("then 'content_override'") && taxonomyEvidenceMigration.includes('Question content overrides the source-test topic.'));
+check('taxonomy_review.topic_level_does_not_force_subtopic', taxonomyEvidenceMigration.includes("when selected.node_type='topic' then 'topic'") && taxonomyEvidenceMigration.includes('only topic-level evidence, so subtopic is blank.'));
+check('taxonomy_review.classification_basis_is_visible', taxonomyBrowserHtml.includes('Source evidence') && taxonomyBrowserHtml.includes('Classification basis') && taxonomyBrowserSource.includes('appendBasisBadges') && taxonomyBrowserSource.includes("'Source-supported Topic'"));
+check('taxonomy_review.source_strategy_stays_bounded', taxonomyEvidenceMigration.includes('canonical_taxonomy_draft_sample s') && !/from public\.questions[^\n]*(limit|$)/i.test(taxonomyEvidenceMigration.match(/create or replace function public\.qbank_taxonomy_classification_dry_run_v2[\s\S]*?\$\$;/)?.[0] || ''));
 check('frontend.hidden_taxonomy_rows_not_displayed', /row\.hidden = !visible;[\s\S]*row\.style\.display = visible \? '' : 'none'/.test(appSource));
 check('frontend.hidden_attribute_overrides_check_row_display', /html\s+\[hidden\]\s*\{\s*display:\s*none\s*!important;?\s*\}/.test(stylesSource));
 check('browser.taxonomy_dom_regression_installed', appSource.includes('runTaxonomyDomRegression')

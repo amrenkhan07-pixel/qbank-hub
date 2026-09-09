@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>Canonical Taxonomy Review · QBank Hub</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%234f46e5'/%3E%3Cpath d='M18 18h19a10 10 0 0 1 0 20H25v8h-7V18zm7 7v6h12a3 3 0 0 0 0-6H25z' fill='white'/%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="./app/taxonomy-browser.css?v=20260910-v2" />
+    <link rel="stylesheet" href="./app/taxonomy-browser.css?v=20260910-v3" />
   </head>
   <body>
     <header class="review-header">
@@ -63,7 +63,7 @@
         <div id="review-loading" class="loading" hidden>Loading review page…</div>
         <div class="table-wrap metadata-table">
           <table>
-            <thead><tr><th>Open</th><th>Question ID</th><th>Source / platform</th><th>Original subject</th><th>Proposed path</th><th>Confidence</th><th>Flags</th><th>Reviewer decision</th></tr></thead>
+            <thead><tr><th>Open</th><th>Question</th><th>Source / platform</th><th>Original subject</th><th>Proposed path</th><th>Confidence</th><th>Basis</th><th>Reviewer decision</th></tr></thead>
             <tbody id="sample-rows"><tr><td colspan="8" class="loading">Loading review sample…</td></tr></tbody>
           </table>
         </div>
@@ -74,10 +74,13 @@
         <div class="panel-heading"><div><p class="eyebrow">Question review</p><h2 id="detail-title">Question</h2></div><button id="close-detail" type="button">Close</button></div>
         <div id="detail-loading" class="loading">Loading this question only…</div>
         <div id="detail-content" hidden>
+          <section class="source-evidence">
+            <h3>Source evidence</h3>
+            <dl id="source-context" class="source-context"></dl>
+          </section>
           <div class="comparison-grid">
             <article class="question-pane">
-              <h3>Actual question content</h3>
-              <div id="source-context" class="source-context"></div>
+              <h3>Actual question</h3>
               <div id="question-stem" class="rich-content stem"></div>
               <ol id="question-options" class="question-options"></ol>
               <div class="answer-box"><strong>Correct answer(s)</strong><span id="correct-answer"></span></div>
@@ -89,7 +92,8 @@
               <div id="proposal-path" class="proposal-path"></div>
               <dl id="proposal-fields" class="proposal-fields"></dl>
               <div id="proposal-flags"></div>
-              <div class="rationale"><strong>Classifier rationale / evidence</strong><p id="proposal-rationale"></p></div>
+              <div class="rationale"><strong>Classification basis</strong><p id="proposal-rationale"></p></div>
+              <details class="technical-details"><summary>Technical details</summary><code id="full-question-id"></code><button id="copy-question-id" type="button">Copy UUID</button></details>
               <hr />
               <h3>Reviewer decision</h3>
               <div class="decision-grid">
@@ -115,6 +119,6 @@
       </section>
     </main>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.4"></script>
-    <script type="module" src="./app/taxonomy-browser.js?v=20260910-v2"></script>
+    <script type="module" src="./app/taxonomy-browser.js?v=20260910-v3"></script>
   </body>
 </html>
