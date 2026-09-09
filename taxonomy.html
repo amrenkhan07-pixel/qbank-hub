@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>Canonical Taxonomy Review · QBank Hub</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%234f46e5'/%3E%3Cpath d='M18 18h19a10 10 0 0 1 0 20H25v8h-7V18zm7 7v6h12a3 3 0 0 0 0-6H25z' fill='white'/%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="./app/taxonomy-browser.css?v=20260909-v1" />
+    <link rel="stylesheet" href="./app/taxonomy-browser.css?v=20260910-v2" />
   </head>
   <body>
     <header class="review-header">
@@ -28,37 +28,93 @@
 
       <section id="summary" class="summary-grid" aria-label="Taxonomy node counts"></section>
 
-      <section class="panel">
+      <section class="panel hierarchy-panel">
         <div class="panel-heading">
           <div><p class="eyebrow">Hierarchy</p><h2>Subject → optional System → Topic → Subtopic</h2></div>
-          <div class="controls"><button id="expand-all" type="button">Expand all</button><button id="collapse-all" type="button">Collapse all</button></div>
         </div>
-        <label class="search-label">Find a node or path <input id="tree-search" type="search" placeholder="e.g. Glomerular disease" /></label>
+        <p class="muted">Only subjects load initially. Expand a branch to fetch its direct children.</p>
         <div id="taxonomy-tree" class="taxonomy-tree" aria-live="polite"><p class="loading">Loading hierarchy…</p></div>
       </section>
 
       <section class="panel">
         <div class="panel-heading">
-          <div><p class="eyebrow">Read-only classification dry run</p><h2>Representative live-question sample</h2></div>
+          <div><p class="eyebrow">Draft classification review</p><h2>Read the question, compare, then decide</h2></div>
           <span id="sample-size" class="sample-size">Loading…</span>
         </div>
-        <p class="muted">Deterministic, balanced by subject and PYQ status. Confidence is transparent phrase-evidence dominance and coverage—not a claim of clinical certainty. No assignment is written.</p>
+        <p class="muted">A bounded sample is paginated on the server. Full question content loads only when you open one row. Decisions are saved as draft review overrides—not production assignments.</p>
         <div id="metrics" class="summary-grid compact"></div>
-        <div id="issues" class="issues"></div>
-        <div class="table-tools">
+        <div class="review-progress" aria-live="polite"><strong id="review-progress">Reviewed 0 / 0</strong><span id="page-status"></span></div>
+        <form id="review-filters" class="filter-grid">
+          <label class="wide">Question ID or stem <input id="sample-search" type="search" placeholder="Search the bounded review sample" /></label>
           <label>Subject <select id="sample-subject"><option value="">All subjects</option></select></label>
-          <label>Status <select id="sample-status"><option value="">All results</option><option value="high">High confidence</option><option value="ambiguous">Ambiguous</option><option value="unclassifiable">Unclassifiable</option></select></label>
+          <label>Classifier status <select id="sample-status"><option value="">All results</option><option value="classified">Classified</option><option value="ambiguous">Ambiguous</option><option value="unclassifiable">Unclassifiable</option></select></label>
+          <label>Confidence <select id="sample-confidence"><option value="">All confidence</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option><option value="none">None</option></select></label>
+          <label>Review decision <select id="sample-review"><option value="">All review states</option><option value="unreviewed">Only unreviewed</option><option value="accepted">Accepted</option><option value="needs_correction">Needs correction</option><option value="unclassifiable">Unclassifiable</option><option value="defer">Deferred</option></select></label>
+          <label>Rows <select id="page-size"><option value="25">25 per page</option><option value="50">50 per page</option></select></label>
+          <button class="secondary" id="clear-filters" type="button">Clear filters</button>
+        </form>
+        <div class="quick-nav" aria-label="Review navigation">
+          <button id="previous-question" type="button">Previous question</button>
+          <button id="next-question" type="button">Next question</button>
+          <button id="next-unreviewed" type="button">Next unreviewed</button>
+          <button id="next-low" type="button">Next low-confidence</button>
+          <button id="next-ambiguous" type="button">Next ambiguous</button>
         </div>
-        <div class="table-wrap">
+        <div id="review-loading" class="loading" hidden>Loading review page…</div>
+        <div class="table-wrap metadata-table">
           <table>
-            <thead><tr><th>Question ID</th><th>Source / platform</th><th>Existing subject</th><th>System</th><th>Topic</th><th>Subtopic</th><th>Canonical path</th><th>Confidence</th><th>Review flags</th><th>Evidence</th></tr></thead>
-            <tbody id="sample-rows"><tr><td colspan="10" class="loading">Loading dry run…</td></tr></tbody>
+            <thead><tr><th>Open</th><th>Question ID</th><th>Source / platform</th><th>Original subject</th><th>Proposed path</th><th>Confidence</th><th>Flags</th><th>Reviewer decision</th></tr></thead>
+            <tbody id="sample-rows"><tr><td colspan="8" class="loading">Loading review sample…</td></tr></tbody>
           </table>
         </div>
-        <p id="table-note" class="muted"></p>
+        <div class="pagination"><button id="previous-page" type="button">Previous page</button><span id="page-line"></span><button id="next-page" type="button">Next page</button></div>
+      </section>
+
+      <section id="question-review" class="panel question-review" hidden aria-live="polite">
+        <div class="panel-heading"><div><p class="eyebrow">Question review</p><h2 id="detail-title">Question</h2></div><button id="close-detail" type="button">Close</button></div>
+        <div id="detail-loading" class="loading">Loading this question only…</div>
+        <div id="detail-content" hidden>
+          <div class="comparison-grid">
+            <article class="question-pane">
+              <h3>Actual question content</h3>
+              <div id="source-context" class="source-context"></div>
+              <div id="question-stem" class="rich-content stem"></div>
+              <ol id="question-options" class="question-options"></ol>
+              <div class="answer-box"><strong>Correct answer(s)</strong><span id="correct-answer"></span></div>
+              <details class="explanation" open><summary>Explanation</summary><div id="question-explanation" class="rich-content"></div></details>
+              <div id="question-media" class="media-list"></div>
+            </article>
+            <article class="classification-pane">
+              <h3>Proposed canonical classification</h3>
+              <div id="proposal-path" class="proposal-path"></div>
+              <dl id="proposal-fields" class="proposal-fields"></dl>
+              <div id="proposal-flags"></div>
+              <div class="rationale"><strong>Classifier rationale / evidence</strong><p id="proposal-rationale"></p></div>
+              <hr />
+              <h3>Reviewer decision</h3>
+              <div class="decision-grid">
+                <button type="button" data-decision="accepted">Accept classification</button>
+                <button type="button" data-decision="needs_correction">Needs correction</button>
+                <button type="button" data-decision="unclassifiable">Unclassifiable</button>
+                <button type="button" data-decision="defer">Defer</button>
+              </div>
+              <div id="correction-fields" class="correction-fields" hidden>
+                <label>Canonical Subject <select id="correct-subject"></select></label>
+                <label>System <select id="correct-system"><option value="">No system / select</option></select></label>
+                <label>Topic <select id="correct-topic"><option value="">Select topic</option></select></label>
+                <label>Subtopic <select id="correct-subtopic"><option value="">No subtopic / select</option></select></label>
+                <div class="corrected-path"><strong>Corrected full path</strong><span id="corrected-path">Choose a subject and topic</span></div>
+              </div>
+              <label class="secondary-search">Optional secondary concept <input id="secondary-concept" type="search" placeholder="Type at least 2 letters" autocomplete="off" /><select id="secondary-results" hidden></select></label>
+              <label>Optional reviewer note <textarea id="reviewer-note" rows="3" maxlength="2000"></textarea></label>
+              <button id="save-review" class="primary" type="button">Save draft review</button>
+              <p id="save-status" class="muted" aria-live="polite"></p>
+            </article>
+          </div>
+        </div>
       </section>
     </main>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.4"></script>
-    <script type="module" src="./app/taxonomy-browser.js?v=20260909-v1"></script>
+    <script type="module" src="./app/taxonomy-browser.js?v=20260910-v2"></script>
   </body>
 </html>

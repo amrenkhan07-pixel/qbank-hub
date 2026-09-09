@@ -280,8 +280,10 @@ const serverPopulationMigration = readFileSync(resolve(root, 'supabase/migration
 const canonicalFoundationMigration = readFileSync(resolve(root, 'supabase/migrations/20260908214712_global_canonical_taxonomy_foundation.sql'), 'utf8');
 const canonicalIndexMigration = readFileSync(resolve(root, 'supabase/migrations/20260908220401_canonical_assignment_node_fk_index.sql'), 'utf8');
 const taxonomyV1Migration = readFileSync(resolve(root, 'supabase/migrations/20260909155548_canonical_medical_taxonomy_v1_draft.sql'), 'utf8');
+const taxonomyReviewMigration = readFileSync(resolve(root, 'supabase/migrations/20260909193535_canonical_taxonomy_review_workflow.sql'), 'utf8');
 const taxonomyBrowserSource = readFileSync(resolve(root, 'app/taxonomy-browser.js'), 'utf8');
 const taxonomyBrowserHtml = readFileSync(resolve(root, 'taxonomy.html'), 'utf8');
+const taxonomyQuestionFunction = readFileSync(resolve(root, 'supabase/functions/taxonomy-review-question/index.ts'), 'utf8');
 const taxonomyV1Rows = flattenTaxonomy();
 check('frontend.canonical_learning_state_table', !appSource.includes("from('question_learning_state')"), 'expected user_question_state');
 check('frontend.live_session_total_columns', !/\bquestion_count\b|\bcorrect_count\b/.test(appSource), 'expected total_questions/total_correct');
@@ -371,7 +373,16 @@ check('taxonomy_v1.no_bulk_assignments', !/insert into public\.canonical_questio
 check('taxonomy_v1.global_evidence_separate_from_user_signals', taxonomyV1Migration.includes('canonical_global_evidence') && ['neet_pg_pyq','inicet_pyq','grand_test','curated_subject_test','platform_recurrence','core_btr'].every((signal) => taxonomyV1Migration.includes(signal)) && !/canonical_global_evidence[\s\S]*user_id/.test(taxonomyV1Migration));
 check('taxonomy_v1.concept_relations_srm_ready', taxonomyV1Migration.includes('canonical_taxonomy_node_relations') && ['related','confusable','prerequisite'].every((relation) => taxonomyV1Migration.includes(relation)));
 check('taxonomy_v1.server_bounded_dry_run', taxonomyV1Migration.includes('qbank_taxonomy_classification_dry_run') && taxonomyV1Migration.includes('least(greatest(p_limit,1),500)') && taxonomyV1Migration.includes('No reviewed draft rule matched'));
-check('taxonomy_v1.read_only_browser_is_separate', taxonomyBrowserHtml.includes('Taxonomy review browser') && !appSource.includes('taxonomy.html') && taxonomyBrowserSource.includes("db.rpc('qbank_taxonomy_review'") && taxonomyBrowserSource.includes('p_limit:380'));
+check('taxonomy_v1.review_tool_is_separate', taxonomyBrowserHtml.includes('Taxonomy review browser') && !appSource.includes('taxonomy.html') && !appSource.includes('qbank_taxonomy_review_page'));
+check('taxonomy_review.server_pagination_is_bounded', taxonomyReviewMigration.includes('least(greatest(p_page_size,25),50)') && taxonomyBrowserSource.includes("db.rpc('qbank_taxonomy_review_page'") && !taxonomyBrowserSource.includes('p_limit:380'));
+check('taxonomy_review.initial_payload_is_metadata_only', taxonomyReviewMigration.includes('canonical_taxonomy_draft_sample') && !/question_text|explanation_html|question_options/.test(taxonomyBrowserSource.match(/async function loadPage[\s\S]*?function renderProgress/)?.[0] || ''));
+check('taxonomy_review.content_is_lazy_and_single_question', taxonomyBrowserSource.includes("db.functions.invoke('taxonomy-review-question'") && taxonomyQuestionFunction.includes('.eq("question_id", questionId)') && taxonomyQuestionFunction.includes('payload_index'));
+check('taxonomy_review.question_identity_cannot_bleed', taxonomyBrowserSource.includes('detailRequest:0') && taxonomyBrowserSource.includes('detailRequest!==state.detailRequest') && taxonomyBrowserSource.includes("state.active?.question_id!==row.question_id"));
+check('taxonomy_review.correct_answer_uses_option_identity', taxonomyQuestionFunction.includes('filter((option) => option.is_correct).map((option) => option.option_key)'));
+check('taxonomy_review.search_and_filters_are_server_side', ['p_search','p_subject','p_status','p_confidence','p_review_state'].every((name) => taxonomyReviewMigration.includes(name)) && taxonomyBrowserHtml.includes('Question ID or stem'));
+check('taxonomy_review.draft_override_is_not_assignment', taxonomyReviewMigration.includes('canonical_taxonomy_draft_reviews') && !/insert into public\.canonical_question_taxonomy_assignments/i.test(taxonomyReviewMigration));
+check('taxonomy_review.manual_path_is_validated', taxonomyReviewMigration.includes('Corrected system is outside the selected subject') && taxonomyReviewMigration.includes('Corrected subtopic is outside the selected topic'));
+check('taxonomy_review.quick_navigation_installed', ['next-unreviewed','next-low','next-ambiguous','previous-question','next-question'].every((id) => taxonomyBrowserHtml.includes(id)));
 check('frontend.hidden_taxonomy_rows_not_displayed', /row\.hidden = !visible;[\s\S]*row\.style\.display = visible \? '' : 'none'/.test(appSource));
 check('frontend.hidden_attribute_overrides_check_row_display', /html\s+\[hidden\]\s*\{\s*display:\s*none\s*!important;?\s*\}/.test(stylesSource));
 check('browser.taxonomy_dom_regression_installed', appSource.includes('runTaxonomyDomRegression')
