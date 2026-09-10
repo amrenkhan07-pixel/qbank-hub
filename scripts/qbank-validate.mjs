@@ -282,6 +282,11 @@ const canonicalIndexMigration = readFileSync(resolve(root, 'supabase/migrations/
 const taxonomyV1Migration = readFileSync(resolve(root, 'supabase/migrations/20260909155548_canonical_medical_taxonomy_v1_draft.sql'), 'utf8');
 const taxonomyReviewMigration = readFileSync(resolve(root, 'supabase/migrations/20260909193535_canonical_taxonomy_review_workflow.sql'), 'utf8');
 const taxonomyEvidenceMigration = readFileSync(resolve(root, 'supabase/migrations/20260909205424_taxonomy_source_evidence_strategy.sql'), 'utf8');
+const taxonomyPositiveMigration = readFileSync(resolve(root, 'supabase/migrations/20260910180553_canonical_taxonomy_positive_evidence_v3.sql'), 'utf8');
+const taxonomyBaselineMigration = readFileSync(resolve(root, 'supabase/migrations/20260911000500_taxonomy_draft_baseline_immutable.sql'), 'utf8');
+const taxonomyConceptIndexMigration = readFileSync(resolve(root, 'supabase/migrations/20260911002000_taxonomy_draft_concept_fk_index.sql'), 'utf8');
+const taxonomyClassifierSource = readFileSync(resolve(root, 'scripts/taxonomy_draft_classifier.py'), 'utf8');
+const taxonomyConceptVocabulary = JSON.parse(readFileSync(resolve(root, 'scripts/taxonomy-concept-vocabulary-v1.json'), 'utf8'));
 const taxonomyBrowserSource = readFileSync(resolve(root, 'app/taxonomy-browser.js'), 'utf8');
 const taxonomyBrowserHtml = readFileSync(resolve(root, 'taxonomy.html'), 'utf8');
 const taxonomyQuestionFunction = readFileSync(resolve(root, 'supabase/functions/taxonomy-review-question/index.ts'), 'utf8');
@@ -390,6 +395,17 @@ check('taxonomy_review.content_can_override_source', taxonomyEvidenceMigration.i
 check('taxonomy_review.topic_level_does_not_force_subtopic', taxonomyEvidenceMigration.includes("when selected.node_type='topic' then 'topic'") && taxonomyEvidenceMigration.includes('only topic-level evidence, so subtopic is blank.'));
 check('taxonomy_review.classification_basis_is_visible', taxonomyBrowserHtml.includes('Source evidence') && taxonomyBrowserHtml.includes('Classification basis') && taxonomyBrowserSource.includes('appendBasisBadges') && taxonomyBrowserSource.includes("'Source-supported Topic'"));
 check('taxonomy_review.source_strategy_stays_bounded', taxonomyEvidenceMigration.includes('canonical_taxonomy_draft_sample s') && !/from public\.questions[^\n]*(limit|$)/i.test(taxonomyEvidenceMigration.match(/create or replace function public\.qbank_taxonomy_classification_dry_run_v2[\s\S]*?\$\$;/)?.[0] || ''));
+check('taxonomy_v3.vocabulary_covers_19_subjects', new Set(taxonomyConceptVocabulary.concepts.map((row) => row.subject)).size === 19 && taxonomyConceptVocabulary.status === 'draft');
+check('taxonomy_v3.versioned_concepts_and_aliases', taxonomyPositiveMigration.includes('create table if not exists public.canonical_medical_concepts') && taxonomyPositiveMigration.includes('taxonomy_version_id') && taxonomyPositiveMigration.includes('aliases text[]') && taxonomyPositiveMigration.includes('parent_concept_id'));
+check('taxonomy_v3.correct_answer_and_positive_explanation_used', taxonomyClassifierSource.includes('* 7.0') && taxonomyClassifierSource.includes('* 4.8') && taxonomyClassifierSource.includes('positive_explanation') && taxonomyClassifierSource.includes('correct_answer_text'));
+check('taxonomy_v3.bounded_sample_only', taxonomyClassifierSource.includes('if not 300 <= len(sample) <= 500') && taxonomyPositiveMigration.includes('sample_count not between 300 and 500'));
+check('taxonomy_v3.dry_run_default_is_read_only', taxonomyClassifierSource.includes('if args.apply:') && taxonomyClassifierSource.includes('qbank_refresh_taxonomy_draft_v3'));
+check('taxonomy_v3.original_baseline_is_immutable', taxonomyBaselineMigration.includes('qbank_preserve_taxonomy_draft_baseline') && taxonomyBaselineMigration.includes("old.evidence_metadata ? 'before_confidence'"));
+check('taxonomy_v3.composite_concept_fk_is_indexed', taxonomyConceptIndexMigration.includes('(proposed_concept_id,taxonomy_version_id)'));
+check('taxonomy_v3.distractor_labels_are_excluded', taxonomyClassifierSource.includes('options?\\s+[a-z]\\b') && taxonomyClassifierSource.includes('and not distractor'));
+check('taxonomy_v3.source_prior_can_resolve_content_ties', taxonomyClassifierSource.includes('source["content_score"] >= content["content_score"] * .75') && taxonomyClassifierSource.includes('source_topic_supported'));
+check('taxonomy_v3.no_production_or_learning_writes', !/(insert into|update|delete from) public\.(canonical_question_taxonomy_assignments|questions|question_options|question_attempts|test_sessions|user_question_state|bookmarks|qbank_source_occurrences)/i.test(taxonomyPositiveMigration));
+check('taxonomy_v3.review_ui_shows_concept_and_evidence', taxonomyBrowserSource.includes("['Canonical Concept'") && taxonomyBrowserSource.includes("['Positive evidence used'") && taxonomyBrowserSource.includes('proposed_concept_path'));
 check('frontend.hidden_taxonomy_rows_not_displayed', /row\.hidden = !visible;[\s\S]*row\.style\.display = visible \? '' : 'none'/.test(appSource));
 check('frontend.hidden_attribute_overrides_check_row_display', /html\s+\[hidden\]\s*\{\s*display:\s*none\s*!important;?\s*\}/.test(stylesSource));
 check('browser.taxonomy_dom_regression_installed', appSource.includes('runTaxonomyDomRegression')
