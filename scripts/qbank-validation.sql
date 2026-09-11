@@ -531,6 +531,36 @@ checks(check_name, failures, detail) as (
   from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace
   where n.nspname='public' and c.relname='canonical_taxonomy_nodes' and t.tgname='canonical_taxonomy_nodes_validate_parent' and not t.tgisinternal
 
+  union all select 'canonical.concept_relationship_seed_bounded', case when count(*) between 1 and 25 then 0 else 1 end,
+    format('%s controlled concept relationships',count(*))
+  from public.canonical_concept_relationships
+
+  union all select 'canonical.concept_relationship_endpoints_valid',count(*),
+    format('%s invalid or cross-version concept endpoints',count(*))
+  from public.canonical_concept_relationships r
+  left join public.canonical_medical_concepts source on source.id=r.from_concept_id and source.taxonomy_version_id=r.taxonomy_version_id
+  left join public.canonical_medical_concepts target on target.id=r.to_concept_id and target.taxonomy_version_id=r.taxonomy_version_id
+  where source.id is null or target.id is null
+
+  union all select 'canonical.concept_relationship_review_evidence',count(*),
+    format('%s relations lack provenance, confidence, or review state',count(*))
+  from public.canonical_concept_relationships
+  where nullif(trim(source_reference),'') is null or confidence is null or review_status is null
+
+  union all select 'canonical.concept_relationship_no_published_edges',count(*),
+    format('%s concept relationships prematurely published',count(*))
+  from public.canonical_concept_relationships where review_status='published'
+
+  union all select 'canonical.concept_relationship_service_only',count(*),
+    format('%s anon/authenticated grants remain',count(*))
+  from information_schema.role_table_grants
+  where table_schema='public' and table_name in ('canonical_concept_relationships','canonical_concept_relationships_expanded') and grantee in ('anon','authenticated')
+
+  union all select 'canonical.concept_relationship_rls',case when count(*)=1 and bool_and(c.relrowsecurity) then 0 else 1 end,
+    format('%s/1 concept relationship tables have RLS',count(*) filter(where c.relrowsecurity))
+  from pg_class c join pg_namespace n on n.oid=c.relnamespace
+  where n.nspname='public' and c.relname='canonical_concept_relationships'
+
   union all select 'taxonomy_v1.draft_exists', case when count(*)=1 then 0 else 1 end,
     format('%s/1 v1 draft version present',count(*))
   from public.canonical_taxonomy_versions where version_key='canonical-medical-v1' and status='draft'

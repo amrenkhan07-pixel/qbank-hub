@@ -285,6 +285,7 @@ const taxonomyEvidenceMigration = readFileSync(resolve(root, 'supabase/migration
 const taxonomyPositiveMigration = readFileSync(resolve(root, 'supabase/migrations/20260910180553_canonical_taxonomy_positive_evidence_v3.sql'), 'utf8');
 const taxonomyBaselineMigration = readFileSync(resolve(root, 'supabase/migrations/20260911000500_taxonomy_draft_baseline_immutable.sql'), 'utf8');
 const taxonomyConceptIndexMigration = readFileSync(resolve(root, 'supabase/migrations/20260911002000_taxonomy_draft_concept_fk_index.sql'), 'utf8');
+const conceptRelationshipMigration = readFileSync(resolve(root, 'supabase/migrations/20260911120000_canonical_concept_relationships.sql'), 'utf8');
 const taxonomyClassifierSource = readFileSync(resolve(root, 'scripts/taxonomy_draft_classifier.py'), 'utf8');
 const taxonomyConceptVocabulary = JSON.parse(readFileSync(resolve(root, 'scripts/taxonomy-concept-vocabulary-v1.json'), 'utf8'));
 const taxonomyBrowserSource = readFileSync(resolve(root, 'app/taxonomy-browser.js'), 'utf8');
@@ -406,6 +407,15 @@ check('taxonomy_v3.distractor_labels_are_excluded', taxonomyClassifierSource.inc
 check('taxonomy_v3.source_prior_can_resolve_content_ties', taxonomyClassifierSource.includes('source["content_score"] >= content["content_score"] * .75') && taxonomyClassifierSource.includes('source_topic_supported'));
 check('taxonomy_v3.no_production_or_learning_writes', !/(insert into|update|delete from) public\.(canonical_question_taxonomy_assignments|questions|question_options|question_attempts|test_sessions|user_question_state|bookmarks|qbank_source_occurrences)/i.test(taxonomyPositiveMigration));
 check('taxonomy_v3.review_ui_shows_concept_and_evidence', taxonomyBrowserSource.includes("['Canonical Concept'") && taxonomyBrowserSource.includes("['Positive evidence used'") && taxonomyBrowserSource.includes('proposed_concept_path'));
+check('concept_relations.canonical_concept_ids_only', conceptRelationshipMigration.includes('from_concept_id uuid not null') && conceptRelationshipMigration.includes('to_concept_id uuid not null') && !/question_id uuid/i.test(conceptRelationshipMigration));
+check('concept_relations.versioned_composite_links', (conceptRelationshipMigration.match(/references public\.canonical_medical_concepts\(id,taxonomy_version_id\)/g) || []).length === 2);
+check('concept_relations.controlled_types', ['same_as','parent_of','child_of','sibling_of','confusable_with','prerequisite_for','complication_of','mechanism_of','diagnosis_of','treatment_of','associated_with','good_transfer_question','good_discriminator','related_but_not_equivalent'].every((type) => conceptRelationshipMigration.includes(`'${type}'`)));
+check('concept_relations.provenance_confidence_review', ['provenance_type','source_reference','confidence numeric','review_status','reviewer_id','reviewed_at'].every((field) => conceptRelationshipMigration.includes(field)));
+check('concept_relations_inverse_and_symmetric_normalization', conceptRelationshipMigration.includes("new.relationship_type='child_of'") && conceptRelationshipMigration.includes('canonical_concept_relationships_expanded') && conceptRelationshipMigration.includes('new.from_concept_id::text>new.to_concept_id::text'));
+check('concept_relations.aliases_are_not_concepts', !/unnest\s*\([^)]*aliases/i.test(conceptRelationshipMigration) && conceptRelationshipMigration.includes('Aliases are not looked up or materialized as concepts'));
+check('concept_relations.small_reviewed_seed', conceptRelationshipMigration.includes("'canonical-medical-v1-relationships-1'") && conceptRelationshipMigration.includes("'taxonomy-v1-review'") && !/generate_series|cross join public\.canonical_medical_concepts/i.test(conceptRelationshipMigration));
+check('concept_relations.no_production_or_learning_writes', !/(insert into|update|delete from|alter table) public\.(questions|question_options|question_attempts|test_sessions|user_question_state|bookmarks|qbank_source_occurrences|canonical_question_taxonomy_assignments)/i.test(conceptRelationshipMigration));
+check('concept_relations.service_only_not_frontend', conceptRelationshipMigration.includes('enable row level security') && conceptRelationshipMigration.includes('revoke all on table public.canonical_concept_relationships from public,anon,authenticated') && !appSource.includes('canonical_concept_relationships'));
 check('frontend.hidden_taxonomy_rows_not_displayed', /row\.hidden = !visible;[\s\S]*row\.style\.display = visible \? '' : 'none'/.test(appSource));
 check('frontend.hidden_attribute_overrides_check_row_display', /html\s+\[hidden\]\s*\{\s*display:\s*none\s*!important;?\s*\}/.test(stylesSource));
 check('browser.taxonomy_dom_regression_installed', appSource.includes('runTaxonomyDomRegression')
