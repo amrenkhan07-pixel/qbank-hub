@@ -14,11 +14,14 @@ with checks as (
     )
 
   union all
-  select 'canonical.question_identity_and_assignments_are_empty',
-    (select count(*) from public.canonical_questions)
-      + (select count(*) from public.canonical_question_versions)
-      + (select count(*) from public.canonical_question_taxonomy_assignments),
-    'No source questions were automatically merged or classified; draft taxonomy rows are allowed'
+  select 'canonical.question_identity_and_assignments_remain_pilot_bounded',
+    abs(150 - (select count(*) from public.canonical_questions))
+      + abs(150 - (select count(*) from public.canonical_question_versions))
+      + abs(164 - (select count(*) from public.canonical_question_taxonomy_assignments)),
+    format('%s identities; %s version links; %s taxonomy paths',
+      (select count(*) from public.canonical_questions),
+      (select count(*) from public.canonical_question_versions),
+      (select count(*) from public.canonical_question_taxonomy_assignments))
 
   union all
   select 'canonical.rls_enabled',

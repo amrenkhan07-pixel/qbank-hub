@@ -298,6 +298,11 @@ const taxonomyConceptVocabulary = JSON.parse(readFileSync(resolve(root, 'scripts
 const taxonomyBrowserSource = readFileSync(resolve(root, 'app/taxonomy-browser.js'), 'utf8');
 const taxonomyBrowserHtml = readFileSync(resolve(root, 'taxonomy.html'), 'utf8');
 const taxonomyQuestionFunction = readFileSync(resolve(root, 'supabase/functions/taxonomy-review-question/index.ts'), 'utf8');
+const canonicalStorageMigration = readFileSync(resolve(root, 'supabase/migrations/20260913100000_canonical_storage_readiness.sql'), 'utf8');
+const canonicalStorageIndexMigration = readFileSync(resolve(root, 'supabase/migrations/20260913101000_canonical_storage_fk_indexes.sql'), 'utf8');
+const canonicalStorageValidation = readFileSync(resolve(root, 'scripts/canonical-storage-validation.sql'), 'utf8');
+const backupManifest = readFileSync(resolve(root, 'scripts/qbank-backup-manifest.sql'), 'utf8');
+const storageRecoveryPlan = readFileSync(resolve(root, 'docs/canonical-storage-and-recovery-plan.md'), 'utf8');
 const taxonomyV1Rows = flattenTaxonomy();
 check('frontend.canonical_learning_state_table', !appSource.includes("from('question_learning_state')"), 'expected user_question_state');
 check('frontend.live_session_total_columns', !/\bquestion_count\b|\bcorrect_count\b/.test(appSource), 'expected total_questions/total_correct');
@@ -435,6 +440,16 @@ check('taxonomy_pilot.real_versioned_assignments', taxonomyPilotMigration.includ
 check('taxonomy_pilot.positive_evidence_and_source_prior', ['source_topic_node_id','evidence_usage','positive-evidence-v3+source-test-v1.1','correct_answer'].every((field) => taxonomyPilotMigration.includes(field) || taxonomyPositiveMigration.includes(field)));
 check('taxonomy_pilot.no_source_or_learner_writes', !/(update|delete from|alter table) public\.(questions|question_options|qbank_source_tests|qbank_source_occurrences|question_attempts|test_sessions|user_question_state)/i.test(taxonomyPilotMigration + pilotReconciliationMigration));
 check('taxonomy_pilot.relationship_layer_stays_inactive', !appSource.includes('canonical_question_concept_assignments') && !appSource.includes('canonical_concept_relationships') && !taxonomyPilotMigration.includes('qbank_srm'));
+check('canonical_storage.no_new_classification', !/insert into public\.canonical_question_(taxonomy|concept)_assignments/i.test(canonicalStorageMigration) && !/insert into public\.canonical_question_versions/i.test(canonicalStorageMigration));
+check('canonical_storage.run_level_provenance', canonicalStorageMigration.includes('canonical_classification_runs') && canonicalStorageMigration.includes('classification_run_id') && canonicalStorageMigration.includes('Aggregate run metrics only'));
+check('canonical_storage.no_content_duplication', !/(question_text|stem_text|explanation_html|question_images|explanation_images)\s+(text|jsonb)/i.test(canonicalStorageMigration));
+check('canonical_storage.sparse_exception_evidence', canonicalStorageMigration.includes('canonical_assignment_review_evidence') && ['low_confidence','ambiguous','content_override','human_review'].every((kind) => canonicalStorageMigration.includes(`'${kind}'`)));
+check('canonical_storage.compact_source_test_mapping', canonicalStorageMigration.includes('canonical_source_test_topic_assignments') && canonicalStorageMigration.includes('canonical_source_test_assignment_primary_uidx') && !/source_test_(name|title)\s+text/i.test(canonicalStorageMigration));
+check('canonical_storage.duplicate_index_cleanup_is_explicit', ['questions_platform_source_question_uidx','test_answers_session_idx','idx_user_state_bookmarked','personal_tags_user_name_idx'].every((name) => canonicalStorageMigration.includes(`drop index if exists public.${name}`)));
+check('canonical_storage.composite_foreign_keys_are_indexed', ['canonical_taxonomy_assignment_run_version_idx','canonical_concept_assignment_run_version_idx','canonical_assignment_evidence_run_version_idx','canonical_source_test_assignment_run_version_idx','canonical_source_test_assignment_topic_version_idx'].every((name) => canonicalStorageIndexMigration.includes(name)));
+check('canonical_storage.live_invariant_suite_present', canonicalStorageValidation.includes('classification.still_pilot_only') && canonicalStorageValidation.includes('storage.duplicate_indexes_removed') && canonicalStorageValidation.includes('security.new_tables_are_service_only'));
+check('canonical_storage.backup_manifest_is_read_only', backupManifest.includes('payload_manifest_md5') && !/\b(insert|update|delete|alter|drop|truncate)\b/i.test(backupManifest));
+check('canonical_storage.recovery_plan_has_restore_drill', storageRecoveryPlan.includes('Quarterly, restore') && storageRecoveryPlan.includes('Never test recovery against production'));
 check('frontend.hidden_taxonomy_rows_not_displayed', /row\.hidden = !visible;[\s\S]*row\.style\.display = visible \? '' : 'none'/.test(appSource));
 check('frontend.hidden_attribute_overrides_check_row_display', /html\s+\[hidden\]\s*\{\s*display:\s*none\s*!important;?\s*\}/.test(stylesSource));
 check('browser.taxonomy_dom_regression_installed', appSource.includes('runTaxonomyDomRegression')
