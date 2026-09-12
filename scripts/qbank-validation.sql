@@ -569,9 +569,15 @@ checks(check_name, failures, detail) as (
   from public.canonical_taxonomy_nodes n join public.canonical_taxonomy_versions v on v.id=n.taxonomy_version_id
   where v.version_key='canonical-medical-v1' and n.node_type='subject'
 
-  union all select 'taxonomy_v1.no_assignments', count(*), format('%s assignments written',count(*))
+  union all select 'taxonomy_v1.assignment_pilot_bounded', case when count(*) filter(where a.is_current and a.is_primary) between 100 and 200 then 0 else 1 end,
+    format('%s primary pilot assignments; %s total path assignments',count(*) filter(where a.is_current and a.is_primary),count(*))
   from public.canonical_question_taxonomy_assignments a join public.canonical_taxonomy_versions v on v.id=a.taxonomy_version_id
   where v.version_key='canonical-medical-v1'
+
+  union all select 'taxonomy_v1.no_assignments_outside_pilot',count(*),format('%s assignments are outside the bounded pilot',count(*))
+  from public.canonical_question_taxonomy_assignments a join public.canonical_taxonomy_versions v on v.id=a.taxonomy_version_id
+  left join public.canonical_taxonomy_assignment_pilot p on p.canonical_question_id=a.canonical_question_id and p.taxonomy_version_id=a.taxonomy_version_id
+  where v.version_key='canonical-medical-v1' and p.question_id is null
 
   union all select 'taxonomy_v1.review_rpcs',
     case when to_regprocedure('public.qbank_taxonomy_review(text)') is not null

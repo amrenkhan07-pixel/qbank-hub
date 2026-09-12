@@ -286,6 +286,13 @@ const taxonomyPositiveMigration = readFileSync(resolve(root, 'supabase/migration
 const taxonomyBaselineMigration = readFileSync(resolve(root, 'supabase/migrations/20260911000500_taxonomy_draft_baseline_immutable.sql'), 'utf8');
 const taxonomyConceptIndexMigration = readFileSync(resolve(root, 'supabase/migrations/20260911002000_taxonomy_draft_concept_fk_index.sql'), 'utf8');
 const conceptRelationshipMigration = readFileSync(resolve(root, 'supabase/migrations/20260911120000_canonical_concept_relationships.sql'), 'utf8');
+const sourceTestNormalizationMigration = readFileSync(resolve(root, 'supabase/migrations/20260911160000_prepladder_source_test_normalization.sql'), 'utf8');
+const sourceTestRuleMigration = readFileSync(resolve(root, 'supabase/migrations/20260911163000_source_test_medical_topic_rules.sql'), 'utf8');
+const sourceTestStemMigration = readFileSync(resolve(root, 'supabase/migrations/20260911164000_source_test_rule_stem_matching.sql'), 'utf8');
+const taxonomyPilotMigration = readFileSync(resolve(root, 'supabase/migrations/20260911170000_canonical_taxonomy_assignment_pilot.sql'), 'utf8');
+const pilotReconciliationMigration = readFileSync(resolve(root, 'supabase/migrations/20260911171000_pilot_source_prior_reconciliation.sql'), 'utf8');
+const sourceTestReviewHtml = readFileSync(resolve(root, 'source-test-normalization.html'), 'utf8');
+const sourceTestReviewSource = readFileSync(resolve(root, 'app/source-test-normalization.js'), 'utf8');
 const taxonomyClassifierSource = readFileSync(resolve(root, 'scripts/taxonomy_draft_classifier.py'), 'utf8');
 const taxonomyConceptVocabulary = JSON.parse(readFileSync(resolve(root, 'scripts/taxonomy-concept-vocabulary-v1.json'), 'utf8'));
 const taxonomyBrowserSource = readFileSync(resolve(root, 'app/taxonomy-browser.js'), 'utf8');
@@ -416,6 +423,18 @@ check('concept_relations.aliases_are_not_concepts', !/unnest\s*\([^)]*aliases/i.
 check('concept_relations.small_reviewed_seed', conceptRelationshipMigration.includes("'canonical-medical-v1-relationships-1'") && conceptRelationshipMigration.includes("'taxonomy-v1-review'") && !/generate_series|cross join public\.canonical_medical_concepts/i.test(conceptRelationshipMigration));
 check('concept_relations.no_production_or_learning_writes', !/(insert into|update|delete from|alter table) public\.(questions|question_options|question_attempts|test_sessions|user_question_state|bookmarks|qbank_source_occurrences|canonical_question_taxonomy_assignments)/i.test(conceptRelationshipMigration));
 check('concept_relations.service_only_not_frontend', conceptRelationshipMigration.includes('enable row level security') && conceptRelationshipMigration.includes('revoke all on table public.canonical_concept_relationships from public,anon,authenticated') && !appSource.includes('canonical_concept_relationships'));
+check('source_normalization.preserves_source_tests', !/(update|delete from|alter table) public\.qbank_source_tests/i.test(sourceTestNormalizationMigration + sourceTestRuleMigration + sourceTestStemMigration));
+check('source_normalization.exact_prep_scope', sourceTestNormalizationMigration.includes("lower(trim(p.name))='prepladder'") && sourceTestNormalizationMigration.includes('proposal_count<>1129'));
+check('source_normalization.versioned_provenance_review', ['taxonomy_version_id','generator_version','classification_basis','confidence','canonical_source_test_topic_reviews'].every((field) => sourceTestNormalizationMigration.includes(field)));
+check('source_normalization.server_pagination_bounded', sourceTestNormalizationMigration.includes('least(greatest(p_page_size,25),50)') && sourceTestReviewSource.includes("db.rpc('qbank_source_test_review_page'"));
+check('source_normalization.metadata_only_frontend', !/questions|question_text|question_options|explanation/i.test(sourceTestReviewSource) && sourceTestReviewHtml.includes('No question stems, options, explanations, or payload objects are loaded'));
+check('source_normalization.review_controls', ['accepted','corrected','defer'].every((decision) => sourceTestReviewHtml.includes(`data-decision="${decision}"`)) && ['correct-subject','correct-system','correct-topic'].every((id) => sourceTestReviewHtml.includes(`id="${id}"`)));
+check('source_normalization.subject_scoped_medical_rules', sourceTestRuleMigration.includes('canonical_source_test_topic_rules') && sourceTestRuleMigration.includes('subject_name') && sourceTestStemMigration.includes('reviewed_rule'));
+check('taxonomy_pilot.strictly_bounded_150', taxonomyPilotMigration.includes('exactly 150 questions') && taxonomyPilotMigration.includes('extra_rank<=55') && taxonomyPilotMigration.includes('subject_rank<=5'));
+check('taxonomy_pilot.real_versioned_assignments', taxonomyPilotMigration.includes('canonical_question_taxonomy_assignments') && taxonomyPilotMigration.includes('canonical_question_concept_assignments') && taxonomyPilotMigration.includes('canonical_question_versions'));
+check('taxonomy_pilot.positive_evidence_and_source_prior', ['source_topic_node_id','evidence_usage','positive-evidence-v3+source-test-v1.1','correct_answer'].every((field) => taxonomyPilotMigration.includes(field) || taxonomyPositiveMigration.includes(field)));
+check('taxonomy_pilot.no_source_or_learner_writes', !/(update|delete from|alter table) public\.(questions|question_options|qbank_source_tests|qbank_source_occurrences|question_attempts|test_sessions|user_question_state)/i.test(taxonomyPilotMigration + pilotReconciliationMigration));
+check('taxonomy_pilot.relationship_layer_stays_inactive', !appSource.includes('canonical_question_concept_assignments') && !appSource.includes('canonical_concept_relationships') && !taxonomyPilotMigration.includes('qbank_srm'));
 check('frontend.hidden_taxonomy_rows_not_displayed', /row\.hidden = !visible;[\s\S]*row\.style\.display = visible \? '' : 'none'/.test(appSource));
 check('frontend.hidden_attribute_overrides_check_row_display', /html\s+\[hidden\]\s*\{\s*display:\s*none\s*!important;?\s*\}/.test(stylesSource));
 check('browser.taxonomy_dom_regression_installed', appSource.includes('runTaxonomyDomRegression')

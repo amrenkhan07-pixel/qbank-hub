@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Source-Test Normalization · QBank Hub</title>
+    <link rel="stylesheet" href="./app/taxonomy-browser.css?v=20260910-v3" />
+    <link rel="stylesheet" href="./app/source-test-normalization.css?v=20260911-v1" />
+  </head>
+  <body>
+    <header class="review-header">
+      <a class="brand" href="./index.html#/home">QBank <span>Hub</span></a>
+      <div><span class="internal-badge">Internal review</span><a class="back-link" href="./taxonomy.html">Canonical Taxonomy</a></div>
+    </header>
+    <main>
+      <section class="hero">
+        <p class="eyebrow">PrepLadder source metadata</p>
+        <h1>Source-Test Topic normalization</h1>
+        <p>Original Source Test names and ordering remain unchanged. This page reviews Topic evidence only; it does not classify questions.</p>
+        <div id="version-line" class="version-line">Loading taxonomy version…</div>
+      </section>
+      <div id="auth-message" class="notice" hidden></div>
+      <div id="error-message" class="notice error" hidden></div>
+      <section id="summary" class="summary-grid"></section>
+      <section class="panel">
+        <div class="panel-heading"><div><p class="eyebrow">Fast metadata review</p><h2>Source Test → canonical Topic prior</h2></div><strong id="review-progress" class="sample-size">Loading…</strong></div>
+        <p class="muted">Only 25–50 lightweight Source Test rows are requested per page. No question stems, options, explanations, or payload objects are loaded.</p>
+        <form id="filters" class="filter-grid source-filter-grid">
+          <label class="wide">Search title or UUID <input id="search" type="search" placeholder="e.g. Brachial Plexus" /></label>
+          <label>Subject <select id="subject"><option value="">All subjects</option></select></label>
+          <label>Status <select id="status"><option value="">All mappings</option><option value="confident">Confident</option><option value="ambiguous">Ambiguous</option><option value="unmapped">Unmapped</option></select></label>
+          <label>Review <select id="review-state"><option value="">All review states</option><option value="unreviewed">Unreviewed</option><option value="accepted">Accepted</option><option value="corrected">Corrected</option><option value="defer">Deferred</option></select></label>
+          <label>Rows <select id="page-size"><option value="25">25 per page</option><option value="50">50 per page</option></select></label>
+          <button id="clear" class="secondary" type="button">Clear</button>
+        </form>
+        <div id="loading" class="loading" hidden>Loading Source Test metadata…</div>
+        <div class="metadata-table"><table><thead><tr><th>Review</th><th>Source Test</th><th>Original title</th><th>Existing → canonical Subject</th><th>Proposed System</th><th>Proposed Topic</th><th>Confidence</th><th>Status</th></tr></thead><tbody id="rows"></tbody></table></div>
+        <div class="pagination"><button id="previous-page" type="button">Previous page</button><span id="page-line"></span><button id="next-page" type="button">Next page</button></div>
+      </section>
+      <section id="review-panel" class="panel source-review" hidden>
+        <div class="panel-heading"><div><p class="eyebrow">Review mapping</p><h2 id="review-title"></h2></div><button id="close-review" type="button">Close</button></div>
+        <div class="source-comparison">
+          <article>
+            <h3>Preserved source metadata</h3>
+            <dl id="source-fields" class="proposal-fields"></dl>
+          </article>
+          <article>
+            <h3>Proposed canonical Topic</h3>
+            <div id="proposed-path" class="proposal-path"></div>
+            <dl id="proposal-fields" class="proposal-fields"></dl>
+            <div id="candidate-list" class="candidate-list"></div>
+          </article>
+        </div>
+        <hr />
+        <h3>Reviewer decision</h3>
+        <div class="decision-grid source-decisions"><button type="button" data-decision="accepted">Accept</button><button type="button" data-decision="corrected">Correct</button><button type="button" data-decision="defer">Defer</button></div>
+        <div id="correction-fields" class="correction-fields" hidden>
+          <label>Canonical Subject <select id="correct-subject"></select></label>
+          <label>System <select id="correct-system"></select></label>
+          <label>Topic <select id="correct-topic"></select></label>
+          <div class="corrected-path"><strong>Corrected path</strong><span id="corrected-path"></span></div>
+        </div>
+        <label class="review-note">Optional reviewer note <textarea id="reviewer-note" rows="3" maxlength="2000"></textarea></label>
+        <button id="save-review" class="primary" type="button">Save review</button>
+        <p id="save-status" class="muted" aria-live="polite"></p>
+      </section>
+    </main>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.4"></script>
+    <script type="module" src="./app/source-test-normalization.js?v=20260911-v1"></script>
+  </body>
+</html>
