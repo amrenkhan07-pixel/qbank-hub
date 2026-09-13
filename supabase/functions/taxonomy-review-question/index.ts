@@ -45,9 +45,22 @@ Deno.serve(async (request: Request) => {
     return json({ error: "A valid question ID is required" }, 400);
   }
 
-  const membership = await db.from("canonical_taxonomy_draft_sample")
-    .select("question_id").eq("question_id", questionId).limit(1).maybeSingle();
-  if (membership.error || !membership.data) return json({ error: "Question is outside the review sample" }, 404);
+  // Keep question bodies lazy and authorize only IDs exposed by the bounded
+  // review cohorts. The current 1,000-question batch is intentionally not in
+  // the older 380-row draft sample.
+  const [batchMembership, legacyMembership] = await Promise.all([
+    db.rpc("qbank_canonical_batch_review_page", {
+      p_version_key: "canonical-medical-v1", p_page: 1, p_page_size: 25,
+      p_subject: null, p_confidence: null, p_review_state: null,
+      p_search: questionId, p_unresolved: null, p_negative: null,
+      p_content_override: null, p_pyq: null,
+    }),
+    db.from("canonical_taxonomy_draft_sample")
+      .select("question_id").eq("question_id", questionId).limit(1).maybeSingle(),
+  ]);
+  const inBatch = !batchMembership.error && Number(batchMembership.data?.total || 0) === 1;
+  const inLegacySample = !legacyMembership.error && Boolean(legacyMembership.data);
+  if (!inBatch && !inLegacySample) return json({ error: "Question is outside the review sample" }, 404);
 
   const questionResult = await db.from("questions").select(
     "id,question_text,correct_answer,explanation_html,question_images,explanation_images,video_url,audio_url,image_path,source_test_label,source_reference,source_subtopic_label,is_pyq,exam_year,exam_tags,platform_id,subject_id,platforms(name),subjects(name)"

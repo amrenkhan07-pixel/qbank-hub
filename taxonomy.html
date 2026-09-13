@@ -19,7 +19,7 @@
       <section class="hero">
         <p class="eyebrow">Canonical medical classification</p>
         <h1>Taxonomy review browser</h1>
-        <p>This draft is platform-independent. It does not change source tests, imported content, question assignments, or learner progress.</p>
+        <p>Review the exact 1,000-question PrepLadder cohort after intent-aware reclassification. Source content and learner progress remain unchanged.</p>
         <div id="version-line" class="version-line" aria-live="polite">Loading taxonomy version…</div>
       </section>
 
@@ -41,14 +41,17 @@
           <div><p class="eyebrow">Draft classification review</p><h2>Read the question, compare, then decide</h2></div>
           <span id="sample-size" class="sample-size">Loading…</span>
         </div>
-        <p class="muted">A bounded sample is paginated on the server. Full question content loads only when you open one row. Decisions are saved as draft review overrides—not production assignments.</p>
+        <p class="muted">The fixed 1,000-question cohort is paginated on the server. Full content loads only when one row opens. Decisions remain versioned draft review overrides.</p>
         <div id="metrics" class="summary-grid compact"></div>
         <div class="review-progress" aria-live="polite"><strong id="review-progress">Reviewed 0 / 0</strong><span id="page-status"></span></div>
         <form id="review-filters" class="filter-grid">
           <label class="wide">Question ID or stem <input id="sample-search" type="search" placeholder="Search the bounded review sample" /></label>
           <label>Subject <select id="sample-subject"><option value="">All subjects</option></select></label>
-          <label>Classifier status <select id="sample-status"><option value="">All results</option><option value="classified">Classified</option><option value="ambiguous">Ambiguous</option><option value="unclassifiable">Unclassifiable</option></select></label>
+          <label>Resolution <select id="sample-status"><option value="">All results</option><option value="resolved">Resolved</option><option value="unresolved">Unresolved only</option></select></label>
           <label>Confidence <select id="sample-confidence"><option value="">All confidence</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option><option value="none">None</option></select></label>
+          <label>Polarity <select id="sample-negative"><option value="">All questions</option><option value="true">EXCEPT / NOT only</option><option value="false">Standard only</option></select></label>
+          <label>Content override <select id="sample-override"><option value="">All</option><option value="true">Overrides only</option><option value="false">No override</option></select></label>
+          <label>PYQ <select id="sample-pyq"><option value="">All</option><option value="true">PYQ only</option><option value="false">Non-PYQ only</option></select></label>
           <label>Review decision <select id="sample-review"><option value="">All review states</option><option value="unreviewed">Only unreviewed</option><option value="accepted">Accepted</option><option value="needs_correction">Needs correction</option><option value="unclassifiable">Unclassifiable</option><option value="defer">Deferred</option></select></label>
           <label>Rows <select id="page-size"><option value="25">25 per page</option><option value="50">50 per page</option></select></label>
           <button class="secondary" id="clear-filters" type="button">Clear filters</button>
@@ -58,7 +61,8 @@
           <button id="next-question" type="button">Next question</button>
           <button id="next-unreviewed" type="button">Next unreviewed</button>
           <button id="next-low" type="button">Next low-confidence</button>
-          <button id="next-ambiguous" type="button">Next ambiguous</button>
+          <button id="next-unresolved" type="button">Next unresolved</button>
+          <button id="next-negative" type="button">Next EXCEPT / NOT</button>
         </div>
         <div id="review-loading" class="loading" hidden>Loading review page…</div>
         <div class="table-wrap metadata-table">
@@ -107,6 +111,7 @@
                 <label>System <select id="correct-system"><option value="">No system / select</option></select></label>
                 <label>Topic <select id="correct-topic"><option value="">Select topic</option></select></label>
                 <label>Subtopic <select id="correct-subtopic"><option value="">No subtopic / select</option></select></label>
+                <label>Canonical Concept <select id="correct-concept"><option value="">No concept / select</option></select></label>
                 <div class="corrected-path"><strong>Corrected full path</strong><span id="corrected-path">Choose a subject and topic</span></div>
               </div>
               <label class="secondary-search">Optional secondary concept <input id="secondary-concept" type="search" placeholder="Type at least 2 letters" autocomplete="off" /><select id="secondary-results" hidden></select></label>
@@ -119,6 +124,6 @@
       </section>
     </main>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.4"></script>
-    <script type="module" src="./app/taxonomy-browser.js?v=20260910-v4"></script>
+    <script type="module" src="./app/taxonomy-browser.js?v=20260913-batch-v2"></script>
   </body>
 </html>

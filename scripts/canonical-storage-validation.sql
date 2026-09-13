@@ -16,7 +16,7 @@ with checks as (
     abs(126 - count(*)), format('%s learner-state rows', count(*))
   from public.user_question_state
   union all select 'classification.still_authorized_batches_only',
-    abs(1142 - count(*)), format('%s current primary assignments', count(*))
+    abs(1145 - count(*)), format('%s current primary assignments', count(*))
   from public.canonical_question_taxonomy_assignments
   where is_current and is_primary
   union all select 'classification.exact_authorized_question_versions',
@@ -35,7 +35,7 @@ with checks as (
     format('%s/%s concepts linked', count(*) filter (where classification_run_id is not null), count(*))
   from public.canonical_question_concept_assignments
   union all select 'classification.sparse_evidence_matches_batch',
-    abs(260 - count(*)), format('%s sparse evidence rows', count(*))
+    abs(518 - count(*)), format('%s sparse evidence rows across preserved and current batch generations', count(*))
   from public.canonical_assignment_review_evidence
   union all select 'classification.compact_source_map_once',
     abs(1108 - count(*)), format('%s compact Source-Test mappings', count(*))

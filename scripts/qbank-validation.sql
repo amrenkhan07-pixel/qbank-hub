@@ -569,7 +569,7 @@ checks(check_name, failures, detail) as (
   from public.canonical_taxonomy_nodes n join public.canonical_taxonomy_versions v on v.id=n.taxonomy_version_id
   where v.version_key='canonical-medical-v1' and n.node_type='subject'
 
-  union all select 'taxonomy_v1.assignments_authorized_bounded', case when count(*) filter(where a.is_current and a.is_primary)=1142 and count(*)=1166 then 0 else 1 end,
+  union all select 'taxonomy_v1.assignments_authorized_bounded', case when count(*) filter(where a.is_current and a.is_primary)=1145 and count(*)=2170 then 0 else 1 end,
     format('%s current primary assignments; %s total path assignments',count(*) filter(where a.is_current and a.is_primary),count(*))
   from public.canonical_question_taxonomy_assignments a join public.canonical_taxonomy_versions v on v.id=a.taxonomy_version_id
   where v.version_key='canonical-medical-v1'
@@ -578,7 +578,7 @@ checks(check_name, failures, detail) as (
   from public.canonical_question_taxonomy_assignments a join public.canonical_taxonomy_versions v on v.id=a.taxonomy_version_id
   left join public.canonical_taxonomy_assignment_pilot p on p.canonical_question_id=a.canonical_question_id and p.taxonomy_version_id=a.taxonomy_version_id
   where v.version_key='canonical-medical-v1' and p.question_id is null
-    and a.classification_run_id is distinct from (select id from public.canonical_classification_runs where scope_key='canonical-medical-v1-prepladder-batch-1000-01')
+    and not exists (select 1 from public.canonical_classification_runs r where r.id=a.classification_run_id and r.scope_key in ('canonical-medical-v1-prepladder-batch-1000-01','canonical-medical-v1-prepladder-batch-1000-quality-v2'))
 
   union all select 'taxonomy_v1.review_rpcs',
     case when to_regprocedure('public.qbank_taxonomy_review(text)') is not null

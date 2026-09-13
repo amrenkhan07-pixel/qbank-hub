@@ -31,7 +31,7 @@ with target_run as (
     from run_questions rq join public.canonical_question_versions cv on cv.canonical_question_id=rq.canonical_question_id
     join public.questions q on q.id=cv.question_id join public.subjects s on s.id=q.subject_id
   union all select 'batch.total_versions_are_pilot_plus_1000',abs(1150-count(*)),format('%s canonical version links',count(*)) from public.canonical_question_versions
-  union all select 'batch.total_primary_is_pilot_plus_batch',abs(1142-count(*)),format('%s total current primary paths',count(*))
+  union all select 'batch.total_primary_is_pilot_plus_batch',abs(1145-count(*)),format('%s total current primary paths',count(*))
     from public.canonical_question_taxonomy_assignments where is_current and is_primary
   union all select 'batch.no_duplicate_primary',count(*),format('%s duplicate current primaries',count(*)) from (
     select canonical_question_id,taxonomy_version_id from public.canonical_question_taxonomy_assignments
