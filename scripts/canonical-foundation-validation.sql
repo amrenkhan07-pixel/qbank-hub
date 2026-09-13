@@ -14,10 +14,10 @@ with checks as (
     )
 
   union all
-  select 'canonical.question_identity_and_assignments_remain_pilot_bounded',
-    abs(150 - (select count(*) from public.canonical_questions))
-      + abs(150 - (select count(*) from public.canonical_question_versions))
-      + abs(164 - (select count(*) from public.canonical_question_taxonomy_assignments)),
+  select 'canonical.question_identity_and_assignments_remain_authorized_bounded',
+    abs(1150 - (select count(*) from public.canonical_questions))
+      + abs(1150 - (select count(*) from public.canonical_question_versions))
+      + abs(1166 - (select count(*) from public.canonical_question_taxonomy_assignments)),
     format('%s identities; %s version links; %s taxonomy paths',
       (select count(*) from public.canonical_questions),
       (select count(*) from public.canonical_question_versions),

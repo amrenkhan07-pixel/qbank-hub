@@ -15,12 +15,12 @@ with checks as (
   union all select 'learner.state_unchanged',
     abs(126 - count(*)), format('%s learner-state rows', count(*))
   from public.user_question_state
-  union all select 'classification.still_pilot_only',
-    abs(150 - count(*)), format('%s current primary assignments', count(*))
+  union all select 'classification.still_authorized_batches_only',
+    abs(1142 - count(*)), format('%s current primary assignments', count(*))
   from public.canonical_question_taxonomy_assignments
   where is_current and is_primary
-  union all select 'classification.no_new_question_versions',
-    abs(150 - count(*)), format('%s canonical question versions', count(*))
+  union all select 'classification.exact_authorized_question_versions',
+    abs(1150 - count(*)), format('%s canonical question versions', count(*))
   from public.canonical_question_versions
   union all select 'classification.pilot_run_registered_once',
     abs(1 - count(*)), format('%s pilot run records', count(*))
@@ -34,11 +34,11 @@ with checks as (
     count(*) filter (where classification_run_id is null),
     format('%s/%s concepts linked', count(*) filter (where classification_run_id is not null), count(*))
   from public.canonical_question_concept_assignments
-  union all select 'classification.sparse_evidence_empty_before_scale',
-    count(*), format('%s sparse evidence rows', count(*))
+  union all select 'classification.sparse_evidence_matches_batch',
+    abs(260 - count(*)), format('%s sparse evidence rows', count(*))
   from public.canonical_assignment_review_evidence
-  union all select 'classification.compact_source_map_empty_before_approval',
-    count(*), format('%s published Source-Test mappings', count(*))
+  union all select 'classification.compact_source_map_once',
+    abs(1108 - count(*)), format('%s compact Source-Test mappings', count(*))
   from public.canonical_source_test_topic_assignments
   union all select 'draft.sample_preserved',
     abs(380 - count(*)), format('%s draft sample rows', count(*))

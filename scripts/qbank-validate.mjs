@@ -303,6 +303,10 @@ const canonicalStorageIndexMigration = readFileSync(resolve(root, 'supabase/migr
 const canonicalStorageValidation = readFileSync(resolve(root, 'scripts/canonical-storage-validation.sql'), 'utf8');
 const backupManifest = readFileSync(resolve(root, 'scripts/qbank-backup-manifest.sql'), 'utf8');
 const storageRecoveryPlan = readFileSync(resolve(root, 'docs/canonical-storage-and-recovery-plan.md'), 'utf8');
+const canonicalBatchMigration = readFileSync(resolve(root, 'supabase/migrations/20260913110000_canonical_classification_batch_commit.sql'), 'utf8');
+const canonicalBatchClassifier = readFileSync(resolve(root, 'scripts/canonical_batch_classifier.py'), 'utf8');
+const canonicalBatchValidation = readFileSync(resolve(root, 'scripts/canonical-batch-validation.sql'), 'utf8');
+const canonicalBatchLinkMethodMigration = readFileSync(resolve(root, 'supabase/migrations/20260913112000_canonical_classifier_batch_link_method.sql'), 'utf8');
 const taxonomyV1Rows = flattenTaxonomy();
 check('frontend.canonical_learning_state_table', !appSource.includes("from('question_learning_state')"), 'expected user_question_state');
 check('frontend.live_session_total_columns', !/\bquestion_count\b|\bcorrect_count\b/.test(appSource), 'expected total_questions/total_correct');
@@ -447,9 +451,19 @@ check('canonical_storage.sparse_exception_evidence', canonicalStorageMigration.i
 check('canonical_storage.compact_source_test_mapping', canonicalStorageMigration.includes('canonical_source_test_topic_assignments') && canonicalStorageMigration.includes('canonical_source_test_assignment_primary_uidx') && !/source_test_(name|title)\s+text/i.test(canonicalStorageMigration));
 check('canonical_storage.duplicate_index_cleanup_is_explicit', ['questions_platform_source_question_uidx','test_answers_session_idx','idx_user_state_bookmarked','personal_tags_user_name_idx'].every((name) => canonicalStorageMigration.includes(`drop index if exists public.${name}`)));
 check('canonical_storage.composite_foreign_keys_are_indexed', ['canonical_taxonomy_assignment_run_version_idx','canonical_concept_assignment_run_version_idx','canonical_assignment_evidence_run_version_idx','canonical_source_test_assignment_run_version_idx','canonical_source_test_assignment_topic_version_idx'].every((name) => canonicalStorageIndexMigration.includes(name)));
-check('canonical_storage.live_invariant_suite_present', canonicalStorageValidation.includes('classification.still_pilot_only') && canonicalStorageValidation.includes('storage.duplicate_indexes_removed') && canonicalStorageValidation.includes('security.new_tables_are_service_only'));
+check('canonical_storage.live_invariant_suite_present', canonicalStorageValidation.includes('classification.still_authorized_batches_only') && canonicalStorageValidation.includes('storage.duplicate_indexes_removed') && canonicalStorageValidation.includes('security.new_tables_are_service_only'));
 check('canonical_storage.backup_manifest_is_read_only', backupManifest.includes('payload_manifest_md5') && !/\b(insert|update|delete|alter|drop|truncate)\b/i.test(backupManifest));
 check('canonical_storage.recovery_plan_has_restore_drill', storageRecoveryPlan.includes('Quarterly, restore') && storageRecoveryPlan.includes('Never test recovery against production'));
+check('canonical_batch.exactly_1000_transaction_gate', canonicalBatchMigration.includes("jsonb_array_length(p_batch) <> 1000") && canonicalBatchMigration.includes("count(distinct (item->>'question_id')::uuid)"));
+check('canonical_batch.prepladder_usable_nonoverlap_gate', canonicalBatchMigration.includes("lower(platform.name) <> 'prepladder'") && canonicalBatchMigration.includes('Batch overlaps an existing canonical question version'));
+check('canonical_batch.protected_data_guard', ['questions','question_options','qbank_source_occurrences','question_attempts','test_sessions','user_question_state'].every((table) => canonicalBatchMigration.includes(table)) && canonicalBatchMigration.includes('Protected source or learner data changed'));
+check('canonical_batch.no_source_content_copies', canonicalBatchMigration.includes('Classification payload must not copy source content') && !/insert into public\.(questions|question_options|qbank_question_payloads|qbank_source_occurrences)/i.test(canonicalBatchMigration));
+check('canonical_batch.evidence_order_and_distractor_exclusion', ['proposal_topic_id','stem_text','correct_answer_text','positive_explanation_text'].every((field) => canonicalBatchClassifier.includes(field)) && canonicalBatchClassifier.includes('positive_explanation('));
+check('canonical_batch.secondary_paths_are_reviewed_not_probabilistic', canonicalBatchClassifier.includes('REVIEWED_SECONDARY_CONCEPTS') && canonicalBatchClassifier.includes('explicit review decisions, never probability') && canonicalBatchMigration.includes("medically_meaningful=true"));
+check('canonical_batch.sparse_evidence_only', ['low_confidence','ambiguous','content_override','human_review'].every((kind) => canonicalBatchClassifier.includes(`"${kind}"`)) && canonicalBatchMigration.includes('canonical_assignment_review_evidence'));
+check('canonical_batch.service_only_transactional_rpc', /security invoker/i.test(canonicalBatchMigration) && canonicalBatchMigration.includes("current_user not in ('service_role', 'postgres')") && /revoke all on function[\s\S]*from public, anon, authenticated/i.test(canonicalBatchMigration));
+check('canonical_batch.full_live_validation_present', canonicalBatchValidation.includes('batch.exactly_1000_processed') && canonicalBatchValidation.includes('learner.state_unchanged') && canonicalBatchValidation.includes('relationships.still_inactive'));
+check('canonical_batch.link_method_is_explicitly_versioned', canonicalBatchLinkMethodMigration.includes("'classifier_batch'") && canonicalBatchMigration.includes("'classifier_batch'"));
 check('frontend.hidden_taxonomy_rows_not_displayed', /row\.hidden = !visible;[\s\S]*row\.style\.display = visible \? '' : 'none'/.test(appSource));
 check('frontend.hidden_attribute_overrides_check_row_display', /html\s+\[hidden\]\s*\{\s*display:\s*none\s*!important;?\s*\}/.test(stylesSource));
 check('browser.taxonomy_dom_regression_installed', appSource.includes('runTaxonomyDomRegression')
