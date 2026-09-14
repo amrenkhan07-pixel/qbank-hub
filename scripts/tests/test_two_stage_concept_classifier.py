@@ -24,6 +24,7 @@ class TwoStageConceptClassifierTests(unittest.TestCase):
 
     def test_leading_scaffold_is_removed(self):
         self.assertEqual(clean_label("classic example of delirium tremens"), "delirium tremens")
+        self.assertEqual(clean_label("pure red cell alasia"), "pure red cell aplasia")
 
     def test_equivalence_is_subject_bounded(self):
         self.assertEqual(label_key("Chiari type-1 malformation"), "chiari type 1 malformation")

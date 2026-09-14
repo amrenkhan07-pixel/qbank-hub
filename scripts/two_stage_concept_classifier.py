@@ -51,6 +51,7 @@ def clean_label(value: str | None) -> str | None:
     value = re.sub(r"^(?:a )?classic example of\s+", "", value, flags=re.I)
     value = re.sub(r"^(?:a )?case of\s+", "", value, flags=re.I)
     value = re.sub(r"^location of\s+", "", value, flags=re.I)
+    value = re.sub(r"\balasia\b", "aplasia", value, flags=re.I)
     value = re.sub(r"\b([A-Za-z]+(?:-[A-Za-z]+)*)\s+\1\b", r"\1", value, flags=re.I)
     words = value.split()
     low = value.lower()
