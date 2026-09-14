@@ -4,7 +4,7 @@ import argparse, json, urllib.parse
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 
-REPORT = Path("/tmp/qbank-two-stage-concept-benchmark-v1.json")
+REPORT = Path("/tmp/qbank-two-stage-review-v1.json")
 PAGE = Path(__file__).parents[1] / "two-stage-concept-review.html"
 
 
@@ -22,7 +22,8 @@ class Handler(SimpleHTTPRequestHandler):
             self.end_headers(); self.wfile.write(body); return
         if url.path != "/api/items": self.send_error(404); return
         report = json.loads(REPORT.read_text())
-        rows = report["review_queue"]
+        rows = ([{"kind": "cluster", **x} for x in report["ambiguous_clusters"]] +
+                [{"kind": "assignment", **x} for x in report["suspicious_assignments"]])
         query = urllib.parse.parse_qs(url.query)
         page = max(1, int(query.get("page", ["1"])[0])); size = 20
         self.reply({"total": len(rows), "page": page,
