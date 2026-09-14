@@ -4,7 +4,7 @@ import argparse, json, urllib.parse
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 
-REPORT = Path("/tmp/qbank-two-stage-review-v1.json")
+REPORT = Path("/tmp/qbank-target-adjudicator-review-v1.json")
 PAGE = Path(__file__).parents[1] / "two-stage-concept-review.html"
 
 
