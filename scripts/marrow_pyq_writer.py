@@ -24,6 +24,7 @@ EXPECTED = {"staged_occurrences": 5938, "source_tests": 342,
 EXPECTED_REVIEW = 314
 EXPECTED_SUBJECTS = 19
 DEFAULT_URL = "https://flulljensjugfcxmeczu.supabase.co"
+PROJECT_REF = "flulljensjugfcxmeczu"
 
 
 def load_artifact(path: Path) -> dict:
@@ -228,10 +229,65 @@ def api_get(url: str, key: str, table: str, query: str) -> tuple[list, int]:
     return rows, count
 
 
+def independent_pyq_plan(doc: dict) -> dict:
+    """Validate the staged V1 as independent Marrow content, without canonical merges."""
+    tests = {row["id"]: row for row in doc["source_tests"]}
+    versions = {row["question_id"]: row for row in doc["content_versions"]}
+    objects = {row["id"]: row for row in doc["payload_objects"]}
+    if len(tests) != 342 or len(versions) != 5914 or len(objects) != 342:
+        raise ValueError("duplicate or missing production entity key")
+    hierarchy = Counter()
+    positions = set()
+    reviews = 0
+    for row in doc["occurrences"]:
+        test = tests[row["source_test_uuid"]]
+        version = versions[row["question_id"]]
+        if (row["subject"], row["exam_family"], row["year"]) != (test["subject"], test["exam_family"], test["year"]):
+            raise ValueError("occurrence/test subject or exam mismatch")
+        if row["content_sha256"] != version["content_sha256"]:
+            raise ValueError("occurrence/version content mismatch")
+        position = (test["id"], row["question_order_within_test"])
+        if position in positions:
+            raise ValueError("duplicate source-test position")
+        positions.add(position)
+        hierarchy[(row["subject"], row["exam_family"], row["year"])] += 1
+        reviews += row["operation"] == "REVIEW_IDENTITY_CANDIDATE"
+    if reviews != EXPECTED_REVIEW or len(positions) != 5938:
+        raise ValueError("review or occurrence plan mismatch")
+    for row in versions.values():
+        payload = row["payload"]
+        if row["payload_object_id"] not in objects or row["first_source_test_uuid"] not in tests:
+            raise ValueError("version object/test reference missing")
+        if not payload.get("question_html") or not payload.get("explanation_html") or not payload.get("correct_keys") or not 2 <= len(payload.get("options") or []) <= 8:
+            raise ValueError("incomplete question payload")
+    return {
+        "mode": "independent_marrow_pyq_no_prep_or_canonical_merge",
+        "subjects": len({row["subject"] for row in tests.values()}),
+        "exam_year_groups": len(hierarchy),
+        "review_occurrences_kept_separate": reviews,
+        "review_versions_kept_separate": sum(bool(row["review_reason"]) for row in versions.values()),
+        "table_deltas": {
+            "qbank_hybrid_import_runs": 19,
+            "qbank_source_tests": 342,
+            "storage_objects": 342,
+            "qbank_payload_objects": 342,
+            "questions": 5914,
+            "qbank_question_payloads": 5914,
+            "qbank_source_occurrences": 5938,
+            "canonical_questions": 0,
+            "canonical_question_versions": 0,
+        },
+    }
+
+
 def production_dry_run(doc: dict, url: str, key: str) -> dict:
     if not key:
         raise ValueError("SUPABASE_SERVICE_ROLE_KEY is required for read-only dry-run")
     url = url.rstrip("/")
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https" or parsed.hostname != f"{PROJECT_REF}.supabase.co":
+        raise ValueError("wrong production Supabase project")
+    plan = independent_pyq_plan(doc)
     platforms, _ = api_get(url, key, "platforms", "select=id,name&name=eq.Marrow&limit=2")
     if len(platforms) != 1:
         raise ValueError("Marrow platform must resolve uniquely")
@@ -261,12 +317,13 @@ def production_dry_run(doc: dict, url: str, key: str) -> dict:
             "existing_marrow_tests": tests_count, "existing_marrow_versions": payload_count,
             "existing_total_payloads": prep_count,
             "expected_new_tests": 342, "expected_new_versions": 5914,
-            "expected_new_occurrences": 5938, "expected_new_identity_proposals": 5852,
+            "expected_new_occurrences": 5938, "staged_canonical_identity_proposals_not_used": 5852,
             "review_candidates_kept_separate": 314,
             "matched_prepladder_ids_verified": len(found_ids),
             "preimport_counts": protected,
+            "independent_pyq_plan": plan,
             "production_apply_ready": False,
-            "reason": "No branch-validated Postgres apply adapter or rollback yet"}
+            "reason": "No Marrow PostgreSQL apply/rollback RPC or PYQ test hierarchy yet"}
 
 
 def main() -> None:

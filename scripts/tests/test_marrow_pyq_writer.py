@@ -7,7 +7,7 @@ from collections import Counter
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.marrow_pyq_writer import (BATCH_ID, apply_local, backup_manifest, load_artifact,
+from scripts.marrow_pyq_writer import (BATCH_ID, apply_local, backup_manifest, independent_pyq_plan, load_artifact,
                                       open_local, production_dry_run, rollback_local, table_counts)
 
 ARTIFACT = Path(__file__).resolve().parents[2] / "import-reports/marrow-pyq-stage-v1.json.gz"
@@ -39,6 +39,16 @@ class MarrowPyqWriterTests(unittest.TestCase):
         bad.write_bytes(ARTIFACT.read_bytes() + b"x")
         with self.assertRaisesRegex(ValueError, "checksum"):
             load_artifact(bad)
+
+    def test_independent_pyq_production_mapping(self):
+        plan = independent_pyq_plan(self.doc)
+        self.assertEqual(plan["mode"], "independent_marrow_pyq_no_prep_or_canonical_merge")
+        self.assertEqual(plan["subjects"], 19)
+        self.assertEqual(plan["review_occurrences_kept_separate"], 314)
+        self.assertEqual(plan["review_versions_kept_separate"], 311)
+        self.assertEqual(plan["table_deltas"]["questions"], 5914)
+        self.assertEqual(plan["table_deltas"]["qbank_source_occurrences"], 5938)
+        self.assertEqual(plan["table_deltas"]["canonical_question_versions"], 0)
 
     def test_full_import_rerun_rollback_reimport(self):
         baseline = backup_manifest(self.conn, self.path, self.doc)
@@ -93,12 +103,18 @@ class MarrowPyqWriterTests(unittest.TestCase):
             if table == "qbank_question_payloads": return ([], 22844)
             return ([], 1150)
         with patch("scripts.marrow_pyq_writer.api_get", side_effect=fake_get):
-            result = production_dry_run(self.doc, "https://example.test", "secret")
+            result = production_dry_run(self.doc, "https://flulljensjugfcxmeczu.supabase.co", "secret")
         self.assertEqual(result["writes"], 0)
         self.assertFalse(result["production_apply_ready"])
         self.assertEqual(result["expected_new_occurrences"], 5938)
         self.assertEqual(result["matched_prepladder_ids_verified"], 384)
         self.assertEqual(len(calls), 20)
+
+    def test_production_project_guard_precedes_network(self):
+        with patch("scripts.marrow_pyq_writer.api_get") as get:
+            with self.assertRaisesRegex(ValueError, "wrong production"):
+                production_dry_run(self.doc, "https://different.supabase.co", "secret")
+            get.assert_not_called()
 
 
 if __name__ == "__main__":
