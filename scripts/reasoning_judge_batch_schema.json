@@ -1,0 +1,22 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "question_id": {"type": "string"},
+          "primary_correct": {"type": "boolean"},
+          "broader_correct": {"type": "boolean"},
+          "negative_flag_correct": {"type": "boolean"},
+          "failure_pattern": {"type": ["string", "null"]}
+        },
+        "required": ["question_id", "primary_correct", "broader_correct", "negative_flag_correct", "failure_pattern"]
+      }
+    }
+  },
+  "required": ["items"]
+}

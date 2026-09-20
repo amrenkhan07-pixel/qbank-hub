@@ -1,0 +1,23 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "question_id": {"type": "string"},
+          "subject": {"type": "string"},
+          "primary_tested_concept": {"type": ["string", "null"]},
+          "broader_concept": {"type": ["string", "null"]},
+          "confidence": {"type": "string", "enum": ["HIGH", "MEDIUM", "LOW"]},
+          "negative_question": {"type": "boolean"}
+        },
+        "required": ["question_id", "subject", "primary_tested_concept", "broader_concept", "confidence", "negative_question"]
+      }
+    }
+  },
+  "required": ["items"]
+}

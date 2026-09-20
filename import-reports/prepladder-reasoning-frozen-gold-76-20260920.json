@@ -1,0 +1,1527 @@
+{
+  "version": "tested-concept-reasoning-v1",
+  "read_only": true,
+  "gold_policy": "Independent clinician-authored primary/broader labels required; prior classifier labels excluded.",
+  "items": [
+    {
+      "question_id": "016d29d6-2a27-5e81-a7d7-b27a3f1ce0b0",
+      "subject": "Psychiatry",
+      "source_test": "012 Previous Year Questions",
+      "stem": "A patient with low mood, no mood to eat, always sleeping, and low energy presented to you with such symptoms for 2 months. She had similar symptoms 5 months ago, which subsided with medications. Identify the disorder.",
+      "options": "{'html': 'Depre\\u200bssion', 'is_correct': False, 'key': 'A'} | {'html': 'Recurrent depressive disor\\u200bder', 'is_correct': True, 'key': 'B'} | {'html': 'Dyst\\u200bhymia', 'is_correct': False, 'key': 'C'} | {'html': 'Cyclo\\u200bthymia', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "B. Recurrent depressive disorder",
+      "explanation": "Recurrent depressive disorder Correct Answer: B) Recurrent depressive disorder Explanation: The patient presents with low mood, loss of appetite, excessive sleep, and low energy for the past 2 months, along with a history of a similar episode 5 months ago that resolved with medication. This pattern is consistent with Recurrent Depressive Disorder , which is characterised by two or more depressive episodes with a minimum of 2 months between episodes. Depression (single episode) (Option A) refers to a single occurrence of a major depressive episode without any prior history.",
+      "negative_question": false,
+      "is_pyq": true,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Diagnosis of recurrent depressive disorder",
+        "broader": "Depressive disorders"
+      },
+      "strata": [
+        "known_regression"
+      ]
+    },
+    {
+      "question_id": "086a8deb-69b3-5349-a006-9f9fbf1a77a8",
+      "subject": "Ophthalmology",
+      "source_test": "004 Lens And Disorders   Ii",
+      "stem": "During phacoemulsification for age-related cataract, which irrigating solution is considered most appropriate to maintain corneal endothelial health and intraocular tissue physiology?",
+      "options": "{'html': 'Normal\\u200b saline', 'is_correct': False, 'key': 'A'} | {'html': 'Ringer \\u200blactate', 'is_correct': False, 'key': 'B'} | {'html': 'Balanced salt solution (BS\\u200bS)', 'is_correct': False, 'key': 'C'} | {'html': 'Balanced salt solution plu\\u200bs glutathione', 'is_correct': True, 'key': 'D'}",
+      "correct_answer": "D. Balanced salt solution plus glutathione",
+      "explanation": "Balanced salt solution plus glutathione Correct Answer: D) Balanced salt solution plus glutathione Explanation: An ideal intraocular irrigating solution should closely mimic aqueous humour in pH, osmolarity, and ionic composition , and provide metabolic support to the corneal endothelium. Balanced salt solution plus glutathione contains bicarbonate, glucose, and glutathione, which help maintain endothelial pump function, reduce oxidative stress, and preserve corneal clarity during phaco. Hence, it is the best irrigating fluid.",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Selection of intraocular irrigating solution for phacoemulsification",
+        "broader": "Cataract surgery"
+      },
+      "strata": [
+        "known_regression"
+      ]
+    },
+    {
+      "question_id": "0ad6da3f-79ae-5846-99ae-ace7dea13e1d",
+      "subject": "Medicine",
+      "source_test": "022 Diseases Of Thyroid",
+      "stem": "An elderly woman is brought to the emergency department with altered behavior after a week of poor oral intake. She has a known history of hypothyroidism and has been irregular with her medications. On examination, she is bradycardic and hypotensive. Arterial blood gas analysis reveals respiratory acidosis, and serum sodium levels are low. Which of the following findings is least likely to be present in this patient?",
+      "options": "{'html': 'Hypogl\\u200cycemia', 'is_correct': False, 'key': 'A'} | {'html': 'Hypert\\u200chermia', 'is_correct': True, 'key': 'B'} | {'html': 'Rhabdom\\u200cyolysis', 'is_correct': False, 'key': 'C'} | {'html': 'Hyper\\u200ccapnia', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "B. Hyperthermia",
+      "explanation": "Hyperthermia Correct Answer: B) Hyperthermia Explanation: Myxedema coma is the life-threatening extreme of hypothyroidism and carries a 20-40% mortality rate , even with intensive treatment. Importantly, clinical outcomes are independent of serum T4 and TSH levels. Clinical manifestations include: Reduced level of consciousness ranging from confusion → somnolence → coma Seizures and other abnormal CNS signs Profound hypothermia (may reach 23°C) Hypoventilation leading to hypercapnia (Option D) and hypoxemia Severe hypothyroidism → ↓ respiratory drive + muscle weakness → CO₂ retention (respiratory acidosis).",
+      "negative_question": true,
+      "is_pyq": false,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Clinical manifestations of myxedema coma",
+        "broader": "Severe hypothyroidism"
+      },
+      "strata": [
+        "known_regression"
+      ]
+    },
+    {
+      "question_id": "185c16f2-8c09-52d9-9058-08d5820be8f9",
+      "subject": "Microbiology",
+      "source_test": "009 Staphylococcus   Streptococcus   I",
+      "stem": "A 28-year-old male presents with a purulent discharge from the wound. The laboratory identifies the causative bacteria to be gram-positive cocci, non-motile, non-spore-forming, catalase-positive, and coagulase-positive. Which notable characteristic of this organism is seen when cultured on nutrient agar helps in diagnosis?",
+      "options": "{'html': 'Pink c\\u200colonies', 'is_correct': False, 'key': 'A'} | {'html': 'Blue-gree\\u200cn pigment', 'is_correct': False, 'key': 'B'} | {'html': 'Matt-finely granular colon\\u200cy', 'is_correct': False, 'key': 'C'} | {'html': 'Golden pigme\\u200cnt production', 'is_correct': True, 'key': 'D'}",
+      "correct_answer": "D. Golden pigment production",
+      "explanation": "Golden pigment production Answer: D) Golden pigment production Explanation: On nutrient agar, after 24 hours of incubation, Staphylococcus aureus produces golden-yellow pigment. Key features of staphylococcus aureus: Morphology Gram-positive bacteria Spherical cocci, arranged in grape-like clusters Non-motile Non-spore forming Cultural characteristics Nutrient agar: Large colonies (2-4 mm in diameter), convex, smooth, shiny, opaque, and easily emulsifiable. They produce golden-yellow pigment (Option D), which does not diffuse into the medium.",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": true,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Nutrient agar colony pigmentation of Staphylococcus aureus",
+        "broader": "Cultural identification of staphylococci"
+      },
+      "strata": [
+        "known_regression"
+      ]
+    },
+    {
+      "question_id": "4c25a524-1d0f-50b5-93cf-e8b4c39c1839",
+      "subject": "Anaesthesia",
+      "source_test": "007 Muscle Relaxants",
+      "stem": "During surgery, a patient receives a long-acting steroidal non-depolarizing muscle relaxant that is mainly excreted by the kidneys. Which drug is likely used?",
+      "options": "{'html': 'Vecur\\u200conium', 'is_correct': False, 'key': 'A'} | {'html': 'Rocur\\u200conium', 'is_correct': False, 'key': 'B'} | {'html': 'Pancu\\u200cronium', 'is_correct': True, 'key': 'C'} | {'html': 'Gall\\u200camine', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "C. Pancuronium",
+      "explanation": "Pancuronium Correct answer: C) Pancuronium Explanation: Pancuronium is an aminosteroid muscle relaxant with a long duration of action. It is primarily excreted through the kidneys , making it suitable for patients with normal kidney function. Its limited metabolism means it maintains its effectiveness throughout the surgical procedure.",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Identification of pancuronium by duration, structure, and renal excretion",
+        "broader": "Non-depolarizing neuromuscular blockers"
+      },
+      "strata": [
+        "known_regression"
+      ]
+    },
+    {
+      "question_id": "6196af7c-40fa-5370-b3b4-10a72d498be1",
+      "subject": "Community Medicine",
+      "source_test": "011 National Immunization Schedule  Delayed Immunization  Cold Chain",
+      "stem": "A vaccination campaign in a remote village with limited electricity access. Which of the following vaccines is most susceptible to damage if not properly maintained during transport?",
+      "options": "{'html': 'Hepatitis\\u200c B vaccine', 'is_correct': False, 'key': 'A'} | {'html': 'Pentavale\\u200cnt vaccine', 'is_correct': False, 'key': 'B'} | {'html': 'Oral Polio V\\u200caccine (OPV)', 'is_correct': True, 'key': 'C'} | {'html': 'Tetanus-Diphtheria vaccine\\u200c', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "C. Oral Polio Vaccine (OPV)",
+      "explanation": "Oral Polio Vaccine (OPV) Correct Answer: C) Oral Polio Vaccine (OPV) Explanation: The scenario mentions a remote village, which indicates challenges in maintaining the cold chain during transport due to its limited electricity access. OPV, being highly heat-sensitive, is most susceptible to damage. Characteristics Heat-Sensitive Vaccines Freeze-Sensitive Vaccines Definition Vaccines that lose potency (effectiveness) when exposed to temperatures higher than their recommended storage temperature of +2°C to +8°C.",
+      "negative_question": true,
+      "is_pyq": false,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Heat sensitivity of vaccines",
+        "broader": "Vaccine cold-chain management"
+      },
+      "strata": [
+        "known_regression"
+      ]
+    },
+    {
+      "question_id": "742d05f3-85a8-5509-8660-aa9cdaa795ad",
+      "subject": "Pathology",
+      "source_test": "080 Previous Year Questions",
+      "stem": "A 45-year-old patient visits a haematologist with symptoms of weakness and fatigue. Laboratory tests show low haemoglobin, a low reticulocyte count, and normal WBC and platelet counts. The bone marrow analysis reveals a selective reduction in erythroid precursors. What is the likely diagnosis?",
+      "options": "{'html': 'Aplasti\\u200dc anemia', 'is_correct': False, 'key': 'A'} | {'html': 'Pure red c\\u200dell aplasia', 'is_correct': True, 'key': 'B'} | {'html': 'Iron defici\\u200dency anaemia', 'is_correct': False, 'key': 'C'} | {'html': 'Pernicio\\u200dus anemia', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "B. Pure red cell aplasia",
+      "explanation": "Pure red cell aplasia Correct Answer: B) Pure red cell aplasia Explanation: The scenario of weakness, fatigue, low haemoglobin, low reticulocyte count, normal WBC and platelet counts, and bone marrow showing a selective reduction in erythroid precursors is consistent with Pure Red Cell Alasia (PRCA) , which is characterized by a marked reduction or absence of red blood cell precursors while other hematopoietic cell lines remain normal. It is a primary marrow disorder in which only erythroid progenitors are suppressed (red cell progenitors are completely absent in severe cases). Causes: Associated with neoplasms (thymoma and large granular lymphocytic leukaemia) Drug exposures Autoimmune disorders Parvovirus infection Clinical features: Fatigue, weakness, pallor, frequent infections, easy bruising or bleeding, and shortness of breath due to insufficient production of red blood cells, white blood cells, and platelets.",
+      "negative_question": false,
+      "is_pyq": true,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Diagnosis of pure red cell aplasia",
+        "broader": "Bone marrow failure disorders"
+      },
+      "strata": [
+        "known_regression"
+      ]
+    },
+    {
+      "question_id": "8eed4b71-5679-553e-8093-98b3944d1e53",
+      "subject": "Pharmacology",
+      "source_test": "023 Diuretics And Antidiuretics   Ii",
+      "stem": "Diuretics possessing the highest natriuretic efficacy, often referred to as high-ceiling diuretics, primarily exert their action on which anatomical segment of the nephron?",
+      "options": "{'html': 'Proximal convoluted tubule\\u200c', 'is_correct': False, 'key': 'A'} | {'html': 'Thick ascending limb of th\\u200ce loop of Henle', 'is_correct': True, 'key': 'B'} | {'html': 'Distal convo\\u200cluted tubule', 'is_correct': False, 'key': 'C'} | {'html': 'Cortical col\\u200clecting duct', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "B. Thick ascending limb of the loop of Henle",
+      "explanation": "Thick ascending limb of the loop of Henle Correct Answer: B) Thick ascending limb of the loop of Henle Explanation: The thick ascending limb of the loop of Henle is the site where approximately 25% of the filtered sodium load is reabsorbed via the Na + -K + -2Cl − symporter. Diuretics acting here, known as loop diuretics or high-ceiling agents , disrupt the kidney's ability to concentrate urine by abolishing the corticomedullary osmotic gradient. This segment has a massive capacity for salt reabsorption that cannot be fully compensated for by downstream segments; inhibitors of this site produce the most profound diuresis and natriuresis compared to all other diuretic classes.",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Nephron site of action of loop diuretics",
+        "broader": "Diuretic pharmacology"
+      },
+      "strata": [
+        "known_regression"
+      ]
+    },
+    {
+      "question_id": "99715fde-e802-5fbf-b9e5-2d9524ee2542",
+      "subject": "Pediatrics",
+      "source_test": "031 Previous Year Questions",
+      "stem": "Which of the following is correct about congenital CMV?",
+      "options": "{'html': '40-50% of the cases are sy\\u200bmptomatic at birth', 'is_correct': False, 'key': 'A'} | {'html': 'Optimum sample for PCR is \\u200bblood/urine/saliva sample\\u200d within 2-3 weeks of birt\\u200bh', 'is_correct': True, 'key': 'B'} | {'html': 'If asymptomatic at birth, \\u200bthen there is a 25.7% hig\\u200dher risk of developing SN\\u200bHL later', 'is_correct': False, 'key': 'C'} | {'html': 'Most common congenital inf\\u200bection after congenital s\\u200dyphilis', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "B. Optimum sample for PCR is blood/urine/saliva sample within 2-3 weeks of birth",
+      "explanation": "Optimum sample for PCR is blood/urine/saliva sample within 2-3 weeks of birth Correct Answer: B) Optimum sample for PCR is blood/urine/saliva sample within 2-3 weeks of birth Explanation: The correct statement is that the optimal sample for PCR in diagnosing congenital CMV infection is blood, urine, or saliva collected within the first 2-3 weeks of life. Testing after this period cannot reliably distinguish between congenital and acquired infection. Saliva and urine samples are more sensitive than blood because not all infants with congenital CMV are viremic at birth.",
+      "negative_question": false,
+      "is_pyq": true,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "PCR specimen and timing for diagnosing congenital CMV",
+        "broader": "Diagnosis of congenital infections"
+      },
+      "strata": [
+        "known_regression"
+      ]
+    },
+    {
+      "question_id": "c6eccc99-7cad-5a8a-ad8f-630c86effdf8",
+      "subject": "Obstetrics & Gynecology",
+      "source_test": "033 Urinary Incontinence And Fistulas",
+      "stem": "A 28-year-old primigravida woman has been in labor for the past 20 hours with little progress despite strong contractions. Despite attempts at assisted vaginal delivery, the labor is not progressing. Because of obstructed labor, an emergency cesarean section is performed. Postoperatively, the patient complains of continuous leakage of fluid from her vagina and inability to hold urine. Which of the following is most likely the diagnosis?",
+      "options": "{'html': 'Stress in\\u200ccontinence', 'is_correct': False, 'key': 'A'} | {'html': 'Uretero vag\\u200cinal fistula', 'is_correct': False, 'key': 'B'} | {'html': 'Vesicovagi\\u200cnal fistula', 'is_correct': True, 'key': 'C'} | {'html': 'Urge inc\\u200continence', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "C. Vesicovaginal fistula",
+      "explanation": "Vesicovaginal fistula Correct Answer: C) Vesicovaginal fistula Explanation: In the above clinical condition the patient presented with obstructed labor and was managed with emergency cesarean section, with postoperative patient complaints of leakage of urine through the vaginaand inability to hold urine. This is a classical case of vesico-vaginal fistula. Vesico-vaginal fistula (VVF): Vesico-vaginal fistula (VVF) is an abnormal passage that develops between the bladder and the vagina, leading to continuous and involuntary discharge of urine through the vagina.",
+      "negative_question": true,
+      "is_pyq": false,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Diagnosis of vesicovaginal fistula after obstructed labor",
+        "broader": "Urogenital fistulas"
+      },
+      "strata": [
+        "known_regression"
+      ]
+    },
+    {
+      "question_id": "c976304f-542f-558e-b8d5-def598c0ee0c",
+      "subject": "Forensic Medicine",
+      "source_test": "023 Forensic Toxicology 1",
+      "stem": "In which poisoning is cherry red hypostasis seen on post-mortem examination?",
+      "options": "{'html': 'CO Poi\\u200csoning', 'is_correct': True, 'key': 'A'} | {'html': 'Hydrogen\\u200c sulphide', 'is_correct': False, 'key': 'B'} | {'html': 'Yellow p\\u200chosphorus', 'is_correct': False, 'key': 'C'} | {'html': 'Hydrogen\\u200c cyanide', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "A. CO Poisoning",
+      "explanation": "CO Poisoning Correct Answer: A) CO Poisoning: Explanation: Carbon monoxide poisoning causes cherry red discoloration of the skin, mucus membranes, conjunctiva, nail beds, areas of hypostasis, blood tissues and internal organs. This coloration changes to dark green and then to brown as decomposition starts to occur. Option B - Hydrogen sulphide : Hydrogen Sulphide poisoning causes a rotten egg smell in the victim.",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Postmortem hypostasis in carbon monoxide poisoning",
+        "broader": "Forensic findings in asphyxiant poisoning"
+      },
+      "strata": [
+        "known_regression"
+      ]
+    },
+    {
+      "question_id": "f9adfc14-4824-5a3b-bb3a-64525e184c56",
+      "subject": "Ophthalmology",
+      "source_test": "017 Previous Year Questions",
+      "stem": "Which of the following parts of the retina are correctly marked?",
+      "options": "{'html': '1-Retinal pigment epitheli\\u200bum; 2-Outer nuclear layer\\u200d; 3-Inner plexiform layer\\u200c; 4-Ganglion layer', 'is_correct': True, 'key': 'A'} | {'html': '1-Retinal pigment epitheli\\u200bum; 2-Inner nuclear layer\\u200d; 3-Outer plexiform layer\\u200c; 4-Ganglion layer', 'is_correct': False, 'key': 'B'} | {'html': '1-Ganglion layer; 2-Inner \\u200bnuclear layer; 3-Outer pl\\u200dexiform layer; 4-RPE', 'is_correct': False, 'key': 'C'} | {'html': '1-Ganglion layer; 2-Outer \\u200bplexiform layer; 3-Inner \\u200dnuclear layer; 4-RPE', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "A. 1-Retinal pigment epithelium; 2-Outer nuclear layer; 3-Inner plexiform layer; 4-Ganglion layer",
+      "explanation": "1-Retinal pigment epithelium; 2-Outer nuclear layer; 3-Inner plexiform layer; 4-Ganglion layer Correct Answer: A) 1-Retinal pigment epithelium; 2-Outer nuclear layer; 3-Inner plexiform layer; 4-Ganglion layer Explanation: Histology of Retina: Layers of the Retina: Layer Description 1. Pigment Epithelium Outermost layer with a single pigmented cell layer; adheres to Bruch's membrane; supports neurosensory retina, and reduces reflection. Subretinal Space: This is the layer between the Pigment epithelium and the layer of Photoreceptors.",
+      "negative_question": false,
+      "is_pyq": true,
+      "has_media": true,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Identification of retinal histologic layers",
+        "broader": "Retinal anatomy and histology"
+      },
+      "strata": [
+        "known_regression"
+      ]
+    },
+    {
+      "question_id": "c9b2bfb7-c0ef-591e-b57c-69edffddfd3f",
+      "subject": "Anatomy",
+      "source_test": "043 Vascular Supply Of Lower Limb",
+      "stem": "A patient develops severe weakness in straightening the leg at the knee after a retroperitoneal haemorrhage. On examination, the patellar reflex is absent, and there is sensory loss over the anterior thigh. Which nerve is most likely compressed?",
+      "options": "{'html': 'Femora\\u200cl nerve', 'is_correct': True, 'key': 'A'} | {'html': 'Obturat\\u200cor nerve', 'is_correct': False, 'key': 'B'} | {'html': 'Sciati\\u200cc nerve', 'is_correct': False, 'key': 'C'} | {'html': 'Inferior gl\\u200cuteal nerve', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "A. Femoral nerve",
+      "explanation": "Femoral nerve Correct Answer: A) Femoral nerve Explanation: The femoral nerve is most likely compressed. It arises from L2-L4 roots and descends through psoas major, making it vulnerable to compression by retroperitoneal haemorrhage. The femoral nerve supplies the quadriceps femoris, the principal extensor of the knee; therefore, injury causes marked weakness of knee extension.",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": true,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Localization of femoral nerve injury from motor, reflex, and sensory deficits",
+        "broader": "Lower-limb peripheral nerve anatomy"
+      },
+      "strata": [
+        "subject:Anatomy"
+      ]
+    },
+    {
+      "question_id": "e6b69d7f-a2df-5451-a55b-dc05eb005eb9",
+      "subject": "Biochemistry",
+      "source_test": "027 Previous Year Questions",
+      "stem": "Deficiency of copper which is necessary for lysyl oxidase is seen in",
+      "options": "{'html': 'Scu\\u200brvy', 'is_correct': False, 'key': 'A'} | {'html': 'Scol\\u200biosis', 'is_correct': False, 'key': 'B'} | {'html': 'Ehler Danl\\u200bos Syndrome', 'is_correct': False, 'key': 'C'} | {'html': \"Menke's\\u200b disease\", 'is_correct': True, 'key': 'D'}",
+      "correct_answer": "D. Menke's disease",
+      "explanation": "Menke's disease Correct Answer: D) Menke's disease Explanation: Menke’s disease is a congenital disorder of copper transport caused by ATP7A gene mutation, leading to severe copper deficiency. Copper is essential for lysyl oxidase, an enzyme required for collagen cross-linking. Deficiency results in weak connective tissues, kinky hair, growth failure, and vascular fragility.",
+      "negative_question": false,
+      "is_pyq": true,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Copper deficiency due to Menkes disease",
+        "broader": "Inherited disorders of trace-element metabolism"
+      },
+      "strata": [
+        "subject:Biochemistry"
+      ]
+    },
+    {
+      "question_id": "974d3c03-b5ab-5917-8a22-3a030c31c6c5",
+      "subject": "Dermatology",
+      "source_test": "045 Parasitic Infestations Of Skin",
+      "stem": "A 20-year-old female presents with an itchy lesion as shown below. She reports that it started as a small, red, itchy spot, then progressed over the next few days to its current form. She also reveals a recent beach holiday. What is the causative organism? {{caption_text}}",
+      "options": "{'html': 'Loa\\u200b loa', 'is_correct': False, 'key': 'A'} | {'html': 'Ancylosto\\u200bma caninus', 'is_correct': True, 'key': 'B'} | {'html': 'Strongyloide\\u200bs stercoralis', 'is_correct': False, 'key': 'C'} | {'html': 'Ascaris lu\\u200bmbricoides', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "B. Ancylostoma caninus",
+      "explanation": "Ancylostoma caninus Correct Answer: B) Ancylostoma caninum Explanation: The given case scenario describes cutaneous larva migrans. This is caused by animal hookworm larvae (Ancylostoma braziliensis/ caninum) and typically occurs due to walking barefoot on contaminated sand or soil. It classically begins with a pruritic, erythematous papule at the site of penetration, followed by intensely pruritic, serpiginous, reddish-brown skin tracks, along the path of migration of the larvae.",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": true,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Causative organism of cutaneous larva migrans",
+        "broader": "Cutaneous helminthic infestations"
+      },
+      "strata": [
+        "subject:Dermatology"
+      ]
+    },
+    {
+      "question_id": "4d3638b4-a1b0-560f-943c-67ca860e7f42",
+      "subject": "ENT",
+      "source_test": "039 Previous Year Questions",
+      "stem": "A 40-year-old male has a deviated septum with a significant dislocation at the caudal end. The surgeon prefers a unilateral approach, avoiding a full-thickness incision. Which incision is most appropriate in this case?",
+      "options": "{'html': 'Killian’s\\u200d incision', 'is_correct': False, 'key': 'A'} | {'html': 'Hemitransfix\\u200dion incision', 'is_correct': True, 'key': 'B'} | {'html': 'Transfixio\\u200dn incision', 'is_correct': False, 'key': 'C'} | {'html': 'Horizontal incision on the\\u200d spur', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "B. Hemitransfixion incision",
+      "explanation": "Hemitransfixion incision Correct Answer: B) Hemitransfixion incision Explanation: The patient has a caudal septal dislocation , which refers to a deviation or dislocation of the septal cartilage near the base of the nose (caudal end), for which either transfixion or hemitransfixion incision can be used. In this situation, the surgeon wants to access and correct the dislocated part without making an incision through the entire thickness of the septum. Hence, Hemitransfixion incision is appropriate in this scenario.",
+      "negative_question": false,
+      "is_pyq": true,
+      "has_media": true,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Selection of septoplasty incision for caudal septal dislocation",
+        "broader": "Surgical management of deviated nasal septum"
+      },
+      "strata": [
+        "subject:ENT"
+      ]
+    },
+    {
+      "question_id": "de31d8a4-a0f5-56c1-8d12-0b1412f6d7c9",
+      "subject": "Orthopedics",
+      "source_test": "002 Complications Of Fractures",
+      "stem": "A 45-year-old male presents with a humeral shaft fracture that has not healed after 9 months despite conservative treatment. Imaging shows poor bone formation at the fracture site. Which of the following is the best next step in management?",
+      "options": "{'html': 'Continue conservative trea\\u200dtment with a brace', 'is_correct': False, 'key': 'A'} | {'html': 'Electrical stimulation the\\u200drapy', 'is_correct': False, 'key': 'B'} | {'html': 'Open reduction and interna\\u200dl fixation (ORIF) with bo\\u200bne grafting', 'is_correct': True, 'key': 'C'} | {'html': 'Intramedull\\u200dary nailing', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "C. Open reduction and internal fixation (ORIF) with bone grafting",
+      "explanation": "Open reduction and internal fixation (ORIF) with bone grafting Correct Answer: C) Open reduction and internal fixation (ORIF) with bone grafting Explanation: For established non-union, surgical intervention is often necessary to stimulate healing. ORIF with bone grafting provides mechanical stability and promotes bone healing, especially in cases with poor bone formation. Management of Non-union: Non-union often requires surgical intervention, typically involving bone grafting with or without internal fixation .",
+      "negative_question": true,
+      "is_pyq": false,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Management of atrophic humeral shaft nonunion",
+        "broader": "Management of fracture nonunion"
+      },
+      "strata": [
+        "subject:Orthopedics"
+      ]
+    },
+    {
+      "question_id": "fcef8a87-5f65-5cc4-943e-c7a09e1e4e1f",
+      "subject": "Physiology",
+      "source_test": "039 Reproductive Physiology",
+      "stem": "According to the Two-Cell-Two-Gonadotropin Hypothesis, which of the following hormones primarily stimulates granulosa cells in the ovaries to promote the production of estrogen?",
+      "options": "{'html': 'L\\u200cH', 'is_correct': False, 'key': 'A'} | {'html': 'F\\u200cSH', 'is_correct': True, 'key': 'B'} | {'html': 'Proges\\u200cterone', 'is_correct': False, 'key': 'C'} | {'html': 'Prol\\u200cactin', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "B. FSH",
+      "explanation": "FSH Correct Answer: B) FSH Explanation: Granulosa cells have many FSH receptors, and FSH stimulates the secretion of estradiol by increasing the aromatase activity. Two-Cell-Two-Gonadotropin Hypothesis: Naturally occurring estrogens are 17β-estradiol, estrone, and estriol. Many LH receptors are present on theca interna cells and LH increases conversion of cholesterol to androstenedione.",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "FSH stimulation of granulosa-cell estrogen synthesis",
+        "broader": "Two-cell–two-gonadotropin model of ovarian steroidogenesis"
+      },
+      "strata": [
+        "subject:Physiology"
+      ]
+    },
+    {
+      "question_id": "00ed104e-85bd-57d5-9f6e-348881a2c815",
+      "subject": "Radiology",
+      "source_test": "019 Previous Year Questions",
+      "stem": "A child with acute lymphoblastic leukemia undergoes prophylactic irradiation prior autologous hematopoietic stem cell transplantation. Which of the following will be the least affected?",
+      "options": "{'html': 'Sperma\\u200btogonia', 'is_correct': False, 'key': 'A'} | {'html': 'Intestinal epithelial cell\\u200bs', 'is_correct': False, 'key': 'B'} | {'html': 'Neu\\u200brons', 'is_correct': True, 'key': 'C'} | {'html': 'Bone marrow/ erythroid pre\\u200bcursor cells', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "C. Neurons",
+      "explanation": "Neurons Correct Answer: C) Neurons Explanation: Neurons are terminally differentiated, non-dividing cells. Their low mitotic activity makes them relatively resistant to radiation-induced damage. According to the Law of Bergonie: The more the cells are rapidly dividing, the more they are sensitive to radiation.",
+      "negative_question": false,
+      "is_pyq": true,
+      "has_media": true,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Relative radiosensitivity of tissues based on mitotic activity",
+        "broader": "Radiobiology of normal tissues"
+      },
+      "strata": [
+        "subject:Radiology"
+      ]
+    },
+    {
+      "question_id": "cee3cf08-7953-5274-aa72-d8186116ece7",
+      "subject": "Surgery",
+      "source_test": "078 Previous Year Questions   Part 1",
+      "stem": "A 35-year-old male sustained a head injury following a motorcycle accident. He experienced a brief loss of consciousness at the scene. Upon regaining consciousness, he developed a severe headache and began to feel drowsy. A CT scan of the head is performed. Which of the following should be the management for this patient?",
+      "options": "{'html': 'Anticoa\\u200cgulants', 'is_correct': False, 'key': 'A'} | {'html': 'Immediate surgical decompr\\u200cession', 'is_correct': True, 'key': 'B'} | {'html': 'Observati\\u200con in ICU', 'is_correct': False, 'key': 'C'} | {'html': 'Mannitol ad\\u200cministration', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "B. Immediate surgical decompression",
+      "explanation": "Immediate surgical decompression Correct Answer: B) Immediate surgical decompression: The above CT scan shows Biconvex or lenticular or lens shaped hyperdense lesion which is characteristic of Extradural hemorrhage . Patient complains of severe headache and drowsiness. Delaying treatment can lead to increase in ICP which can cause uncal herniation and 3rd nerve palsy.",
+      "negative_question": false,
+      "is_pyq": true,
+      "has_media": true,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Emergency surgical management of extradural hematoma",
+        "broader": "Traumatic brain injury management"
+      },
+      "strata": [
+        "subject:Surgery"
+      ]
+    },
+    {
+      "question_id": "519743d1-e217-5e85-903e-4b541e8a5396",
+      "subject": "Community Medicine",
+      "source_test": "036 Previous Year Questions",
+      "stem": "Which government program aims to provide health checkups and services for children aged 0-18, including a focus on those not attending school?",
+      "options": "{'html': 'Rashtriya Bal Swasthya Kar\\u200dyakaram', 'is_correct': True, 'key': 'A'} | {'html': 'Janani Sur\\u200daksha Yojna', 'is_correct': False, 'key': 'B'} | {'html': 'Navjaat Shishu Suraksha Ka\\u200dryakaram', 'is_correct': False, 'key': 'C'} | {'html': 'Mid day me\\u200dal program', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "A. Rashtriya Bal Swasthya Karyakaram",
+      "explanation": "Rashtriya Bal Swasthya Karyakaram Correct Answer:A )Rashtriya Bal Swasthya Karyakaram: Rashtriya Bal Swasthya Karyakram (RBSK) involves screening of children from birth to 18 years of age for 4 Ds- Defects at birth, Diseases, Deficiencies and Development delays, spanning 32 common health conditions for early detection and free treatment and management, including surgeries at tertiary level Janani Suraksha Yojna(Option B ): Janani Suraksha Yojana (JSY) is a government program that focuses on promoting institutional deliveries by providing financial assistance to pregnant women. Navjaat Shishu Suraksha Karyakaram(Option C): Navjaat Shishu Suraksha Karyakaram (NSSK) is another program that aims to provide care to newborns and ensure their survival during the first 28 days of life. Mid day meal program(Option D ): The Mid Day Meal Program is a school-based initiative that provides nutritious meals to schoolchildren to enhance their nutritional status and encourage school attendance.",
+      "negative_question": true,
+      "is_pyq": true,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Rashtriya Bal Swasthya Karyakram identification",
+        "broader": "Indian child health programs"
+      },
+      "strata": [
+        "negative"
+      ]
+    },
+    {
+      "question_id": "9579697b-b4fd-5934-bc62-6445f6c62fa7",
+      "subject": "Forensic Medicine",
+      "source_test": "035 Previous Year Questions",
+      "stem": "A surgeon performs a hysterectomy for uterine fibroids after obtaining relevant informed consent from the patient. Despite adequate precautions, the ureter was injured intraoperatively. Under which of the following principles will the doctor not be held responsible for this act?",
+      "options": "{'html': 'Novus actus \\u200binterveniens', 'is_correct': False, 'key': 'A'} | {'html': 'Medical ma\\u200bloccurrence', 'is_correct': True, 'key': 'B'} | {'html': 'Res ipsa\\u200b loquitur', 'is_correct': False, 'key': 'C'} | {'html': 'Physici\\u200ban error', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "B. Medical maloccurrence",
+      "explanation": "Medical maloccurrence Correct Answer: B) Medical Maloccurrence Explanation: This incident represents a medical maloccurrence because the complication arose from an unavoidable risk associated with the surgery, despite the surgeon providing quality care and obtaining informed consent. Medical Maloccurrence A less than ideal medical outcome not linked to the quality of care. Types: Anticipated medical/surgical complications (unavoidable risks).",
+      "negative_question": true,
+      "is_pyq": true,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Medical maloccurrence",
+        "broader": "Medical negligence and professional liability"
+      },
+      "strata": [
+        "negative"
+      ]
+    },
+    {
+      "question_id": "78214375-40b1-5fc6-a28d-dee739b5d9ae",
+      "subject": "Anatomy",
+      "source_test": "055 Inguinal And Femoral Anatomy And Hernia  Abdominal Wall Layers  Peritoneal Cavity",
+      "stem": "Which of the following statements about the femoral triangle is FALSE?",
+      "options": "{'html': 'The medial boundary of the\\u200c femoral triangle is form\\u200ded by the adductor longus\\u200b muscle.', 'is_correct': False, 'key': 'A'} | {'html': 'The lateral boundary of th\\u200ce femoral triangle is for\\u200dmed by the iliacus and ps\\u200boas major muscles', 'is_correct': True, 'key': 'B'} | {'html': 'The femoral nerve is one o\\u200cf the contents of the fem\\u200doral triangle.', 'is_correct': False, 'key': 'C'} | {'html': 'The anterior boundary of t\\u200che femoral ring is the in\\u200dguinal ligament.', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "B. The lateral boundary of the femoral triangle is formed by the iliacus and psoas major muscles",
+      "explanation": "The lateral boundary of the femoral triangle is formed by the iliacus and psoas major muscles Correct Answer: B) The lateral boundary of the femoral triangle is formed by the iliacus and psoas major muscles. Explanation: The femoral triangle is an important anatomical region in the upper thigh, where key neurovascular structures pass, and it's clinically relevant for procedures like catheterization and palpating the femoral pulse. The lateral boundary of the femoral triangle is formed by the sartorius muscle .",
+      "negative_question": true,
+      "is_pyq": false,
+      "has_media": true,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Boundaries and contents of the femoral triangle",
+        "broader": "Femoral region anatomy"
+      },
+      "strata": [
+        "negative"
+      ]
+    },
+    {
+      "question_id": "58c8202a-885d-530f-8a41-e98dc59466b2",
+      "subject": "Pharmacology",
+      "source_test": "017 Anti Anginal Drugs",
+      "stem": "A 63-year-old male with a history of coronary artery disease presents to the clinic with worsening chest pain during physical exertion. The cardiologist performs a pharmacological stress test to evaluate his coronary blood flow. During the test, the patient's symptoms were exacerbated. Which of the following drugs is not associated with this phenomenon?",
+      "options": "{'html': 'Aden\\u200dosine', 'is_correct': False, 'key': 'A'} | {'html': 'Dipyri\\u200ddamole', 'is_correct': False, 'key': 'B'} | {'html': 'Nitrog\\u200dlycerin', 'is_correct': True, 'key': 'C'} | {'html': 'Nitrop\\u200drusside', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "C. Nitroglycerin",
+      "explanation": "Nitroglycerin Correct Answer: C) Nitroglycerin Explanation: Nitroglycerin does not cause coronary steal phenomenon and improves blood flow to ischemic areas. Coronary steal phenomenon/syndrome: Used in pharmacological stress tests to diagnose partially blocked coronary arteries. MOA: Drugs causing coronary steal syndrome Mnemonic- HINDA H: Hydralazine I: Isoflurane (General anaesthetic) N: Nitroprusside (OPTION D) D: Dipyridamole (antiplatelet and vasodilator) (OPTION B) A: Adenosine (OPTION A) Reference: Goodman and Gilman's The Pharmacological Basis of Therapeutics, 14th Edition Page 611, 721, 726 @neet_‍pg_bot",
+      "negative_question": true,
+      "is_pyq": false,
+      "has_media": true,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Drugs causing coronary steal phenomenon",
+        "broader": "Coronary vasodilator pharmacology"
+      },
+      "strata": [
+        "negative"
+      ]
+    },
+    {
+      "question_id": "2b5aa7dc-a4bc-5806-a4c3-732c6cac8586",
+      "subject": "Forensic Medicine",
+      "source_test": "015 Asphyxial Death",
+      "stem": "A 35 y/o man is found unresponsive in his apartment. The scene suggests possible asphyxia due to a hanging. Upon examination, the forensic team notes several physical findings. Which of the following findings would most likely not be observed in this case of asphyxial death?",
+      "options": "{'html': 'Tardie\\u200bu spots', 'is_correct': False, 'key': 'A'} | {'html': 'Bright red discolouration \\u200bof the skin', 'is_correct': True, 'key': 'B'} | {'html': 'Cyan\\u200bosis', 'is_correct': False, 'key': 'C'} | {'html': 'Congestion\\u200b of viscera', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "B. Bright red discolouration of the skin",
+      "explanation": "Bright red discolouration of the skin Correct Answer: B) Bright red discoloration of the skin Explanation: Bright red discolouration of the skin is not a typical feature of asphyxia; instead, asphyxia often leads to cyanosis (bluish discolouration). Asphyxia: Asphyxia is a condition resulting from insufficient oxygen reaching the tissues, leading to hypoxia and potentially death. Signs of Asphyxial Death: Tardieu Spots (Tardieu’s or Bayard’s Ecchymoses): (Option A ruled out) Small, round, dark-red spots (pin-head sized).",
+      "negative_question": true,
+      "is_pyq": false,
+      "has_media": true,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Postmortem findings of asphyxial death",
+        "broader": "Forensic pathology of mechanical asphyxia"
+      },
+      "strata": [
+        "negative"
+      ]
+    },
+    {
+      "question_id": "a837835d-ddcb-5459-9f07-37c35f3ed667",
+      "subject": "Obstetrics & Gynecology",
+      "source_test": "060 Abnormalities Of Placenta And Umbilical Cord",
+      "stem": "Which of the following is NOT true about fetal hematopoiesis and fetal haemoglobin?",
+      "options": "{'html': 'The liver is the primary s\\u200cite of hematopoiesis duri\\u200dng the first trimester', 'is_correct': False, 'key': 'A'} | {'html': 'Fetal haemoglobin consists\\u200c of two alpha and two gam\\u200dma chains', 'is_correct': False, 'key': 'B'} | {'html': 'Bone marrow becomes the pr\\u200cimary site of hematopoies\\u200dis by the end of gestatio\\u200bn', 'is_correct': False, 'key': 'C'} | {'html': 'Fetal haemoglobin producti\\u200con ceases completely at b\\u200dirth', 'is_correct': True, 'key': 'D'}",
+      "correct_answer": "D. Fetal haemoglobin production ceases completely at birth",
+      "explanation": "Fetal haemoglobin production ceases completely at birth Correct Answer: D) Fetal hemoglobin production ceases completely at birth. Explanation: Fetal haemoglobin production does not cease completely at birth. Fetal Hematopoiesis progresses through several stages: 3-8 weeks gestation: The yolk sac is the primary site of hematopoiesis.",
+      "negative_question": true,
+      "is_pyq": false,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Fetal hematopoiesis and hemoglobin transition",
+        "broader": "Fetal blood development"
+      },
+      "strata": [
+        "negative"
+      ]
+    },
+    {
+      "question_id": "775073b9-5854-5104-9576-eb28dd9249ed",
+      "subject": "Obstetrics & Gynecology",
+      "source_test": "037 Physiological Changes In Pregnancy",
+      "stem": "A 30-year-old primigravida at 24 weeks of gestation presents with concerns about several skin changes. She describes a dark vertical line running down her abdomen, dark patches on her face, and pinkish lines on her thighs. She denies any itching, pain, or other systemic symptoms. Her medical history is unremarkable, and she is not on any medications apart from prenatal vitamins. What is the most likely explanation for these skin changes?",
+      "options": "{'html': 'Linea Nigra, Chloasma (Mel\\u200casma), and Striae Gravida\\u200brum', 'is_correct': True, 'key': 'A'} | {'html': 'PUPPP (Pruritic Urticarial\\u200c Papules and Plaques of P\\u200bregnancy)', 'is_correct': False, 'key': 'B'} | {'html': 'Pemphigoid \\u200cGestationis', 'is_correct': False, 'key': 'C'} | {'html': 'Atopic Eruption of Pregnan\\u200ccy', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "A. Linea Nigra, Chloasma (Melasma), and Striae Gravidarum",
+      "explanation": "Linea Nigra, Chloasma (Melasma), and Striae Gravidarum Correct Answer: A) Linea Nigra, Chloasma (Melasma), and Striae Gravidarum Explanation: During pregnancy, various physiological skin changes can occur due to hormonal influences: Linea Nigra : A dark vertical line running down the abdomen due to increased melanocyte-stimulating hormone. Chloasma (Melasma) : Hyperpigmented patches on the face, often called the \"mask of pregnancy,\" due to hormonal changes and sometimes exacerbated by sun exposure. Striae Gravidarum : Pinkish or purplish lines, commonly known as stretch marks, which appear on the abdomen, thighs, or breasts due to the stretching of the skin.",
+      "negative_question": true,
+      "is_pyq": false,
+      "has_media": true,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Physiological skin changes of pregnancy",
+        "broader": "Maternal physiological adaptations to pregnancy"
+      },
+      "strata": [
+        "negative"
+      ]
+    },
+    {
+      "question_id": "2d686414-e862-5f35-8146-143a3f384ba8",
+      "subject": "Obstetrics & Gynecology",
+      "source_test": "016 Previous Year Questions",
+      "stem": "Which one of the following is not used to treat PCOD?",
+      "options": "{'html': 'Clomiphen\\u200ce citrate', 'is_correct': False, 'key': 'A'} | {'html': 'Metf\\u200cormin', 'is_correct': False, 'key': 'B'} | {'html': 'Tamo\\u200cxifen', 'is_correct': True, 'key': 'C'} | {'html': 'O\\u200cCP', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "C. Tamoxifen",
+      "explanation": "Tamoxifen Correct answer: C) Tamoxifen Explanation: Tamoxifen is not used commonly for the treatment of PCOD. Tamoxifen is a selective estrogen receptor modulator (SERM) primarily used for the treatment of estrogen receptor-positive breast cancer. Drugs used to treat Infertility in PCOS Letrozole (preferred over clomiphene citrate): Aromatase inhibitors No antiestrogenic action on the endometrium and cervix, thus yielding a better pregnancy rate.",
+      "negative_question": true,
+      "is_pyq": true,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Pharmacologic treatment options for polycystic ovary syndrome",
+        "broader": "Management of polycystic ovary syndrome"
+      },
+      "strata": [
+        "negative"
+      ]
+    },
+    {
+      "question_id": "ccba96c1-fe49-5a1a-94a9-d4d852c7da4f",
+      "subject": "Pathology",
+      "source_test": "043 Peptic Ulcer Disease  Gastric Polyps  And Tumors   I",
+      "stem": "Which of the following is NOT a protective factor against Peptic Ulcer Disease?",
+      "options": "{'html': 'Mu\\u200ccus', 'is_correct': False, 'key': 'A'} | {'html': 'Bicar\\u200cbonate', 'is_correct': False, 'key': 'B'} | {'html': 'CO\\u200cX-1', 'is_correct': False, 'key': 'C'} | {'html': 'Pep\\u200csin', 'is_correct': True, 'key': 'D'}",
+      "correct_answer": "D. Pepsin",
+      "explanation": "Pepsin Correct Answer: D) Pepsin Explanation: Pepsin is not considered a protective factor for peptic ulcer disease (PUD). Excessive pepsin activity, especially in the presence of acid, can lead to tissue damage and ulcer formation. Therefore, pepsin is considered a contributing factor to ulceration rather than a protective factor against PUD.",
+      "negative_question": true,
+      "is_pyq": false,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Gastric mucosal protective factors",
+        "broader": "Pathogenesis of peptic ulcer disease"
+      },
+      "strata": [
+        "negative"
+      ]
+    },
+    {
+      "question_id": "0a001a4d-e482-56a3-9f8c-8b9bef116739",
+      "subject": "Radiology",
+      "source_test": "025 Cvs Radiology",
+      "stem": "A 45-year-old woman presents with gradually worsening dyspnea and reduced exercise tolerance over the past month. The chest X-ray is given below. Regarding this patient's condition, which of the following statements is INCORRECT?",
+      "options": "{'html': '\"Oreo cookie\" sign will be\\u200c seen on lateral view on \\u200dChest X Ray', 'is_correct': False, 'key': 'A'} | {'html': 'The patient typically show\\u200cs abrupt enlargement of c\\u200dardiothoracic ratio', 'is_correct': True, 'key': 'B'} | {'html': 'Seldinger technique is emp\\u200cloyed for management of t\\u200dhis condition', 'is_correct': False, 'key': 'C'} | {'html': 'An Echocardiogram is a bet\\u200cter modality than CT to c\\u200donfirm the diagnosis', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "B. The patient typically shows abrupt enlargement of cardiothoracic ratio",
+      "explanation": "The patient typically shows abrupt enlargement of cardiothoracic ratio Answer: B) The patient typically shows abrupt enlargement of cardiothoracic ratio Explanation: The clinical presentation and radiological image indicate towards pericardial effusion. In pericardial effusion, especially when symptoms develop gradually over a month as in this case, the enlargement of the cardiothoracic ratio is typically gradual , not abrupt. The Seldinger technique is used in pericardiocentesis for managing significant pericardial effusions.",
+      "negative_question": true,
+      "is_pyq": false,
+      "has_media": true,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Radiographic and diagnostic features of pericardial effusion",
+        "broader": "Pericardial disease evaluation"
+      },
+      "strata": [
+        "negative"
+      ]
+    },
+    {
+      "question_id": "d8d38394-7a7d-5526-ae43-38fe138527d5",
+      "subject": "ENT",
+      "source_test": "037 Laryngeal Paralysis And Laryngeal Carcinoma",
+      "stem": "A 60-year-old male with a history of persistent hoarseness, throat pain, and difficulty swallowing was recently diagnosed with Laryngeal Carcinoma. Which of the following is not a known risk factor for developing laryngeal cancer in this patient?",
+      "options": "{'html': 'Heavy smoking and alcohol \\u200dconsumption', 'is_correct': False, 'key': 'A'} | {'html': 'Genetic predisposition due\\u200d to Fanconi anemia', 'is_correct': False, 'key': 'B'} | {'html': 'Exposure t\\u200do coal dust', 'is_correct': False, 'key': 'C'} | {'html': 'Exposur\\u200de to EBV', 'is_correct': True, 'key': 'D'}",
+      "correct_answer": "D. Exposure to EBV",
+      "explanation": "Exposure to EBV Correct Answer: D) Exposure to EBV Explanation: EBV is associated with Nasopharyngeal carcinoma and is less commonly linked to laryngeal cancer compared to other risk factors. Risk Factors and Etiology of Laryngeal Cancer: Tobacco Use :(most common cause) Smoking is a well-established risk factor due to carcinogens like benzopyrene and other hydrocarbons. Alcohol Consumption : Alcohol use is a significant risk factor, with a synergistic effect when combined with smoking.",
+      "negative_question": true,
+      "is_pyq": false,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Risk factors for laryngeal carcinoma",
+        "broader": "Laryngeal malignancy"
+      },
+      "strata": [
+        "negative"
+      ]
+    },
+    {
+      "question_id": "b8171d77-e182-5ffc-b8c0-4d8e0df5b34d",
+      "subject": "Physiology",
+      "source_test": "022 Acid Base Disorders   I",
+      "stem": "Which of the following is not a component of the counter-current multiplier system in the kidneys?",
+      "options": "{'html': 'Cortical Collecting Duct (\\u200cCCD)', 'is_correct': True, 'key': 'A'} | {'html': 'Thick Ascending Limb (TAL)\\u200c of the Loop of Henle', 'is_correct': False, 'key': 'B'} | {'html': 'Thin Ascending Segment (AT\\u200cS) of the Loop of Henle', 'is_correct': False, 'key': 'C'} | {'html': 'Medullary Collecting Duct \\u200c(MCD)', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "A. Cortical Collecting Duct (CCD)",
+      "explanation": "Cortical Collecting Duct (CCD) Correct Answer: A) Cortical Collecting Duct (CCD) Explanation: The CCD is involved in the reabsorption of water and electrolytes under the influence of hormones such as aldosterone and antidiuretic hormone (ADH). However, it is not directly part of the counter-current multiplier system. The counter-current multiplier specifically refers to the mechanisms occurring within the loop of Henle and associated structures in the medulla, not the cortical regions.",
+      "negative_question": true,
+      "is_pyq": false,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Components of the renal countercurrent multiplier",
+        "broader": "Renal urine-concentrating mechanism"
+      },
+      "strata": [
+        "negative"
+      ]
+    },
+    {
+      "question_id": "9e2bb444-3403-5c57-8def-689b70748ff4",
+      "subject": "Pathology",
+      "source_test": "027 Previous Year Questions",
+      "stem": "Which of the following is not a part of innate immunity?",
+      "options": "{'html': 'Alpha d\\u200defensins', 'is_correct': False, 'key': 'A'} | {'html': 'B lymp\\u200dhocytes', 'is_correct': True, 'key': 'B'} | {'html': 'Gamma delta \\u200dT lymphocytes', 'is_correct': False, 'key': 'C'} | {'html': 'Alternat\\u200de pathway', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "B. B lymphocytes",
+      "explanation": "B lymphocytes Correct Answer: B) B lymphocytes Explanation: B lymphocytes are part of the adaptive (acquired) immune system , where they produce antigen-specific antibodies and generate immunological memory . Innate immunity provides immediate, non-specific defense against pathogens and does not require prior exposure . It includes physical barriers, phagocytic cells, natural killer cells, complement, antimicrobial peptides, and certain innate-like lymphocytes.",
+      "negative_question": true,
+      "is_pyq": true,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Components of innate immunity",
+        "broader": "Innate versus adaptive immunity"
+      },
+      "strata": [
+        "negative"
+      ]
+    },
+    {
+      "question_id": "90984623-8f96-5d1a-92f6-5e43a157604f",
+      "subject": "Anatomy",
+      "source_test": "049 Heart And Thorax Anatomy   I",
+      "stem": "Which of the following statements about the phrenic nerve is false?",
+      "options": "{'html': 'The phrenic nerve contains\\u200b both motor and sensory f\\u200bibers.', 'is_correct': False, 'key': 'A'} | {'html': 'Efferent fibers of the phr\\u200benic nerve supply the dia\\u200bphragm muscle.', 'is_correct': False, 'key': 'B'} | {'html': 'Afferent fibers transmit s\\u200bensory information from t\\u200bhe liver capsule.', 'is_correct': True, 'key': 'C'} | {'html': 'Paralysis of the phrenic n\\u200berve can result from pres\\u200bsure from malignant tumor\\u200bs in the mediastinum.', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "C. Afferent fibers transmit sensory information from the liver capsule.",
+      "explanation": "Afferent fibers transmit sensory information from the liver capsule. Correct Answer: C) Afferent fibers transmit sensory information from the liver capsule. Explanation: Afferent fibers transmit sensory information from both the upper and lower surfaces of the diaphragm, as well as from the pericardium and mediastinal pleura and not from the liver capsule.",
+      "negative_question": true,
+      "is_pyq": false,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Motor and sensory distribution of the phrenic nerve",
+        "broader": "Phrenic nerve anatomy"
+      },
+      "strata": [
+        "negative"
+      ]
+    },
+    {
+      "question_id": "ea3d59c8-6c96-5f5a-8f07-ef6d074bbd9c",
+      "subject": "Orthopedics",
+      "source_test": "018 Pediatric Orthopedics",
+      "stem": "A 7-year old boy presented as shown. What is the preferred management in this boy?",
+      "options": "{'html': 'Ponseti’s\\u200c technique', 'is_correct': False, 'key': 'A'} | {'html': 'Turco’s posteromedial soft\\u200c tissue release', 'is_correct': False, 'key': 'B'} | {'html': 'Dillwyn Eva\\u200cns procedure', 'is_correct': True, 'key': 'C'} | {'html': 'Triple ar\\u200cthrodesis', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "C. Dillwyn Evans procedure",
+      "explanation": "Dillwyn Evans procedure Correct answer: C) Dillwyn Evans procedure Explanation: Condition shown in the image is Congenital Talipes Equinovarus (Clubfoot) . For a child between 3-10 years , osteotomy is the ideal procedure of choice and the most preferred osteotomy is the Dillwyn Evans procedure . Management of CTEV: Age Preferred Treatment <6 months Ponseti technique: (Option A ruled out) Ideally to be started as soon as possible after birth Correction sequence: Adduction→Varus (inversion)→Equinus (last & difficult to correct) Success rate: 15-80% If success achieved, 6-18 months: Daytime Phelps brace & night-time Denis Browne splint 18 months-4 years: CTEV shoes 1-3 years Turco’s posteromedial soft tissue release (Option B ruled out) McKay’s posteromedial soft tissue release 3-5 years Dillwyn Evans procedure (resection & arthrodesis of calcaneo-cuboid joint) (Option C) 5-8 years Dwyer’s osteotomy (wedge-shaped calcaneum resection) 8-10 years Davis osteotomy (wedge tarsectomy) >10 years Triple arthrodesis: Talocalcaneal-Calcaneocuboid-Talonavicular (TC-CC-TN) (Option D ruled out) Reference: Apley and Solomon’s System of Orthopedics and Trauma, 10th edition, Page 614-617 https://link.springer.com/article/10.1007/s11832-014-0557-4 https://www.jfasap.com/abstractArticleContentBrowse/JFASAP/24314/JPJ/fullText @neet_‌pg_bot",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": true,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Age-based surgical management of congenital talipes equinovarus",
+        "broader": "Management of pediatric clubfoot"
+      },
+      "strata": [
+        "management"
+      ]
+    },
+    {
+      "question_id": "0390f67f-2258-55c0-badb-b4505898d2c4",
+      "subject": "Pediatrics",
+      "source_test": "039 Git Disorders In Children",
+      "stem": "An eight-month-old child was brought to paediatrics OPD by his parents, complaining of loose, watery stools along with fever for the last 15 days. On examination, the child is active but malnourished. What is the appropriate management for this condition?",
+      "options": "{'html': 'Nutritional rehabilitation\\u200b', 'is_correct': False, 'key': 'A'} | {'html': 'Eliminat\\u200bion diet', 'is_correct': False, 'key': 'B'} | {'html': 'Empirical antibiotic thera\\u200bpy', 'is_correct': False, 'key': 'C'} | {'html': 'All of t\\u200bhe above', 'is_correct': True, 'key': 'D'}",
+      "correct_answer": "D. All of the above",
+      "explanation": "All of the above Correct Answer: D) All of the above Explanation: The given clinical scenario involves persistent diarrhoea (lasting for >2 weeks), which is managed by dietary modifications, correction of dehydration, and treatment of the cause. Management of Persistent Diarrhoea: Correction of dehydration, electrolytes, and hypoglycemia. Empirical antibiotic therapy (Option C) and antiparasitic agents as per the cause.",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Management of persistent diarrhea in a malnourished child",
+        "broader": "Pediatric diarrheal disease management"
+      },
+      "strata": [
+        "management"
+      ]
+    },
+    {
+      "question_id": "d0b534ec-97e2-5c49-9cf2-4cebb3d27d28",
+      "subject": "Psychiatry",
+      "source_test": "015 Previous Year Questions",
+      "stem": "What is the appropriate treatment for a patient who frequently experiences a sense of contamination in his hands and compulsively washes them, leading to distress and impaired performance?",
+      "options": "{'html': 'D\\u200cBT', 'is_correct': False, 'key': 'A'} | {'html': 'Exposure and Response Prev\\u200cention', 'is_correct': True, 'key': 'B'} | {'html': 'Systematic Desensitization\\u200c', 'is_correct': False, 'key': 'C'} | {'html': 'C\\u200cBT', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "B. Exposure and Response Prevention",
+      "explanation": "Exposure and Response Prevention Correct Answer: B) Exposure and Response Prevention Explanation: The patient is exhibiting symptoms typical of Obsessive-Compulsive Disorder (OCD) , specifically contamination fears and compulsive washing. The most effective treatment for OCD, especially in cases like this, is Exposure and Response Prevention (ERP) . This technique involves exposing the patient to feared situations (e.g., touching something \"contaminated\") and preventing compulsive behaviour (e.g., hand washing).",
+      "negative_question": false,
+      "is_pyq": true,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Exposure and response prevention for contamination OCD",
+        "broader": "Psychotherapy for obsessive-compulsive disorder"
+      },
+      "strata": [
+        "management"
+      ]
+    },
+    {
+      "question_id": "656da4b7-167e-5c15-ab0a-0c78b9d858f1",
+      "subject": "Pharmacology",
+      "source_test": "058 Previous Year Questions",
+      "stem": "A patient was treated for an acute migraine attack. Shortly after treatment, he developed numbness of the fingers, and his hand appeared as shown in the image. Which of the following drugs is the most likely cause?",
+      "options": "{'html': 'Dihydroe\\u200crgotamine', 'is_correct': True, 'key': 'A'} | {'html': 'Sumat\\u200criptan', 'is_correct': False, 'key': 'B'} | {'html': 'Butor\\u200cphanol', 'is_correct': False, 'key': 'C'} | {'html': 'Asp\\u200cirin', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "A. Dihydroergotamine",
+      "explanation": "Dihydroergotamine Correct Answer: A) Dihydroergotamine Explanation: Dihydroergotamine (DHE) can cause peripheral arterial vasospasm , presenting with numbness, tingling, reduced arterial flow, and digital color changes (pallor or dusky discoloration), as shown in the image. The risk is increased in patients with Raynaud's phenomenon . DHE is an ergot alkaloid used for the acute treatment of migraine .",
+      "negative_question": false,
+      "is_pyq": true,
+      "has_media": true,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Dihydroergotamine-induced peripheral vasospasm",
+        "broader": "Adverse effects of antimigraine drugs"
+      },
+      "strata": [
+        "management"
+      ]
+    },
+    {
+      "question_id": "836614e7-1532-5eb9-9e7c-c743005f64db",
+      "subject": "Surgery",
+      "source_test": "052 Breast I",
+      "stem": "A 38-year-old premenopausal woman is diagnosed with Lobular Carcinoma In Situ (LCIS) after a breast biopsy. She opts for chemoprevention as her management strategy. Her doctor discusses various medication options with her. Which of the following statements about chemoprevention for LCIS is correct?",
+      "options": "{'html': 'Chemoprevention eliminates\\u200c the risk of developing b\\u200breast cancer', 'is_correct': False, 'key': 'A'} | {'html': 'Tamoxifen reduces breast c\\u200cancer risk by 25% over 5 \\u200byears', 'is_correct': False, 'key': 'B'} | {'html': 'Chemoprevention is only ef\\u200cfective for the ipsilater\\u200bal breast', 'is_correct': False, 'key': 'C'} | {'html': 'Tamoxifen reduces breast c\\u200cancer risk by 56% over 5 \\u200byears', 'is_correct': True, 'key': 'D'}",
+      "correct_answer": "D. Tamoxifen reduces breast cancer risk by 56% over 5 years",
+      "explanation": "Tamoxifen reduces breast cancer risk by 56% over 5 years Correct Answer: D) Tamoxifen reduces breast cancer risk by 56% over 5 years. Explanation: Lobular Carcinoma In Situ (LCIS) Proliferation of malignant cells in lobules without breaching basement membrane Considered more of a risk marker than a true cancer Pathology : Cells are: Small, uniform, discohesive Loss of E-cadherin (key feature) Often bilateral & multicentric Clinical Features Asymptomatic Usually incidental finding on biopsy Not visible on mammography (no calcifications) Risk Increases risk of: Both breasts Both ductal & lobular carcinoma Management Close observation Chemoprevention Medications: Tamoxifen, Raloxifene, or Arimidex Tamoxifen reduces risk by 56% over 5 years Surgical: Bilateral mastectomy (if surgery chosen prophylactically) Reference: Sabiston Textbook of Surgery, 21st Edition, Pages 821, 827, 828 Schwartz's Principles of Surgery, 11th Edition, Pages 563, 564 SRB's Manual of Surgery, 6th Edition, Page 526 @neet_‌pg_bot",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Tamoxifen chemoprevention for LCIS",
+        "broader": "Breast cancer risk-reduction management"
+      },
+      "strata": [
+        "management"
+      ]
+    },
+    {
+      "question_id": "bb9e5ac4-7f80-5fb3-ba55-acf81f4d6c35",
+      "subject": "Surgery",
+      "source_test": "077  Pediatric Surgery",
+      "stem": "A newborn is diagnosed with Type A Tracheoesophageal fistula (TEF). The surgical team is discussing treatment options based on the gap between the proximal and distal ends of the esophagus. On further investigation, the gap is considerably larger. Which of the following will be the correct management for this patient?",
+      "options": "{'html': 'Tension-free Esophago-Esop\\u200chagostomy', 'is_correct': False, 'key': 'A'} | {'html': 'Feeding gastrostomy follow\\u200ced by tension free Esopha\\u200cgo-Esophagostomy', 'is_correct': True, 'key': 'B'} | {'html': 'Excision of fistula tract \\u200c+ Tension-free esophago-e\\u200csophagostomy.', 'is_correct': False, 'key': 'C'} | {'html': 'Excision of fistula tract \\u200c+ repair of the defect.', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "B. Feeding gastrostomy followed by tension free Esophago-Esophagostomy",
+      "explanation": "Feeding gastrostomy followed by tension free Esophago-Esophagostomy Correct Answer: B) Feeding gastrostomy followed by tension free Esophago-Esophagostomy Explanation: The management of Type A tracheoesophageal anomaly (isolated esophageal atresia without TEF) depends on the gap between the proximal and distal esophageal segments . Small-gap atresia: Primary tension-free esophago-esophagostomy is performed. Large-gap atresia: Feeding gastrostomy is performed initially to provide nutrition, followed by delayed tension-free esophago-esophagostomy once primary repair is feasible.",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": true,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Management of long-gap pure esophageal atresia",
+        "broader": "Surgical management of congenital esophageal anomalies"
+      },
+      "strata": [
+        "management"
+      ]
+    },
+    {
+      "question_id": "472300a9-bcb1-59cc-976b-8f4d0ab7eec2",
+      "subject": "Psychiatry",
+      "source_test": "009 Mood Disorders",
+      "stem": "A 32-year-old female presents to the clinic with persistent low mood, increased appetite, and excessive sleeping. She reports that her mood tends to improve temporarily in response to positive events and that she has heightened sensitivity to rejection. Which of the following treatments is least appropriate for her condition?",
+      "options": "{'html': 'Monoamine oxidase inhibito\\u200crs (MAOIs)', 'is_correct': False, 'key': 'A'} | {'html': 'Selective serotonin reupta\\u200cke inhibitors (SSRIs)', 'is_correct': False, 'key': 'B'} | {'html': 'Tricyclic antidepressants \\u200c(TCAs)', 'is_correct': True, 'key': 'C'} | {'html': 'Cognitive-behavioral thera\\u200cpy (CBT)', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "C. Tricyclic antidepressants (TCAs)",
+      "explanation": "Tricyclic antidepressants (TCAs) Correct Answer: C) Tricyclic antidepressants (TCAs) Explanation: Symptoms of mood reactivity, increased appetite, hypersomnia, and rejection sensitivity align with diagnosis of Atypical Depression. TCAs are less effective in treating atypical depression compared to other antidepressants. They are associated with more significant side effects, such as sedation and weight gain, which can worsen the symptoms of this subtype of depression.",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Treatment selection for atypical depression",
+        "broader": "Management of depressive disorders"
+      },
+      "strata": [
+        "management"
+      ]
+    },
+    {
+      "question_id": "45e70a56-a5db-5e0c-a67f-ac5247b5cabc",
+      "subject": "Physiology",
+      "source_test": "046 Ascending And Descending Tracts Of Spinal Cords",
+      "stem": "A 45-year-old man recently had his right leg amputated below the knee. Weeks after surgery, he feels sensations and pain in the missing leg area, sometimes triggered by touching his thigh. Which statement best explains the patient's condition and suggests a treatment?",
+      "options": "{'html': 'Brain reorganization of co\\u200brtical brain area &amp; S\\u200cpinal cord stimulation ma\\u200dy help.', 'is_correct': True, 'key': 'A'} | {'html': 'Infection at the amputatio\\u200bn site causes pain &amp; \\u200cAntibiotics should be pre\\u200dscribed.', 'is_correct': False, 'key': 'B'} | {'html': 'Reorganization at spinal c\\u200bord neuronal connection l\\u200ceading to pain.', 'is_correct': False, 'key': 'C'} | {'html': 'Pain is due to rejection o\\u200bf the prosthetic limb &am\\u200cp; Discontinue use immedi\\u200dately.', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "A. Brain reorganization of cortical brain area & Spinal cord stimulation may help.",
+      "explanation": "Brain reorganization of cortical brain area & Spinal cord stimulation may help. Correct Answer: A) Brain reorganization of cortical brain area & Spinal cord stimulation may help. Explanation: The patient is experiencing phantom limb pain , which occurs due to cortical reorganization in the somatosensory cortex after amputation.",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Mechanism and treatment of phantom limb pain",
+        "broader": "Neuropathic pain after amputation"
+      },
+      "strata": [
+        "management"
+      ]
+    },
+    {
+      "question_id": "dda5cdd0-2f00-5664-a375-71fe176dd4a4",
+      "subject": "Pathology",
+      "source_test": "060 Pathology Of Female Genital Tract I",
+      "stem": "A 45-year-old woman comes to the OPD for regular Pap smear screening. The smear suggests a low-grade squamous intraepithelial lesion. Which of the following abnormal cell types was most likely seen on the smear? {{caption_text}}",
+      "options": "{'html': 'Doderle\\u200din cells', 'is_correct': False, 'key': 'A'} | {'html': 'Hobnai\\u200dl cells', 'is_correct': False, 'key': 'B'} | {'html': 'Arias-Stella reaction cell\\u200ds', 'is_correct': False, 'key': 'C'} | {'html': 'Koilo\\u200dcytes', 'is_correct': True, 'key': 'D'}",
+      "correct_answer": "D. Koilocytes",
+      "explanation": "Koilocytes Correct Answer: D) Koilocytes Explanation: Koilocytes are abnormal cervical cells seen on pap smears, indicative of HPV infections of the cervix. They are squamous epithelial cells with nuclear enlargement, coarse chromatin, perinuclear cavitation, and irregular nuclear membranes. A rim of condensed cytoplasm often surrounds the perinuclear cavitation, giving the cell a \"halo\" appearance.",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": true,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Koilocyte recognition in cervical LSIL",
+        "broader": "Cervical cytopathology of HPV infection"
+      },
+      "strata": [
+        "staging_or_grading"
+      ]
+    },
+    {
+      "question_id": "23c8c6b4-bdd7-534b-be97-7c5e45f11cdd",
+      "subject": "Dermatology",
+      "source_test": "001 Basics Of Dermatology",
+      "stem": "A 6-year-old child presents with a history of frequent fractures with minimal trauma. Physical examination reveals blue sclerae, triangular face, and short stature. Radiographic findings show multiple fractures in various stages of healing, thinning of long bones, and wormian bones in the skull. Which of the following is the correct combination regarding the defective protein and its location in the skin?",
+      "options": "{'html': 'Collagen\\u200c - Dermis', 'is_correct': True, 'key': 'A'} | {'html': 'Elastin - \\u200cHypodermis', 'is_correct': False, 'key': 'B'} | {'html': 'Collagen -\\u200c Hypodermis', 'is_correct': False, 'key': 'C'} | {'html': 'Elastin \\u200c- Dermis', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "A. Collagen - Dermis",
+      "explanation": "Collagen - Dermis Correct Answer: A) Collagen - Dermis Explanation: The given clinical scenario suggests Osteogenesis imperfecta, also known as brittle bone disease. This genetic disorder is characterized by defective collagen (Type I) synthesis. The dermis is a connective tissue layer present between the epidermis and hypodermis and is mainly composed of collagen and some elastin.",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": true,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Type I collagen defect in osteogenesis imperfecta",
+        "broader": "Heritable collagen disorders"
+      },
+      "strata": [
+        "staging_or_grading"
+      ]
+    },
+    {
+      "question_id": "2191cfe5-862f-5182-bb89-a0f5d50925fe",
+      "subject": "Orthopedics",
+      "source_test": "022 Previous Year Questions",
+      "stem": "What is the current stage of the disease in a patient who presents with hip pain and true shortening of the limb, and is diagnosed with tuberculosis of the hip?",
+      "options": "{'html': 'Stage of ear\\u200bly arthritis', 'is_correct': False, 'key': 'A'} | {'html': 'Stage of \\u200bsynovitis', 'is_correct': False, 'key': 'B'} | {'html': 'Stage of advanced arthriti\\u200bs', 'is_correct': True, 'key': 'C'} | {'html': 'Stage of arthritis without\\u200b subluxation', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "C. Stage of advanced arthritis",
+      "explanation": "Stage of advanced arthritis Correct Answer: C) Stage of advanced arthritis Explanation: Presence of hip pain and true shortening of the limb is suggestive of Stage-III TB hip , known as Stage of advanced arthritis . Babulkar and Pandey Clinico-Radiological Classification of TB Hip stages: Stage Clinical Findings X-ray findings Stage I: Synovitis (Option A) Irritable hip Increased FABER (Flexion, Abduction, External Rotation) Apparent lengthening due to FABER (Position of ease due to synovitis) Terminal movements are restricted by 25% Normal or haziness of the articular margins Stage II: Early Arthritis (Option B) Early joint pain, stiffness Increased FADIR (Flexion, Adduction, Internal Rotation) Apparent shortening due to FADIR Gluteal and Quadriceps muscle wasting ROM restricted by 50% Osteopenia and narrowing of joint space Stage III: Late Arthritis (Option C) Marked FADIR True shortening Gross restriction of movements (usually >50%) Marked subchondral erosion and destruction Stage IV: Pathological Dislocation /severe arthritis (Option D) Marked FADIR Gross shortening Severe destruction and loss of joint space \" Wandering/traveling Acetabulum \": Pathological dislocation/subluxation due to gross destruction of the femoral head or the superior acetabular margin. {{caption_text}} End stage of TB hip/arthritis: Fibrous ankylosis End stage of TB spine: Bony ankylosis Reference: Maheshwari’s Essential Orthopaedics 6th Edition pages 196,197 @neet_​pg_bot",
+      "negative_question": false,
+      "is_pyq": true,
+      "has_media": true,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Clinical staging of hip tuberculosis",
+        "broader": "Osteoarticular tuberculosis classification"
+      },
+      "strata": [
+        "staging_or_grading"
+      ]
+    },
+    {
+      "question_id": "6fab617c-e3f5-581a-821a-034a03be903c",
+      "subject": "Anatomy",
+      "source_test": "001 Gametogenesis And Ivf",
+      "stem": "Which stage of spermatogenesis is characterised by an independent assortment of maternal and paternal chromosomes?",
+      "options": "{'html': 'Spermatogonia to primary s\\u200cpermatocyte', 'is_correct': False, 'key': 'A'} | {'html': 'Primary spermatocyte to se\\u200ccondary spermatocyte', 'is_correct': True, 'key': 'B'} | {'html': 'Secondary spermatocyte to \\u200cspermatid', 'is_correct': False, 'key': 'C'} | {'html': 'Spermatid to\\u200c spermatozoa', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "B. Primary spermatocyte to secondary spermatocyte",
+      "explanation": "Primary spermatocyte to secondary spermatocyte Correct Answer: B) Primary spermatocyte to secondary spermatocyte Explanation : Independent assortment is the random distribution of chromosomes It occurs at Meiosis 1 where there is division from primary spermatocyte to secondary spermatocyte. It states that genes located on different chromosomes are inherited independently of each other. In other words, the allele a parent passes on for one trait does not affect the allele passed on for another trait.",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": true,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Independent assortment during meiosis I",
+        "broader": "Spermatogenesis and meiotic chromosome segregation"
+      },
+      "strata": [
+        "staging_or_grading"
+      ]
+    },
+    {
+      "question_id": "2f505a92-77a1-5e92-8db5-25bee64b7b93",
+      "subject": "Orthopedics",
+      "source_test": "035 Tb Of Bone",
+      "stem": "A 14-year-old girl presents with a 4-month history of progressive left knee pain, worsening with activity and at night. She also reports low-grade fever and fatigue. Examination reveals soft-tissue swelling and restricted range of motion of the knee. The X-ray is shown below. What is Phemister's triad, and how does it relate to this case?",
+      "options": "{'html': 'A triad of symptoms indica\\u200bting septic arthritis', 'is_correct': False, 'key': 'A'} | {'html': 'A triad of radiological fi\\u200bndings indicating tubercu\\u200blous arthritis', 'is_correct': True, 'key': 'B'} | {'html': 'A set of criteria for diag\\u200bnosing osteosarcoma', 'is_correct': False, 'key': 'C'} | {'html': 'A triad of radiological cr\\u200biteria for diagnosing Juv\\u200benile Idiopathic Arthriti\\u200bs', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "B. A triad of radiological findings indicating tuberculous arthritis",
+      "explanation": "A triad of radiological findings indicating tuberculous arthritis Correct Answer: B) A triad of radiological findings indicating tuberculous arthritis Explanation: The history of chronic knee pain , constitutional symptoms, and the X-ray showing periarticular osteopenia, peripheral erosions, and joint space narrowing are suggestive of tuberculous arthritis . Phemister's triad consists of: Juxta-articular osteopenia (osteoporosis) Peripheral osseous erosions Gradual narrowing of the joint space It is a classic radiological feature of tuberculous arthritis A triad of symptoms indicating septic arthritis (Option A): Septic arthritis typically presents with acute onset of severe joint pain, swelling, fever, and joint effusion rather than the chronic radiographic changes of Phemister's triad. A set of criteria for diagnosing osteosarcoma (Option C): Osteosarcoma is characterized by aggressive bone destruction, periosteal reaction (Codman's triangle or sunburst appearance), and a soft tissue mass , not Phemister's triad.",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": true,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Phemister triad in tuberculous arthritis",
+        "broader": "Radiographic diagnosis of osteoarticular tuberculosis"
+      },
+      "strata": [
+        "staging_or_grading"
+      ]
+    },
+    {
+      "question_id": "0dc1c658-b779-5405-9332-ccf6a7585d65",
+      "subject": "Orthopedics",
+      "source_test": "012 Bone And Joint Infections   I",
+      "stem": "A 35-year-old milkman presents with a three-week history of fluctuating low-grade fevers, drenching night sweats, and severe lower back pain. He reports increasing discomfort in his hips and knees, particularly after long days of work. Which of the following is the most likely diagnosis for this patient?",
+      "options": "{'html': 'Osteoar\\u200bthritis', 'is_correct': False, 'key': 'A'} | {'html': 'Tuberculosis osteomyelitis\\u200b', 'is_correct': False, 'key': 'B'} | {'html': 'Brucellar o\\u200bsteomyelitis', 'is_correct': True, 'key': 'C'} | {'html': 'Rheumatoid\\u200b arthritis', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "C. Brucellar osteomyelitis",
+      "explanation": "Brucellar osteomyelitis Correct Answer: C) Brucellar osteomyelitis Explanation: The combination of fluctuating low-grade fevers, night sweats, and joint pain, especially in a milkman, aligns perfectly with the presentation of brucella infection due to occupational exposure. Aetiology Caused by Brucella melitensis, Brucella abortus (cattle), and Brucella suis (pigs). Transmission via unpasteurized milk or contact with infected meat (farmers, meat handlers).",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": true,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Clinical diagnosis of brucellar osteomyelitis",
+        "broader": "Occupational zoonotic bone and joint infections"
+      },
+      "strata": [
+        "staging_or_grading"
+      ]
+    },
+    {
+      "question_id": "e62b65e1-6b68-5a8d-863b-60573e6730f3",
+      "subject": "Microbiology",
+      "source_test": "013 Mycobacterium",
+      "stem": "A 28-year-old patient presents with high-grade fever, headache, and neck stiffness. A lumbar puncture is performed, and the CSF is collected in a sterile container. After allowing the sample to stand overnight, the laboratory findings shown in the image are observed. What is the most likely clinical diagnosis?",
+      "options": "{'html': 'Pyogenic \\u200cmeningitis', 'is_correct': False, 'key': 'A'} | {'html': 'Tuberculous\\u200c meningitis', 'is_correct': True, 'key': 'B'} | {'html': 'Viral me\\u200cningitis', 'is_correct': False, 'key': 'C'} | {'html': 'Cryptococca\\u200cl meningitis', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "B. Tuberculous meningitis",
+      "explanation": "Tuberculous meningitis Correct Answer: B) Tuberculous meningitis Explanation: A cobweb coagulum in CSF after standing overnight is pathognomonic for tuberculous meningitis due to high protein and fibrin content, forming a delicate web-like clot. Diagnosis of Extrapulmonary Tuberculosis Cerebrospinal Fluid (CSF) Forms a spiderweb clot/Cob web coagulum on standing (classical of TB meningitis) (Option B) Lymph Node FNAC is useful for diagnosis →Shows caseating granulomas and AFB Biopsy Bone Marrow/Liver Biopsy: For culture (disseminated/miliary TB) Blood Useful for culture → Especially in HIV co-infected patients Pus Pus from a tuberculous abscess yields positive results in smear and culture. Pleural Effusion Pleural tap performed → Collected with citrate to prevent clotting Centrifugation and concentration (if contaminated with other bacteria) Urine Urinary excretion of bacilli in renal TB is intermittent.",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": true,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Diagnosis of tuberculous meningitis from CSF cobweb coagulum",
+        "broader": "CSF-based diagnosis of meningitis"
+      },
+      "strata": [
+        "staging_or_grading"
+      ]
+    },
+    {
+      "question_id": "bf52225f-6ff8-570f-993d-38f13f1d7820",
+      "subject": "Surgery",
+      "source_test": "078 Previous Year Questions   Part 1",
+      "stem": "Which of the following is not a component of TNM stage T4b breast cancer?",
+      "options": "{'html': 'Ulcer\\u200cation', 'is_correct': False, 'key': 'A'} | {'html': 'Peau d\\u200c’orange', 'is_correct': False, 'key': 'B'} | {'html': 'Inflammator\\u200cy carcinoma', 'is_correct': True, 'key': 'C'} | {'html': 'Ipsilateral macroscopic sa\\u200ctellite nodules', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "C. Inflammatory carcinoma",
+      "explanation": "Inflammatory carcinoma Correct Answer: C) Inflammatory carcinoma Explanation: Inflammatory carcinoma is classified separately as T4d in the TNM staging, but not stage T4b. TNM staging for breast cancer Stage Description Tumor size (T) TX Primary tumor cannot be assessed T0 No evidence of primary tumor Tis Carcinoma in situ (DCIS, LCIS, or Paget's disease) T1 Tumor ≤ 2 cm T1mi Tumor ≤ 1 mm T1a Tumor > 1 mm but ≤ 5 mm T1b Tumor > 5 mm but ≤ 10 mm T1c Tumor > 10 mm but ≤ 20 mm T2 Tumor > 2 cm but ≤ 5 cm T3 Tumor > 5 cm T4 Tumor of any size with direct extension to chest wall or skin T4a Extension to chest wall T4b Ulceration or skin nodules (Option A, B & D) T4c Both T4a and T4b T4d Inflammatory breast cancer (Option C) Node (N) NX Regional lymph nodes cannot be assessed N0 No regional lymph node metastasis N1 Metastases to movable ipsilateral level I, II axillary lymph nodes N2 Metastasis to axillary lymph nodes or clinically apparent internal mammary nodes N2a Metastasis to axillary lymph nodes that are clinically fixed or matted N2b Metastasis to internal mammary nodes without axillary lymph node involvement N3 Metastasis to axillary lymph nodes or infraclavicular nodes, or to supraclavicular nodes N3a Metastasis to infraclavicular nodes N3b Metastasis to internal mammary nodes N3c Metastasis to supraclavicular nodes Metastasis (M) MX Distant metastasis cannot be assessed M0 No distant metastasis M1 Distant metastasis present Stage Grouping Stage 0: Tis N0 M0 Stage IA: T1/T1mi N0 M0 Stage IB: T0 N1mi M0; T1/T1mi N1mi M0 Stage IIA: T0 N1 M0; T1 N1 M0; T2 N0 M0 Stage IIB: T2 N1 M0; T3 N0 M0 Stage IIIA: T0 N2 M0; T1 N2 M0; T2 N2 M0; T3 N1 M0 Stage IIIB: T3 N2 M0 Stage IIIC: T4 N0 M0; T4 N1 M0; T4 N2 M0; Any T N3 M0 Stage IV: Any T Any N M1 Reference: Bailey & Love's Short Practice of Surgery, 28th Edition, Page 934. Sabiston Textbook of Surgery, 21st Edition, Page 833.",
+      "negative_question": true,
+      "is_pyq": true,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "T4b criteria in breast cancer TNM staging",
+        "broader": "TNM staging of breast carcinoma"
+      },
+      "strata": [
+        "staging_or_grading"
+      ]
+    },
+    {
+      "question_id": "176deb28-f23f-5840-9bdb-227ced2a951d",
+      "subject": "Pathology",
+      "source_test": "079 Macrocytic Hypochromic   Normocytic Anemia",
+      "stem": "A patient presents with inflammation of the mouth and tongue. He is a non-vegetarian. As part of the evaluation, a Schilling test was done and found unremarkable. Which of the following investigations could lead to the aetiology behind this presentation?",
+      "options": "{'html': 'Serum fol\\u200bate levels', 'is_correct': True, 'key': 'A'} | {'html': 'Peripheral \\u200bblood smear', 'is_correct': False, 'key': 'B'} | {'html': 'Anti-IF ant\\u200bibody levels', 'is_correct': False, 'key': 'C'} | {'html': 'Serum Vitami\\u200bn B12 levels', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "A. Serum folate levels",
+      "explanation": "Serum folate levels Correct Answer: A) Serum folate levels Explanation: It is a scenario of possible megaloblastic anaemia due to folate deficiency. Hence, serum/red cell folate can lead to the aetiology behind this presentation. Schilling test is done by orally administering the patient with radioactive vitamin B12 and checking its presence in the urine.",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Serum folate testing for suspected folate deficiency",
+        "broader": "Etiologic evaluation of megaloblastic anemia"
+      },
+      "strata": [
+        "organism_vs_test"
+      ]
+    },
+    {
+      "question_id": "09f42021-3c67-5409-84e3-492475a50b4f",
+      "subject": "Biochemistry",
+      "source_test": "032 Rna Transcription  Genetic Code Mutation  Translation Inhibitors",
+      "stem": "A DNA sequence originally reads 5'-ATG GCA TCG TAC-3'. After a mutation, it reads 5'-ATG GCT CGT AC-3'. Identify the mutation that has occured?",
+      "options": "{'html': 'Frameshif\\u200bt mutation', 'is_correct': True, 'key': 'A'} | {'html': 'Point m\\u200butation', 'is_correct': False, 'key': 'B'} | {'html': 'Transitio\\u200bn mutation', 'is_correct': False, 'key': 'C'} | {'html': 'Insertion\\u200b mutation', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "A. Frameshift mutation",
+      "explanation": "Frameshift mutation Correct Answer: A) Frameshift mutation Explanation: There is deletion of adenine at the 6th position from the DNA sequence, leading to a shift in the reading frame. This is a frameshift mutation. A mutation is defined as a change in the nucleotide sequence of DNA.",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": true,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Identification of a deletion-induced frameshift mutation",
+        "broader": "Classification of DNA mutations"
+      },
+      "strata": [
+        "organism_vs_test"
+      ]
+    },
+    {
+      "question_id": "27e147e7-9994-54f2-85cf-eaf4937be963",
+      "subject": "Pediatrics",
+      "source_test": "044 Previous Year Questions",
+      "stem": "Identify the condition?",
+      "options": "{'html': 'Bladder \\u200dexstrophy', 'is_correct': True, 'key': 'A'} | {'html': 'Ompha\\u200dlocele', 'is_correct': False, 'key': 'B'} | {'html': 'Persistent vitellointestin\\u200dal duct', 'is_correct': False, 'key': 'C'} | {'html': 'Gastro\\u200dschisis', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "A. Bladder exstrophy",
+      "explanation": "Bladder exstrophy Correct Answer: A) Bladder exstrophy The above image is suggestive of Bladder exstrophy. Bladder exstrophy: {{caption_text}} Etiology Disruption in normal development during pregnancy. Exact triggers remain unclear.",
+      "negative_question": false,
+      "is_pyq": true,
+      "has_media": true,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Visual diagnosis of bladder exstrophy",
+        "broader": "Congenital abdominal wall and urogenital anomalies"
+      },
+      "strata": [
+        "organism_vs_test"
+      ]
+    },
+    {
+      "question_id": "417fb741-b3f9-5650-92eb-4d02acba6c96",
+      "subject": "Surgery",
+      "source_test": "044 Previous Year Questions",
+      "stem": "A 20-year-old chronic alcoholic presents with severe hematemesis. USG shows distention of the portal vein and the liver appears hyperechoic. Pantoprazole has been initiated. What is the next appropriate step in management?",
+      "options": "{'html': 'Initiate a course of broad\\u200b-spectrum antibiotics', 'is_correct': False, 'key': 'A'} | {'html': 'Order a liver biopsy to as\\u200bsess for fibrosis', 'is_correct': False, 'key': 'B'} | {'html': 'Administer intravenous flu\\u200bids and electrolyte repla\\u200dcement', 'is_correct': True, 'key': 'C'} | {'html': 'Perform an endoscopy to lo\\u200bok for varices', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "C. Administer intravenous fluids and electrolyte replacement",
+      "explanation": "Administer intravenous fluids and electrolyte replacement Correct Answer: D) Perform an endoscopy to look for varices Explanation: The patient most likely has acute variceal hemorrhage secondary to portal hypertension caused by chronic liver disease. Following initial resuscitation and stabilization, the next appropriate step is urgent upper gastrointestinal endoscopy , which confirms the presence of esophageal or gastric varices and allows definitive endoscopic treatment such as variceal band ligation or sclerotherapy. Endoscopy should be performed as early as possible, ideally within 12 hours of presentation.",
+      "negative_question": false,
+      "is_pyq": true,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Initial resuscitation in acute variceal hemorrhage",
+        "broader": "Emergency management of upper gastrointestinal bleeding"
+      },
+      "strata": [
+        "pyq_or_broad"
+      ]
+    },
+    {
+      "question_id": "3c36ab01-598d-5f4e-bc0e-9dbbdc4bef54",
+      "subject": "Anaesthesia",
+      "source_test": "017 Anaesthesia Machine",
+      "stem": "Which of the following is the CO 2 absorption capacity of soda lime?",
+      "options": "{'html': '50L CO 2 p\\u200ber 100 gram', 'is_correct': False, 'key': 'A'} | {'html': '10L CO 2 p\\u200ber 100 gram', 'is_correct': False, 'key': 'B'} | {'html': '36L CO 2 p\\u200ber 100 gram', 'is_correct': False, 'key': 'C'} | {'html': '23L CO 2 p\\u200ber 100 gram', 'is_correct': True, 'key': 'D'}",
+      "correct_answer": "D. 23L CO 2 per 100 gram",
+      "explanation": "23L CO 2 per 100 gram Correct Answer: D) 23L CO 2 per 100 grams Explanation: Soda lime absorbs up to 23 L of CO₂ per 100 g of absorbent Reference: Morgan and Mikhail’s Clinical Anesthesiology, 7th edition, Pages 91-92 Daniel Aston Equipment in Anaesthesia and Critical Care, Page 97 @neet_​pg_bot",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Carbon dioxide absorption capacity of soda lime",
+        "broader": "Anesthesia breathing-system carbon dioxide absorbents"
+      },
+      "strata": [
+        "straightforward_or_fill"
+      ]
+    },
+    {
+      "question_id": "82321337-5b26-54c1-b294-7f0e1e7c1d82",
+      "subject": "Medicine",
+      "source_test": "064 Basics Of Cranial Nerves  Mechanical Thrombectomy  Stroke",
+      "stem": "A 62-year-old patient presents with left-sided arm and leg weakness, right-sided facial paralysis with lateral rectus gaze palsy and nystagmus. Which of the following syndromes is consistent with these symptoms?",
+      "options": "{'html': 'Foville \\u200bSyndrome', 'is_correct': True, 'key': 'A'} | {'html': 'Benedikt\\u200b syndrome', 'is_correct': False, 'key': 'B'} | {'html': 'Millard\\u200b Gubler', 'is_correct': False, 'key': 'C'} | {'html': 'Wallenber\\u200bg syndrome', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "A. Foville Syndrome",
+      "explanation": "Foville Syndrome Correct Answer: A) Foville syndrome Explanation: Patient has crossed features implying brain stem stroke. Left sided weakness with right sided 6 th and 7 th nerve palsy Foville’s syndrome is involvement of nucleus of 6 th nerve . It communicates with opposite side 3 rd nerve via medial longitudinal fasciculus.",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Localization and recognition of Foville syndrome",
+        "broader": "Crossed brainstem stroke syndromes"
+      },
+      "strata": [
+        "straightforward_or_fill"
+      ]
+    },
+    {
+      "question_id": "9477958b-98a3-506d-a390-7caaf8164679",
+      "subject": "Pediatrics",
+      "source_test": "012 Infant   Child Nutrition",
+      "stem": "A working mother expresses breast milk using an electric breast pump and stores it in a refrigerator at 4°C for later use. According to current recommendations, the expressed breast milk should ideally be used within:",
+      "options": "{'html': '4 h\\u200cours', 'is_correct': False, 'key': 'A'} | {'html': '24 h\\u200cours', 'is_correct': False, 'key': 'B'} | {'html': '48 h\\u200cours', 'is_correct': False, 'key': 'C'} | {'html': '4 d\\u200cays', 'is_correct': True, 'key': 'D'}",
+      "correct_answer": "D. 4 days",
+      "explanation": "4 days Correct Answer: D) 4 days Explanation: Expressed breast milk can be safely stored for varying durations depending on the storage conditions. Fresh expressed breast milk can be stored: At room temperature: Up to 4 hours (Option A ruled out) In a refrigerator (≤4°C): Up to 4 days (Option D) In a freezer: 6-12 months Thawed frozen breast milk should be used within 24 hours . (Option B ruled out) Since the mother has stored the expressed milk in a refrigerator at 4°C , it should ideally be used within 4 days .",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Refrigerated storage duration of expressed breast milk",
+        "broader": "Safe handling and storage of human milk"
+      },
+      "strata": [
+        "straightforward_or_fill"
+      ]
+    },
+    {
+      "question_id": "5ac575fb-b4c0-5cca-b0c1-8826f909385f",
+      "subject": "Surgery",
+      "source_test": "028 Stomach Ii",
+      "stem": "According to the Japanese classification, early gastric cancer is defined by tumour invasion limited to which layers of the gastric wall?",
+      "options": "{'html': 'Mucosa and s\\u200cubmucosa only', 'is_correct': True, 'key': 'A'} | {'html': 'Musculari\\u200cs propria', 'is_correct': False, 'key': 'B'} | {'html': 'Ser\\u200cosa', 'is_correct': False, 'key': 'C'} | {'html': 'Adjacen\\u200ct organs', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "A. Mucosa and submucosa only",
+      "explanation": "Mucosa and submucosa only Correct Answer: A) Mucosa and submucosa only Explanation: Early gastric cancer is defined as carcinoma confined to the mucosa or submucosa, regardless of lymph node involvement. This stage has an excellent prognosis with a high chance of cure, especially with endoscopic or surgical resection. Once the tumour invades the muscularis propria or beyond, it is classified as advanced gastric cancer.",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Definition of early gastric cancer by depth of invasion",
+        "broader": "Gastric cancer classification and staging"
+      },
+      "strata": [
+        "straightforward_or_fill"
+      ]
+    },
+    {
+      "question_id": "0b23e531-8e28-532e-af0f-2f49a41b49fa",
+      "subject": "Community Medicine",
+      "source_test": "018 Mumps  Measles  Rubella  Pertussis",
+      "stem": "What is the primary goal of the \"Keep up\" strategy in the WHO measles and rubella elimination strategy?",
+      "options": "{'html': 'Conducting a nationwide va\\u200cccination campaign target\\u200cing all children born aft\\u200ber the catch-up campaign', 'is_correct': False, 'key': 'A'} | {'html': 'Ensuring routine services \\u200caimed at vaccinating more\\u200c than 95% of each success\\u200bive birth cohort', 'is_correct': True, 'key': 'B'} | {'html': 'Targeting all children 9 m\\u200conths to 14 years of age,\\u200c irrespective of history \\u200bof measles disease', 'is_correct': False, 'key': 'C'} | {'html': 'Conducting vaccination cam\\u200cpaigns every 2-4 years', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "B. Ensuring routine services aimed at vaccinating more than 95% of each successive birth cohort",
+      "explanation": "Ensuring routine services aimed at vaccinating more than 95% of each successive birth cohort Correct Answer: B) Ensuring routine services aimed at vaccinating more than 95% of each successive birth cohort Explanation: WHO measles and rubella elimination strategy Catch up Nationwide vaccination campaign targeting all children 9 months to 14 years of age, irrespective of history of measles disease or vaccination status. (Option C ruled out) (Measles and rubella elimination campaign) Keep up Routine services aimed at vaccinating more than 95% of each successive birth cohort. (Option B) (Routine vaccination) Follow up Subsequent nationwide vaccination campaigns conducted every 2-4 years targeting usually all children born after the catch-up campaign.",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "WHO “Keep up” measles-rubella vaccination strategy",
+        "broader": "Measles and rubella elimination strategies"
+      },
+      "strata": [
+        "straightforward_or_fill"
+      ]
+    },
+    {
+      "question_id": "b6e97266-d34a-5fc4-90c1-3be9f7deef7e",
+      "subject": "Radiology",
+      "source_test": "023 Nephroradiology",
+      "stem": "During an intravenous urography study, both kidneys opacify normally in the early nephrogram phase. On delayed images at 10 minutes, contrast persists only in the left kidney, while it has washed out from the right. What is the most likely underlying cause?",
+      "options": "{'html': 'Acute complete renal arter\\u200cial occlusion', 'is_correct': False, 'key': 'A'} | {'html': 'Polycystic k\\u200cidney disease', 'is_correct': False, 'key': 'B'} | {'html': 'Acute ureteric obstruction\\u200c', 'is_correct': True, 'key': 'C'} | {'html': 'Chronic hyd\\u200cronephrosis', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "C. Acute ureteric obstruction",
+      "explanation": "Acute ureteric obstruction Correct Answer: C) Acute ureteric obstruction Explanation: This imaging scenario represents a dense persistent nephrogram , defined as retention of contrast material within the renal parenchyma for more than 3 minutes after contrast administration. In this case, the delayed persistence of contrast in the left kidney indicates impaired outflow despite preserved perfusion. Acute ureteric obstruction causes increased intratubular pressure, leading to delayed contrast washout and a dense, persistent nephrogram.",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": true,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Recognition of acute ureteric obstruction on intravenous urography",
+        "broader": "Radiologic diagnosis of urinary tract obstruction"
+      },
+      "strata": [
+        "straightforward_or_fill"
+      ]
+    },
+    {
+      "question_id": "431423b9-1f16-559f-9e55-2e8a30654ba1",
+      "subject": "Pharmacology",
+      "source_test": "021 Previous Year Questions",
+      "stem": "Which of the following drugs does not reduce mortality in patients with heart failure with reduced ejection fraction (HFrEF)?",
+      "options": "{'html': 'Dig\\u200doxin', 'is_correct': True, 'key': 'A'} | {'html': 'Beta-b\\u200dlockers', 'is_correct': False, 'key': 'B'} | {'html': 'ACE inh\\u200dibitors', 'is_correct': False, 'key': 'C'} | {'html': 'Hydralazine + isosorbide d\\u200dinitrate', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "A. Digoxin",
+      "explanation": "Digoxin Correct Answer: A) Digoxin Explanation: Heart failure with reduced ejection fraction (HFrEF) is a common condition in which the heart cannot pump enough blood to meet the body's needs. Several drugs have been shown to improve symptoms and reduce mortality in patients with HFrEF. Digoxin is a medication used for many years to treat heart failure.",
+      "negative_question": true,
+      "is_pyq": true,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Mortality-reducing pharmacotherapy in HFrEF",
+        "broader": "Guideline-directed management of systolic heart failure"
+      },
+      "strata": [
+        "straightforward_or_fill"
+      ]
+    },
+    {
+      "question_id": "959efab6-a14c-5079-aef6-043c7e926d6b",
+      "subject": "Pharmacology",
+      "source_test": "070 Cytotoxic Drugs",
+      "stem": "A 30 y/o male came with h/o testicular cancer. He underwent chemotherapy 6 months ago for the same. He now presents with progressive dyspnea and a dry cough for the past 3 months. Pulmonary function tests reveal restrictive lung disease with decreased lung volumes. Chest Xray shows diffuse basilar infiltrates and Pulmonary fibrosis. Which of the following chemotherapy drugs is most likely responsible for the patient's condition?",
+      "options": "{'html': 'Cisp\\u200clatin', 'is_correct': False, 'key': 'A'} | {'html': 'Etop\\u200coside', 'is_correct': False, 'key': 'B'} | {'html': 'Bleo\\u200cmycin', 'is_correct': True, 'key': 'C'} | {'html': 'Methot\\u200crexate', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "C. Bleomycin",
+      "explanation": "Bleomycin Correct Answer: C) Bleomycin Explanation: The patient's signs, symptoms, and imaging studies suggest that he most likely has pulmonary fibrosis. This could be a result of the side effects of the drug bleomycin used in his chemotherapy regimen (BEP- Bleomycin, Etoposide, Cisplatin) Bleomycin is an antitumor antibiotic that is well-known for its association with pulmonary toxicity, including pulmonary fibrosis which occurs as follows: Cisplatin (Option A) is a platinum-based chemotherapy drug commonly used in the treatment of testicular cancer. Etoposide (Option B) is a topoisomerase II inhibitor used in the treatment of testicular cancer among other malignancies.",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": true,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Bleomycin-induced pulmonary fibrosis",
+        "broader": "Pulmonary toxicity of anticancer drugs"
+      },
+      "strata": [
+        "straightforward_or_fill"
+      ]
+    },
+    {
+      "question_id": "5ea8f6fe-7305-5960-95ee-1cfb04ae1b93",
+      "subject": "Ophthalmology",
+      "source_test": "024 Cornea  I",
+      "stem": "A 50 y/o patient presents for a corneal transplant evaluation. The patient has a history of systemic infections, including tuberculosis, and is seeking a corneal graft for a therapeutic indication. Which of the following is an absolute contraindication for cornea donation in this patient?",
+      "options": "{'html': 'Death due to an unknown ca\\u200cuse', 'is_correct': True, 'key': 'A'} | {'html': 'Previous history of ocular\\u200c surgery', 'is_correct': False, 'key': 'B'} | {'html': 'Ocular in\\u200cflammation', 'is_correct': False, 'key': 'C'} | {'html': 'Retinob\\u200clastoma', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "A. Death due to an unknown cause",
+      "explanation": "Death due to an unknown cause Correct Answer: A) Death due to an unknown cause Explanation: Death due to an unknown cause : This is an absolute contraindication as it could signal serious undiagnosed conditions. Contraindications for cornea donation Absolute contraindications Relative contraindications 1) Death due to an unknown cause 2) Systemic infections HIV Hepatitis Congenital rubella TB Syphilis 3) CNS infection or diseases Multiple sclerosis Rabies Creutzfeldt-Jakob disease 4) Most haematological malignancies Leukaemia Lymphoma Myeloma and other myeloproliferative disorders and syndromes Ocular inflammation (Option C) Any congenital or acquired disorders of the Eye or previous ocular surgery (including corneal laser surgery) (Option B) Retinoblastoma (Option D) Malignant tumours or ocular metastases in the anterior segment of the eye. Reference: Contraindications Kanski’s Clinical Ophthalmology, 9th Edition, Pages 276, 277 @neet_‌pg_bot",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Absolute contraindications to corneal donation",
+        "broader": "Corneal donor-tissue eligibility"
+      },
+      "strata": [
+        "straightforward_or_fill"
+      ]
+    },
+    {
+      "question_id": "2785b409-375b-5b57-a3d2-d1de54f9fbca",
+      "subject": "Orthopedics",
+      "source_test": "011 Previous Year Questions",
+      "stem": "Which of he following layer is affected in a Salter-Harris type 1 fracture ?",
+      "options": "{'html': 'Calcific zone of the growt\\u200bh plate', 'is_correct': False, 'key': 'A'} | {'html': 'Hypertrophic zone of the g\\u200browth plate', 'is_correct': True, 'key': 'B'} | {'html': 'The resting zone of the gr\\u200bowth plate', 'is_correct': False, 'key': 'C'} | {'html': 'Through the whole of the e\\u200bpiphysis', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "B. Hypertrophic zone of the growth plate",
+      "explanation": "Hypertrophic zone of the growth plate Correct Option B - Hypertrophic or calcific layer: Salter-Harris type 1 fracture is a complete separation of metaphysis and epiphysis without fracture. Apart from trauma, it is common in rickets, scurvy, osteomyelitis. The hypertrophic layer is involved.",
+      "negative_question": false,
+      "is_pyq": true,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Growth-plate zone involved in Salter-Harris type I fracture",
+        "broader": "Physeal fracture classification"
+      },
+      "strata": [
+        "straightforward_or_fill"
+      ]
+    },
+    {
+      "question_id": "dab4989d-d486-5e2e-a836-24daf4e9e59e",
+      "subject": "Pharmacology",
+      "source_test": "031 Antipsychotic Drugs",
+      "stem": "A patient receiving antipsychotic medication develops a sudden high fever, generalized rigidity, and altered sensorium. What is the most likely diagnosis?",
+      "options": "{'html': 'Anticholiner\\u200cgic syndrome', 'is_correct': False, 'key': 'A'} | {'html': 'Neuroleptic malignant synd\\u200crome', 'is_correct': True, 'key': 'B'} | {'html': 'Serotonin\\u200c syndrome', 'is_correct': False, 'key': 'C'} | {'html': 'Malignant h\\u200cyperthermia', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "B. Neuroleptic malignant syndrome",
+      "explanation": "Neuroleptic malignant syndrome Correct Answer: B) Neuroleptic malignant syndrome Explanation: The above clinical scenario points towards the diagnosis of Neuroleptic Malignant Syndrome (NMS) associated with the use of typical antipsychotics such as chlorpromazine. NMS occurs due to marked dopamine (D2) receptor antagonism in the hypothalamus and basal ganglia. It is a potentially fatal reaction and may appear weeks to months after starting therapy, and can even persist for several days after stopping the drug.",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Recognition of neuroleptic malignant syndrome",
+        "broader": "Severe adverse effects of antipsychotic drugs"
+      },
+      "strata": [
+        "straightforward_or_fill"
+      ]
+    },
+    {
+      "question_id": "0802ffca-231b-547b-858d-6c0be39c0b99",
+      "subject": "Radiology",
+      "source_test": "029 Neuroradiology Iii",
+      "stem": "A 6-week-old infant presents with seizures and increasing head size. Examination shows a bulging anterior fontanelle. CT brain reveals a large midline vascular lesion with hydrocephalus. What is the most likely diagnosis?",
+      "options": "{'html': 'Arnold-Chiari malformation\\u200c', 'is_correct': False, 'key': 'A'} | {'html': 'Dandy-Walker\\u200c malformation', 'is_correct': True, 'key': 'B'} | {'html': 'Vein of Galen malformation\\u200c', 'is_correct': False, 'key': 'C'} | {'html': 'Joubert \\u200csyndrome', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "B. Dandy-Walker malformation",
+      "explanation": "Dandy-Walker malformation Correct Answer: B) Dandy-Walker malformation Explanation: The above clinical scenario with radiological investigation points towards the diagnosis of Dandy-Walker malformation . CT imaging shows a large cystic area occupying the posterior aspect of the posterior fossa , which communicates directly with the fourth ventricle . There is absence of the normal cerebellar vermis, with only a small vermian remnant seen displaced and rotated superiorly.",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": true,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Imaging diagnosis of Dandy-Walker malformation",
+        "broader": "Congenital posterior fossa malformations"
+      },
+      "strata": [
+        "straightforward_or_fill"
+      ]
+    },
+    {
+      "question_id": "1a5ae6c9-471a-5906-ae73-9f7c0d9ef3e4",
+      "subject": "Medicine",
+      "source_test": "065 Stroke  Tia And Image Based Questions",
+      "stem": "A 28-year-old woman presents with recurrent episodes of blurred vision and numbness of the right upper limb over the past year, with partial recovery after each episode. MRI brain (T2-FLAIR sagittal) shows the findings below. Based on the MRI finding, which of the following diagnostic criteria and corresponding treatment are most appropriate?",
+      "options": "{'html': 'Brighton’s criteria, IV St\\u200deroids', 'is_correct': False, 'key': 'A'} | {'html': 'Brighton’s criteria, IV Im\\u200dmunoglobulin', 'is_correct': False, 'key': 'B'} | {'html': 'McDonald’s criteria, IV St\\u200deroids', 'is_correct': True, 'key': 'C'} | {'html': 'McDonald’s criteria, IV Im\\u200dmunoglobulin', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "C. McDonald’s criteria, IV Steroids",
+      "explanation": "McDonald’s criteria, IV Steroids Correct answer: C) McDonald’s criteria, IV Steroids Explanation: MRI shows Dawson's fingers, multiple ovoid periventricular T2/FLAIR hyperintense lesions oriented perpendicular to the lateral ventricles, characteristic of Multiple Sclerosis (MS) . McDonald's criteria are used to diagnose MS by demonstrating dissemination in space (DIS) and dissemination in time (DIT) using clinical and MRI findings (with CSF oligoclonal bands when required). Acute MS relapses are treated with high-dose IV methylprednisolone (1 g/day for 3-5 days).",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": true,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Diagnosis and acute relapse treatment of multiple sclerosis",
+        "broader": "Clinical management of CNS demyelinating disease"
+      },
+      "strata": [
+        "straightforward_or_fill"
+      ]
+    },
+    {
+      "question_id": "330983c9-5b2d-5a88-bce3-411a5f1e3752",
+      "subject": "Surgery",
+      "source_test": "044 Previous Year Questions",
+      "stem": "A 60-year-old male presents to the emergency department with abdominal pain and vomiting. He reports a 2-day history of constipation and bloating. On examination, he appears uncomfortable, and his abdomen is distended with high-pitched bowel sounds. X-ray reveals dilated loops of the small bowel. What is the most likely cause of his symptoms?",
+      "options": "{'html': 'Colonic m\\u200balignancy', 'is_correct': False, 'key': 'A'} | {'html': 'Small bowel\\u200b obstruction', 'is_correct': True, 'key': 'B'} | {'html': 'Acute pan\\u200bcreatitis', 'is_correct': False, 'key': 'C'} | {'html': 'Gastri\\u200bc ulcer', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "B. Small bowel obstruction",
+      "explanation": "Small bowel obstruction Correct answer B) Small bowel obstruction Explanation: Small bowel obstruction is the most likely cause in this case. The patient's acute symptoms, abdominal distension, high-pitched bowel sounds, and dilated loops of small bowel on X-ray is consistent with a mechanical obstruction in the small bowel. Colonic malignancy (Option A) Colonic malignancy can lead to obstruction, but it typically causes a gradual onset of symptoms, such as changes in bowel habits, blood in stool, and weight Loss.",
+      "negative_question": false,
+      "is_pyq": true,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Clinical and radiographic diagnosis of small-bowel obstruction",
+        "broader": "Mechanical intestinal obstruction"
+      },
+      "strata": [
+        "straightforward_or_fill"
+      ]
+    },
+    {
+      "question_id": "81d76e7f-44ce-5a42-b500-dc5ec04bce62",
+      "subject": "Pathology",
+      "source_test": "004 Hemodynamic Disorders   Thrombosis",
+      "stem": "A 42-year-old man comes with swelling of both ankles. On examination, pitting oedema is noted. Which of the following alterations in Starling forces could contribute to the development of this condition? Increased capillary hydrostatic pressure Decreased capillary hydrostatic pressure Increased plasma oncotic pressure Decreased plasma oncotic pressure",
+      "options": "{'html': '1 a\\u200bnd 3', 'is_correct': False, 'key': 'A'} | {'html': '2 a\\u200bnd 3', 'is_correct': False, 'key': 'B'} | {'html': '1 a\\u200bnd 4', 'is_correct': True, 'key': 'C'} | {'html': '2 a\\u200bnd 4', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "C. 1 and 4",
+      "explanation": "1 and 4 Correct Answer: C) 1 and 4 Explanation: Edema results when the normal balance of Starling forces is disturbed. Increased capillary hydrostatic pressure (e.g., congestive heart failure, venous obstruction) promotes fluid movement out of the vasculature. Decreased plasma oncotic pressure (e.g., hypoalbuminemia from nephrotic syndrome or liver disease) reduces the inward pull of fluid back into capillaries.",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": true,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Starling-force alterations causing edema",
+        "broader": "Pathophysiology of fluid imbalance and edema"
+      },
+      "strata": [
+        "straightforward_or_fill"
+      ]
+    },
+    {
+      "question_id": "6b1cd5bb-a5b2-5dcd-bf19-97913059d76e",
+      "subject": "Obstetrics & Gynecology",
+      "source_test": "037 Physiological Changes In Pregnancy",
+      "stem": "During pregnancy there is increased demand for calcium, as the fetus requires about 30 g of calcium for skeletal development. Which of the following maternal physiological changes helps meet this increased calcium requirement?",
+      "options": "{'html': 'Increased production of co\\u200crtisol from the adrenal g\\u200blands', 'is_correct': False, 'key': 'A'} | {'html': 'Elevated levels of thyroid\\u200c-binding globulin (TBG)', 'is_correct': False, 'key': 'B'} | {'html': 'Decreased parathyroid horm\\u200cone (PTH) levels', 'is_correct': False, 'key': 'C'} | {'html': 'Enhanced intestinal calciu\\u200cm absorption due to incre\\u200based calcitriol levels', 'is_correct': True, 'key': 'D'}",
+      "correct_answer": "D. Enhanced intestinal calcium absorption due to increased calcitriol levels",
+      "explanation": "Enhanced intestinal calcium absorption due to increased calcitriol levels Correct Answer: D) Enhanced intestinal calcium absorption due to increased calcitriol levels Explanation: Fetal skeletal growth, especially in the third trimester, demands a large increase in maternal calcium supply. To meet this need, pregnancy induces a rise in calcitriol (1,25-dihydroxyvitamin D) levels. Calcitriol significantly increases intestinal absorption of calcium from the maternal diet.",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Calcitriol-mediated calcium adaptation in pregnancy",
+        "broader": "Maternal physiological adaptations during pregnancy"
+      },
+      "strata": [
+        "straightforward_or_fill"
+      ]
+    },
+    {
+      "question_id": "c4d6a81d-e972-5440-9a8d-75c0ae73c294",
+      "subject": "Forensic Medicine",
+      "source_test": "009 Mechanical Injuries",
+      "stem": "A blunt force injury produces a laceration with characteristic radiating skin tears at both ends. What is this appearance called?",
+      "options": "{'html': 'Sparrow\\u200d’s foot', 'is_correct': False, 'key': 'A'} | {'html': 'Wed\\u200dging', 'is_correct': False, 'key': 'B'} | {'html': 'Fish t\\u200dailing', 'is_correct': False, 'key': 'C'} | {'html': 'Swallow\\u200d tailing', 'is_correct': True, 'key': 'D'}",
+      "correct_answer": "D. Swallow tailing",
+      "explanation": "Swallow tailing Correct Answer: D) Swallow tailing Explanation: Swallow tailing occurs when a blunt object (like a car bumper) strikes the skin at an angle. The force \"undermines\" the skin and tears it in two directions at the end, resembling the tail of a swallow. Sparrow’s foot (Option A): It is a characteristic, small, V-shaped laceration on the face or limbs caused by shattering tempered glass, typically from a car windshield during a road accident, resembling bird tracks.",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Recognition of swallow-tailing in blunt-force lacerations",
+        "broader": "Forensic morphology of mechanical injuries"
+      },
+      "strata": [
+        "straightforward_or_fill"
+      ]
+    },
+    {
+      "question_id": "d0241d21-0178-5e96-91c5-daa1ad39ab2f",
+      "subject": "Pathology",
+      "source_test": "049 Hepatic Injury  Hepatitis   Cirrhosis",
+      "stem": "Councilman bodies are classically associated with which of the following conditions Acute hepatitis B Autoimmune hepatitis Yellow fever Chronic hepatitis",
+      "options": "{'html': '1, 2,\\u200c and 3', 'is_correct': False, 'key': 'A'} | {'html': '1, 2,\\u200c and 4', 'is_correct': False, 'key': 'B'} | {'html': '2, 3,\\u200c and 4', 'is_correct': False, 'key': 'C'} | {'html': '1, 3,\\u200c and 4', 'is_correct': True, 'key': 'D'}",
+      "correct_answer": "D. 1, 3, and 4",
+      "explanation": "1, 3, and 4 Correct Answer: D) 1, 3, and 4 Explanation: Councilman bodies are apoptotic hepatocytes that appear as round, intensely eosinophilic (acidophilic) cytoplasmic bodies with condensed or fragmented nuclei. They represent hepatocytes undergoing programmed cell death (apoptosis) due to hepatocellular injury. Classically described in → Yellow fever (a characteristic histopathological finding).",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Disease associations of Councilman bodies",
+        "broader": "Histopathology of hepatocellular injury"
+      },
+      "strata": [
+        "straightforward_or_fill"
+      ]
+    },
+    {
+      "question_id": "beda5130-7866-5108-abd2-204821367220",
+      "subject": "Medicine",
+      "source_test": "090 Autoimmune Liver Disease  Cholestasis   Hepatotoxicity",
+      "stem": "A patient with acute hepatitis is HBsAg positive with anti-HDV antibodies. To represent HDV superinfection on chronic hepatitis B rather than HBV-HDV coinfection. Which antibody profile confirms HDV superinfection?",
+      "options": "{'html': 'IgM anti-H\\u200bBc positive', 'is_correct': False, 'key': 'A'} | {'html': 'IgG anti-H\\u200bBc positive', 'is_correct': True, 'key': 'B'} | {'html': 'Anti-HBs\\u200b positive', 'is_correct': False, 'key': 'C'} | {'html': 'IgM anti-H\\u200bAV positive', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "B. IgG anti-HBc positive",
+      "explanation": "IgG anti-HBc positive Correct Answer: B) IgG anti-HBc positive Explanation: IgG anti-HBc indicates chronic hepatitis B infection; when HDV infection occurs on this background, it confirms HDV superinfection, not coinfection. Key serologic principle in hepatitis differentiation: HBsAg indicates active HBV infection IgM anti-HBc → acute HBV infection IgG anti-HBc → chronic HBV infection HDV requires HBV (HBsAg) for replication HDV infection patterns: Coinfection: Acute HBV + acute HDV → IgM anti-HBc positive Superinfection: Chronic HBV + acute HDV → IgG anti-HBc positive Superinfection is associated with more severe disease and a higher risk of chronic liver failure. IgM anti-HBc (Option A): Indicates acute HBV, consistent with coinfection, not superinfection.",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Serologic distinction of HDV superinfection from coinfection",
+        "broader": "Interpretation of viral hepatitis serology"
+      },
+      "strata": [
+        "straightforward_or_fill"
+      ]
+    },
+    {
+      "question_id": "917d94eb-d3a5-5329-b31b-b2536d4faa94",
+      "subject": "Community Medicine",
+      "source_test": "013 Previous Year Questions",
+      "stem": "Which vaccine among the options exhibits a seroconversion rate that is quicker than the incubation period of the corresponding disease?",
+      "options": "{'html': 'Coron\\u200cavirus', 'is_correct': False, 'key': 'A'} | {'html': 'Mea\\u200csles', 'is_correct': True, 'key': 'B'} | {'html': 'Po\\u200clio', 'is_correct': False, 'key': 'C'} | {'html': 'Mu\\u200cmps', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "B. Measles",
+      "explanation": "Measles Correct Answer: B) Measles Amongst the above options, measles vaccine has a faster seroconversion rate as compared to the incubation period of the disease and this is why measles vaccine is given when a disaster or an epidemic occurs. Seroconversion: is the transition from the point of viral infection to when antibodies of the virus become present in the blood. Seroconversion rates are one of the methods used for determining the efficacy of a vaccine.",
+      "negative_question": false,
+      "is_pyq": true,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Rapid measles-vaccine seroconversion relative to disease incubation",
+        "broader": "Immunologic basis of post-exposure vaccination"
+      },
+      "strata": [
+        "straightforward_or_fill"
+      ]
+    },
+    {
+      "question_id": "c377c381-1bf7-5da0-b76e-d1dbd07917f7",
+      "subject": "Medicine",
+      "source_test": "041 Inflammatory Bowel Disease I",
+      "stem": "Which of the following genes, encoding an X-linked inhibitor of apoptosis, has been identified as a cause of monogenic very-early-onset inflammatory bowel disease (VEOIBD)?",
+      "options": "{'html': 'NO\\u200cD2', 'is_correct': False, 'key': 'A'} | {'html': 'XI\\u200cAP', 'is_correct': True, 'key': 'B'} | {'html': 'ATG\\u200c16L1', 'is_correct': False, 'key': 'C'} | {'html': 'LR\\u200cRK2', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "B. XIAP",
+      "explanation": "XIAP Correct Answer: B) XIAP Explanation: XIAP (X-linked inhibitor of apoptosis protein) mutations cause monogenic VEOIBD , typically presenting in infancy or early childhood with severe, refractory intestinal inflammation. Loss of XIAP disrupts immune regulation and apoptosis, leading to uncontrolled intestinal immune activation. VEOIBD (<6 years) often reflects single-gene (monogenic) immune defects, unlike adolescent/adult IBD.",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "XIAP mutation in monogenic very-early-onset IBD",
+        "broader": "Genetic causes of pediatric inflammatory bowel disease"
+      },
+      "strata": [
+        "straightforward_or_fill"
+      ]
+    },
+    {
+      "question_id": "09173118-be97-5aa6-91f7-2ea5159ce52c",
+      "subject": "Ophthalmology",
+      "source_test": "030 Lids And Disorders   I",
+      "stem": "Which is the most common organism causing bacterial blepharitis?",
+      "options": "{'html': 'Staphy\\u200dlococci', 'is_correct': True, 'key': 'A'} | {'html': 'Strept\\u200dococci', 'is_correct': False, 'key': 'B'} | {'html': 'Propionibac\\u200dterium acnes', 'is_correct': False, 'key': 'C'} | {'html': 'Mora\\u200dxella', 'is_correct': False, 'key': 'D'}",
+      "correct_answer": "A. Staphylococci",
+      "explanation": "Staphylococci Correct Answer: A) Staphylococci Explanation: Staphylococci is the most common organism causing bacterial blepharitis Blepharitis: Inflammation of the lid margin Anterior blepharitis: Squamous type → due to dandruff on lashes Ulcerative type → infective cause → Staphylococcus aureus (most common) Posterior blepharitis → also called meibomitis Ulcerative blepharitis findings: Small ulcers at lash roots Sticky scales Management: Lid hygiene Antibiotic ointments Reference: Kanski’s Clinical Ophthalmology 9th edition page 70-72 @neet_‍pg_bot",
+      "negative_question": false,
+      "is_pyq": false,
+      "has_media": false,
+      "gold": {
+        "status": "VERIFIED",
+        "primary": "Causative organism of bacterial blepharitis",
+        "broader": "Infectious eyelid-margin disease"
+      },
+      "strata": [
+        "straightforward_or_fill"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "question_id": {"type": "string"},
+          "primary": {"type": ["string", "null"]},
+          "broader": {"type": ["string", "null"]}
+        },
+        "required": ["question_id", "primary", "broader"]
+      }
+    }
+  },
+  "required": ["items"]
+}
