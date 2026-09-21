@@ -351,3 +351,11 @@ fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
   .recall-primary-action .button { width: 100%; }
   .toast-region { right: 10px; bottom: 10px; left: 10px; }
 }
+.pyq-catalog { display: grid; gap: .75rem; }
+.pyq-catalog > details { border: 1px solid var(--border); border-radius: 12px; padding: .8rem 1rem; }
+.pyq-catalog > details > summary { display: flex; justify-content: space-between; cursor: pointer; }
+.pyq-exam { margin-top: 1rem; }
+.pyq-exam h3 { margin: 0 0 .5rem; }
+.pyq-test-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .65rem 0; border-top: 1px solid var(--border); }
+.pyq-test-row small { display: block; color: var(--muted); }
+@media (max-width: 680px) { .pyq-test-row { align-items: flex-start; flex-direction: column; } }

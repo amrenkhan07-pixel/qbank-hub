@@ -22,6 +22,7 @@ const state = {
   analyticsPyqBreakdown: null,
   analyticsView: null,
   analyticsPyqSet: new Set(),
+  pyqCatalog: null,
   recallFilters: { platform_id: '', subject_id: '', scope: 'all' },
   recallQueue: [],
   payloadCache: new Map(),
@@ -738,6 +739,7 @@ async function tests() {
 function showTestBuilder(preset) {
   const item = TEST_PRESETS[preset] || TEST_PRESETS.custom; const revision = preset === 'revision';
   const slot = document.querySelector('#test-builder-slot');
+  if (preset === 'pyq') { slot.innerHTML = '<section class="card builder-card"><div class="empty">Loading PYQ subjects and tests…</div></section>'; showPyqCatalog(); return; }
   slot.innerHTML = `<section class="card builder-card"><div class="section-heading"><div><span class="eyebrow">${e(item[0])}</span><h2>Configure this test</h2></div><button class="button ghost compact" data-action="close-builder">Close</button></div><form id="test-form" class="stack" data-preset="${e(preset)}"><div class="filters">${filterFields({ revision })}</div><div class="builder-footer"><div><b data-match-count>Counting available questions…</b><div class="subtle">Browse without timers, or preview this exact set before starting.</div></div><div class="row"><label class="inline-label">Questions <select name="count"><option>10</option><option>20</option><option selected>50</option><option>100</option><option value="all">All matching</option></select></label><button class="button secondary" name="intent" value="browse">Open questions</button><button class="button" name="intent" value="test">Preview ${e(item[0])}</button></div></div></form></section>`;
   const form = document.querySelector('#test-form'); if (preset === 'pyq') form.elements.pyq.value = 'yes'; setupDependentFilters(form);
   form.onsubmit = async (event) => {
@@ -749,6 +751,25 @@ function showTestBuilder(preset) {
     catch (error) { toast(error.message || 'Could not create test.', 'error'); }
   };
   slot.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function showPyqCatalog() {
+  const slot = document.querySelector('#test-builder-slot'); if (!slot) return;
+  if (!state.pyqCatalog) {
+    const result = await db.rpc('qbank_pyq_catalog');
+    if (result.error) { slot.innerHTML = `<section class="card notice"><b>PYQ catalog unavailable.</b><p>${e(result.error.message)}</p></section>`; return; }
+    state.pyqCatalog = result.data || [];
+  }
+  const bySubject = new Map();
+  state.pyqCatalog.forEach((row) => { if (!bySubject.has(row.subject)) bySubject.set(row.subject, new Map()); const exams = bySubject.get(row.subject); if (!exams.has(row.exam)) exams.set(row.exam, []); exams.get(row.exam).push(row); });
+  slot.innerHTML = `<section class="card builder-card"><div class="section-heading"><div><span class="eyebrow">PYQS</span><h2>Choose subject, exam and year</h2><p class="subtle">Only the selected test’s questions are loaded.</p></div><button class="button ghost compact" data-action="close-builder">Close</button></div><div class="pyq-catalog">${[...bySubject.entries()].map(([subject, exams]) => `<details><summary><b>${e(subject)}</b><span>${[...exams.values()].flat().reduce((sum, row) => sum + Number(row.question_count || 0), 0)} questions</span></summary>${[...exams.entries()].map(([exam, tests]) => `<div class="pyq-exam"><h3>${e(exam)}</h3><div class="list">${tests.map((test) => `<div class="pyq-test-row"><div><b>${e(test.year)} · ${e(test.title)}</b><small>${Number(test.question_count || 0)} questions</small></div><div class="row"><button class="button secondary compact" data-action="open-pyq-test" data-test="${e(test.test_id)}" data-title="${e(`${subject} · ${exam} ${test.year}`)}">Browse</button><button class="button compact" data-action="start-pyq-test" data-test="${e(test.test_id)}" data-title="${e(`${subject} · ${exam} ${test.year}`)}">Start test</button></div></div>`).join('')}</div></div>`).join('')}</details>`).join('')}</div></section>`;
+}
+
+async function openSelectedPyqTest(target, start) {
+  const definition = { mode: 'test', preset: 'pyq', title: target.dataset.title || 'PYQ test',
+    filters: { platforms: [], subjects: [], systems: [], topics: [], subtopics: [], source_tests: [target.dataset.test], statuses: ['all'], exams: [], years: [], sessions: [], pyq: 'yes' },
+    requested: 'all', autoSubmit: true, origin: '#/tests' };
+  if (start) await createSession(definition); else await openQuestionSet(definition);
 }
 
 function activeQuestion() { return state.active?.questions?.[state.active.index]; }
@@ -1580,6 +1601,7 @@ document.addEventListener('click', async (event) => {
   const target = event.target.closest('[data-action]'); if (!target) return; const action = target.dataset.action;
   if (action === 'signout') await db.auth.signOut(); if (action === 'signup') await signUp(); if (action === 'reset-password') await resetPassword(); if (action === 'retry') render();
   if (action === 'choose-preset') showTestBuilder(target.dataset.preset); if (action === 'close-builder') document.querySelector('#test-builder-slot').innerHTML = '';
+  if (action === 'open-pyq-test') await openSelectedPyqTest(target, false); if (action === 'start-pyq-test') await openSelectedPyqTest(target, true);
   if (action === 'answer') await selectAnswer(target.dataset.key); if (action === 'submit-multi-answer') await submitMultiAnswer(); if (action === 'previous') await navigateActive(state.active.index - 1);
   if (action === 'next') { if (state.active.index === state.active.questions.length - 1) { if (state.active.kind === 'browse') { goToHash(state.active.origin || '#/qbank'); return; } if (state.active.completedReview) return resultScreen(); return submitActive(false); } await navigateActive(state.active.index + 1); }
   if (action === 'jump') await navigateActive(Number(target.dataset.index)); if (action === 'bookmark') await toggleBookmark(); if (action === 'mark') await toggleMark();

@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed Marrow PYQ writer: isolated SQLite validation and production dry-run only.
-
-No production apply adapter exists. The local database exercises the intended
-subject-transaction, checkpoint, idempotency and rollback contract.
-"""
+"""Fail-closed staged Marrow PYQ writer with dry-run, explicit apply and rollback."""
 from __future__ import annotations
 
 import argparse
@@ -14,6 +10,7 @@ import os
 import sqlite3
 import urllib.parse
 import urllib.request
+import urllib.error
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -25,6 +22,19 @@ EXPECTED_REVIEW = 314
 EXPECTED_SUBJECTS = 19
 DEFAULT_URL = "https://flulljensjugfcxmeczu.supabase.co"
 PROJECT_REF = "flulljensjugfcxmeczu"
+BUCKET = "qbank-payloads"
+
+
+def stable_json(value: object) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def validate_production_url(url: str) -> str:
+    normalized = url.rstrip("/")
+    parsed = urllib.parse.urlparse(normalized)
+    if parsed.scheme != "https" or parsed.hostname != f"{PROJECT_REF}.supabase.co":
+        raise ValueError("wrong production Supabase project")
+    return normalized
 
 
 def load_artifact(path: Path) -> dict:
@@ -280,14 +290,121 @@ def independent_pyq_plan(doc: dict) -> dict:
     }
 
 
+def production_payloads(doc: dict) -> tuple[dict[str, dict], dict[str, bytes]]:
+    """Map the frozen artifact to 19 production manifests and verified gzip objects."""
+    tests = {row["id"]: row for row in doc["source_tests"]}
+    occurrences_by_question = defaultdict(list)
+    for row in doc["occurrences"]:
+        occurrences_by_question[row["question_id"]].append(row)
+    versions_by_test = defaultdict(list)
+    for row in doc["content_versions"]:
+        versions_by_test[row["first_source_test_uuid"]].append(row)
+    object_bytes = {}
+    objects = {row["source_test_id"]: row for row in doc["payload_objects"]}
+    for test_id, versions in versions_by_test.items():
+        test = tests[test_id]
+        raw = stable_json({"schema_version": 1, "platform": "Marrow", "subject": test["subject"],
+                           "source_test": {"id": test["source_test_id"], "title": test["source_test_title"]},
+                           "questions": [row["payload"] for row in versions]}).encode()
+        compressed = gzip.compress(raw, compresslevel=9, mtime=0)
+        expected = objects[test_id]
+        if hashlib.sha256(compressed).hexdigest() != expected["sha256"] or len(compressed) != expected["stored_bytes"]:
+            raise ValueError(f"payload object reconstruction mismatch: {test_id}")
+        object_bytes[expected["object_path"]] = compressed
+
+    tests_by_subject, objects_by_subject, versions_by_subject, occurrences_by_subject = (defaultdict(list) for _ in range(4))
+    for row in doc["source_tests"]:
+        tests_by_subject[row["subject"]].append({**row, "title": row["source_test_title"]})
+    for row in doc["payload_objects"]:
+        objects_by_subject[tests[row["source_test_id"]]["subject"]].append(row)
+    for row in doc["content_versions"]:
+        first = tests[row["first_source_test_uuid"]]
+        payload = row["payload"]
+        media = payload.get("media") or []
+        candidates = sorted({candidate for occurrence in occurrences_by_question[row["question_id"]]
+                             for candidate in occurrence.get("matched_prepladder_question_ids") or []})
+        exam_key = {"NEET-PG": "neet_pg", "INI-CET": "inicet", "AIIMS": "aiims"}[first["exam_family"]]
+        versions_by_subject[row["subject"]].append({
+            **{key: row[key] for key in ("question_id", "subject", "content_sha256", "payload_object_id", "payload_index", "review_reason")},
+            "source_question_id": row["source_question_id_first_seen"], "stem_excerpt": row["raw_stem"],
+            "first_source_test_title": first["source_test_title"], "correct_option_keys": payload["correct_keys"],
+            "option_count": len(payload["options"]), "is_multi_correct": len(payload["correct_keys"]) > 1,
+            "media_status": "MEDIA_REFERENCED" if media else "NO_MEDIA",
+            "has_question_media": any(item.get("placement") == "question" for item in media),
+            "has_explanation_media": any(item.get("placement") == "explanation" for item in media),
+            "has_audio": bool(payload.get("audio")), "has_video": bool(payload.get("video")),
+            "audio_url": payload.get("audio") or "", "video_url": payload.get("video") or "",
+            "exam_key": exam_key, "exam_year": first["year"], "exam_session": first["session"] or "",
+            "candidate_question_ids": candidates,
+        })
+    for row in doc["occurrences"]:
+        occurrences_by_subject[row["subject"]].append({
+            **row, "source_test_id": row["source_test_uuid"],
+            "question_position": row["question_order_within_test"],
+            "exam_year": row["year"], "exam_session": row["session"] or "",
+        })
+    manifests = {}
+    source_bytes = len(stable_json(doc).encode())
+    for subject in sorted(tests_by_subject):
+        subject_objects = objects_by_subject[subject]
+        manifests[subject] = {
+            "batch_id": BATCH_ID, "platform": "Marrow", "source_type": "PYQ", "subject": subject,
+            "source_filename": doc["source_filename"], "source_sha256": doc["source_sha256"],
+            "source_bytes": source_bytes, "importer_version": "marrow-pyq-independent-v1", "schema_version": 1,
+            "source_test_count": len(tests_by_subject[subject]), "occurrence_count": len(occurrences_by_subject[subject]),
+            "content_version_count": len(versions_by_subject[subject]), "payload_object_count": len(subject_objects),
+            "payload_stored_bytes": sum(row["stored_bytes"] for row in subject_objects),
+            "source_tests": tests_by_subject[subject], "objects": subject_objects,
+            "versions": versions_by_subject[subject], "occurrences": occurrences_by_subject[subject],
+        }
+    if sum(m["occurrence_count"] for m in manifests.values()) != 5938:
+        raise ValueError("production manifests lost staged occurrences")
+    return manifests, object_bytes
+
+
+def api_request(url: str, key: str, path: str, method: str = "GET", body: bytes | None = None,
+                headers: dict | None = None) -> tuple[bytes, dict]:
+    request = urllib.request.Request(url.rstrip("/") + path, data=body, method=method,
+        headers={"apikey": key, "Authorization": f"Bearer {key}", **(headers or {})})
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            return response.read(), dict(response.headers)
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"{method} {path} failed ({error.code}): {detail[:1000]}") from error
+
+
+def rpc(url: str, key: str, name: str, payload: dict) -> object:
+    body, _ = api_request(url, key, f"/rest/v1/rpc/{name}", "POST", stable_json(payload).encode(),
+                          {"Content-Type": "application/json"})
+    return json.loads(body or b"null")
+
+
+def create_production_backup(doc: dict, result: dict, directory: Path) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / "affected-slice-manifest.json"
+    if target.exists():
+        existing = json.loads(target.read_text())
+        if existing.get("artifact_sha256") != ARTIFACT_SHA256 or existing.get("batch_id") != BATCH_ID:
+            raise ValueError("backup directory belongs to another import")
+        return target
+    manifest = {"batch_id": BATCH_ID, "artifact_sha256": ARTIFACT_SHA256, "project_ref": PROJECT_REF,
+        "created_before_import": True, "preimport_counts": result["preimport_counts"],
+        "preexisting_marrow_test_ids": result.get("preexisting_marrow_test_ids", []),
+        "preexisting_marrow_question_ids": result.get("preexisting_marrow_question_ids", []),
+        "planned_test_ids": sorted(row["id"] for row in doc["source_tests"]),
+        "planned_question_ids": sorted(row["question_id"] for row in doc["content_versions"]),
+        "planned_occurrence_keys": sorted(row["occurrence_key"] for row in doc["occurrences"])}
+    target.write_text(stable_json(manifest))
+    return target
+
+
 def production_dry_run(doc: dict, url: str, key: str) -> dict:
     if not key:
         raise ValueError("SUPABASE_SERVICE_ROLE_KEY is required for read-only dry-run")
-    url = url.rstrip("/")
-    parsed = urllib.parse.urlparse(url)
-    if parsed.scheme != "https" or parsed.hostname != f"{PROJECT_REF}.supabase.co":
-        raise ValueError("wrong production Supabase project")
+    url = validate_production_url(url)
     plan = independent_pyq_plan(doc)
+    manifests, _ = production_payloads(doc)
     platforms, _ = api_get(url, key, "platforms", "select=id,name&name=eq.Marrow&limit=2")
     if len(platforms) != 1:
         raise ValueError("Marrow platform must resolve uniquely")
@@ -298,32 +415,86 @@ def production_dry_run(doc: dict, url: str, key: str) -> dict:
     _, _ = api_get(url, key, "canonical_question_versions", "select=question_id&limit=1")
     if tests_count != 0 or payload_count != 0 or prep_count != doc["db_snapshot"]["payloads"]:
         raise ValueError("production changed since staging; refresh and restage before apply")
-    matched_ids = sorted({v["matched_prepladder_question_id"] for v in doc["content_versions"]
-                          if v["matched_prepladder_question_id"]})
-    found_ids = set()
-    for start in range(0, len(matched_ids), 50):
-        chunk = matched_ids[start:start + 50]
-        query = "select=question_id&question_id=in.(" + ",".join(chunk) + ")&limit=50"
-        rows, _ = api_get(url, key, "qbank_question_payloads", query)
-        found_ids.update(r["question_id"] for r in rows)
-    if found_ids != set(matched_ids):
-        raise ValueError("matched PrepLadder payload IDs changed since staging")
     protected = {}
     for table in ("questions", "qbank_source_tests", "qbank_source_occurrences",
                   "question_attempts", "test_sessions", "user_question_state", "bookmarks"):
         _, count = api_get(url, key, table, "select=*&limit=0")
         protected[table] = count
+    rpc_results = [rpc(url, key, "qbank_commit_marrow_pyq_import", {"p_manifest": manifest, "p_dry_run": True})
+                   for manifest in manifests.values()]
+    if len(rpc_results) != 19 or any(row.get("status") != "dry_run" for row in rpc_results):
+        raise ValueError("production RPC dry-run did not validate every subject batch")
     return {"authenticated": True, "writes": 0, "platform_id": platform_id,
             "existing_marrow_tests": tests_count, "existing_marrow_versions": payload_count,
             "existing_total_payloads": prep_count,
             "expected_new_tests": 342, "expected_new_versions": 5914,
             "expected_new_occurrences": 5938, "staged_canonical_identity_proposals_not_used": 5852,
             "review_candidates_kept_separate": 314,
-            "matched_prepladder_ids_verified": len(found_ids),
             "preimport_counts": protected,
+            "preexisting_marrow_test_ids": [row["id"] for row in tests],
+            "preexisting_marrow_question_ids": [row["question_id"] for row in payloads],
+            "rpc_subject_batches_validated": len(rpc_results),
             "independent_pyq_plan": plan,
-            "production_apply_ready": False,
-            "reason": "No Marrow PostgreSQL apply/rollback RPC or PYQ test hierarchy yet"}
+            "production_apply_ready": True}
+
+
+def upload_objects(url: str, key: str, paths: list[str], object_bytes: dict[str, bytes]) -> list[str]:
+    uploaded = []
+    for path in paths:
+        content = object_bytes[path]
+        encoded = urllib.parse.quote(path, safe="/")
+        try:
+            existing, _ = api_request(url, key, f"/storage/v1/object/authenticated/{BUCKET}/{encoded}")
+            if hashlib.sha256(existing).hexdigest() != hashlib.sha256(content).hexdigest():
+                raise ValueError(f"existing storage object conflicts: {path}")
+            continue
+        except RuntimeError as error:
+            if "(400)" not in str(error) and "(404)" not in str(error):
+                raise
+        api_request(url, key, f"/storage/v1/object/{BUCKET}/{encoded}", "POST", content,
+                    {"Content-Type": "application/gzip", "x-upsert": "false", "Cache-Control": "31536000"})
+        uploaded.append(path)
+    return uploaded
+
+
+def delete_storage_objects(url: str, key: str, paths: list[str]) -> None:
+    if paths:
+        api_request(url, key, f"/storage/v1/object/{BUCKET}", "DELETE",
+                    stable_json({"prefixes": paths}).encode(), {"Content-Type": "application/json"})
+
+
+def apply_production(doc: dict, url: str, key: str, batch: str, backup_dir: Path) -> dict:
+    if batch != BATCH_ID:
+        raise ValueError("exact production batch ID is required")
+    preflight = production_dry_run(doc, url, key)
+    backup = create_production_backup(doc, preflight, backup_dir)
+    manifests, object_bytes = production_payloads(doc)
+    results, uploaded_all = [], []
+    for subject, manifest in manifests.items():
+        uploaded_subject = []
+        try:
+            run = rpc(url, key, "qbank_begin_marrow_pyq_import", {"p_manifest": manifest})
+            paths = [row["object_path"] for row in manifest["objects"]]
+            uploaded_subject = upload_objects(url, key, paths, object_bytes)
+            commit = rpc(url, key, "qbank_commit_marrow_pyq_import", {"p_manifest": manifest, "p_dry_run": False})
+            uploaded_all.extend(uploaded_subject)
+            results.append({"subject": subject, "run": run, "commit": commit, "uploaded": len(uploaded_subject)})
+        except Exception:
+            delete_storage_objects(url, key, uploaded_subject)
+            raise
+    return {"batch_id": batch, "backup_manifest": str(backup), "subject_batches": results,
+            "uploaded_objects": len(uploaded_all)}
+
+
+def rollback_production(url: str, key: str, batch: str) -> dict:
+    if batch != BATCH_ID:
+        raise ValueError("exact production batch ID is required")
+    url = validate_production_url(url)
+    if not key:
+        raise ValueError("SUPABASE_SERVICE_ROLE_KEY is required")
+    result = rpc(url, key, "qbank_rollback_marrow_pyq_batch", {"p_batch_id": batch})
+    delete_storage_objects(url, key, result.get("storage_object_paths") or [])
+    return result
 
 
 def main() -> None:
@@ -333,26 +504,36 @@ def main() -> None:
     parser.add_argument("--apply-local", action="store_true")
     parser.add_argument("--rollback-local", action="store_true")
     parser.add_argument("--fail-after-subjects", type=int)
-    parser.add_argument("--production-dry-run", action="store_true")
+    parser.add_argument("--production-dry-run", "--dry-run-production", action="store_true")
+    parser.add_argument("--apply-production", action="store_true")
+    parser.add_argument("--batch")
+    parser.add_argument("--rollback-batch")
     parser.add_argument("--backup-out", type=Path,
                         help="local read-only production pre-import manifest path")
     parser.add_argument("--url", default=DEFAULT_URL)
     args = parser.parse_args()
     doc = load_artifact(args.artifact)
-    if args.production_dry_run:
+    modes = sum(bool(x) for x in (args.production_dry_run, args.apply_production, args.rollback_batch,
+                                  args.apply_local, args.rollback_local))
+    if modes > 1:
+        parser.error("choose exactly one apply, rollback or dry-run mode")
+    if modes == 0 and not args.local_db:
+        args.production_dry_run = True
+    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+    if args.apply_production:
+        if not args.batch:
+            parser.error("--apply-production requires --batch")
+        backup_dir = args.backup_out or Path("import-reports/backups") / BATCH_ID
+        result = apply_production(doc, args.url, key, args.batch, backup_dir)
+    elif args.rollback_batch:
+        result = rollback_production(args.url, key, args.rollback_batch)
+    elif args.production_dry_run:
         if args.apply_local or args.rollback_local:
             parser.error("production dry-run cannot be combined with local writes")
-        result = production_dry_run(doc, args.url, os.environ.get("SUPABASE_SERVICE_ROLE_KEY", ""))
+        result = production_dry_run(doc, args.url, key)
         if args.backup_out:
-            manifest = {"batch_id": BATCH_ID, "artifact_sha256": ARTIFACT_SHA256,
-                        "project_url": args.url, "read_only": True, "production": result,
-                        "matched_prepladder_question_ids": sorted({v["matched_prepladder_question_id"]
-                            for v in doc["content_versions"] if v["matched_prepladder_question_id"]}),
-                        "preexisting_canonical_identity_ids": sorted({v["proposed_canonical_question_id"]
-                            for v in doc["content_versions"] if v["canonical_identity_already_exists"]}),
-                        "preexisting_marrow_test_ids": [], "preexisting_marrow_occurrence_keys": []}
-            args.backup_out.write_text(json.dumps(manifest, sort_keys=True, separators=(",", ":")))
-            result["backup_manifest"] = str(args.backup_out)
+            backup = create_production_backup(doc, result, args.backup_out)
+            result["backup_manifest"] = str(backup)
     elif args.local_db:
         conn = open_local(args.local_db, doc)
         if args.apply_local:

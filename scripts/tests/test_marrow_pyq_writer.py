@@ -7,8 +7,9 @@ from collections import Counter
 from pathlib import Path
 from unittest.mock import patch
 
-from scripts.marrow_pyq_writer import (BATCH_ID, apply_local, backup_manifest, independent_pyq_plan, load_artifact,
-                                      open_local, production_dry_run, rollback_local, table_counts)
+from scripts.marrow_pyq_writer import (BATCH_ID, apply_local, apply_production, backup_manifest,
+                                      independent_pyq_plan, load_artifact, open_local, production_dry_run,
+                                      production_payloads, rollback_local, rollback_production, table_counts)
 
 ARTIFACT = Path(__file__).resolve().parents[2] / "import-reports/marrow-pyq-stage-v1.json.gz"
 
@@ -49,6 +50,18 @@ class MarrowPyqWriterTests(unittest.TestCase):
         self.assertEqual(plan["table_deltas"]["questions"], 5914)
         self.assertEqual(plan["table_deltas"]["qbank_source_occurrences"], 5938)
         self.assertEqual(plan["table_deltas"]["canonical_question_versions"], 0)
+
+    def test_production_manifests_and_payloads(self):
+        manifests, objects = production_payloads(self.doc)
+        self.assertEqual(len(manifests), 19)
+        self.assertEqual(len(objects), 342)
+        self.assertEqual(sum(row["source_test_count"] for row in manifests.values()), 342)
+        self.assertEqual(sum(row["content_version_count"] for row in manifests.values()), 5914)
+        self.assertEqual(sum(row["occurrence_count"] for row in manifests.values()), 5938)
+        self.assertEqual(sum(len(manifest["versions"]) for manifest in manifests.values()), 5914)
+        reviews = [version for manifest in manifests.values() for version in manifest["versions"] if version["review_reason"]]
+        self.assertEqual(len(reviews), 311)
+        self.assertTrue(all(manifest["batch_id"] == BATCH_ID for manifest in manifests.values()))
 
     def test_full_import_rerun_rollback_reimport(self):
         baseline = backup_manifest(self.conn, self.path, self.doc)
@@ -97,24 +110,51 @@ class MarrowPyqWriterTests(unittest.TestCase):
             if table == "platforms": return ([{"id": "marrow-id", "name": "Marrow"}], 1)
             if table == "qbank_source_tests": return ([], 0)
             if table == "qbank_question_payloads" and "platform_id" in query: return ([], 0)
-            if table == "qbank_question_payloads" and "question_id=in." in query:
-                ids = query.split("question_id=in.(", 1)[1].split(")", 1)[0].split(",")
-                return ([{"question_id": item} for item in ids], len(ids))
             if table == "qbank_question_payloads": return ([], 22844)
             return ([], 1150)
-        with patch("scripts.marrow_pyq_writer.api_get", side_effect=fake_get):
+        def fake_rpc(url, key, name, payload):
+            self.assertEqual(name, "qbank_commit_marrow_pyq_import")
+            self.assertTrue(payload["p_dry_run"])
+            return {"status": "dry_run"}
+        with patch("scripts.marrow_pyq_writer.api_get", side_effect=fake_get), patch("scripts.marrow_pyq_writer.rpc", side_effect=fake_rpc) as rpc_mock:
             result = production_dry_run(self.doc, "https://flulljensjugfcxmeczu.supabase.co", "secret")
         self.assertEqual(result["writes"], 0)
-        self.assertFalse(result["production_apply_ready"])
+        self.assertTrue(result["production_apply_ready"])
         self.assertEqual(result["expected_new_occurrences"], 5938)
-        self.assertEqual(result["matched_prepladder_ids_verified"], 384)
-        self.assertEqual(len(calls), 20)
+        self.assertEqual(result["rpc_subject_batches_validated"], 19)
+        self.assertEqual(rpc_mock.call_count, 19)
+        self.assertEqual(len(calls), 12)
 
     def test_production_project_guard_precedes_network(self):
         with patch("scripts.marrow_pyq_writer.api_get") as get:
             with self.assertRaisesRegex(ValueError, "wrong production"):
                 production_dry_run(self.doc, "https://different.supabase.co", "secret")
             get.assert_not_called()
+
+    def test_production_apply_and_rollback_require_exact_batch(self):
+        with patch("scripts.marrow_pyq_writer.production_dry_run") as dry:
+            with self.assertRaisesRegex(ValueError, "exact production batch"):
+                apply_production(self.doc, "https://flulljensjugfcxmeczu.supabase.co", "secret", "wrong", Path(self.tmp.name))
+            dry.assert_not_called()
+        with patch("scripts.marrow_pyq_writer.rpc") as rpc_mock:
+            with self.assertRaisesRegex(ValueError, "exact production batch"):
+                rollback_production("https://flulljensjugfcxmeczu.supabase.co", "secret", "wrong")
+            rpc_mock.assert_not_called()
+        with patch("scripts.marrow_pyq_writer.rpc") as rpc_mock:
+            with self.assertRaisesRegex(ValueError, "wrong production"):
+                rollback_production("https://different.supabase.co", "secret", BATCH_ID)
+            rpc_mock.assert_not_called()
+
+    def test_migration_owns_rows_and_preserves_learner_data(self):
+        root = ARTIFACT.parents[1]
+        sql = (root / "supabase/migrations/20260921000100_marrow_pyq_independent_import.sql").read_text()
+        self.assertIn("qbank_import_batch_records", sql)
+        self.assertIn("qbank_rollback_marrow_pyq_batch", sql)
+        self.assertNotIn("insert into public.question_attempts", sql.lower())
+        self.assertNotIn("insert into public.user_question_state", sql.lower())
+        app = (root / "app/app.js").read_text()
+        self.assertIn("qbank_pyq_catalog", app)
+        self.assertIn("source_tests: [target.dataset.test]", app)
 
 
 if __name__ == "__main__":
