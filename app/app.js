@@ -23,6 +23,7 @@ const state = {
   analyticsView: null,
   analyticsPyqSet: new Set(),
   pyqCatalog: null,
+  coreBtrCatalog: null,
   recallFilters: { platform_id: '', subject_id: '', scope: 'all' },
   recallQueue: [],
   payloadCache: new Map(),
@@ -726,6 +727,7 @@ const TEST_PRESETS = {
   topic: ['Topic / Subtopic Test', 'Build through the learning hierarchy.'],
   revision: ['Revision Test', 'Incorrect, bookmarked, marked, recall-due or slow questions.'],
   pyq: ['PYQ Test', 'Filter trusted PYQ metadata by platform, year and subject.'],
+  coreBtr: ['Core BTR', 'Browse the original Core BTR sections and collections.'],
   grand: ['Grand Test', 'Broad exam-style set from the available pool.'],
   custom: ['Custom Test', 'Expose every applicable filter.'],
 };
@@ -740,6 +742,7 @@ function showTestBuilder(preset) {
   const item = TEST_PRESETS[preset] || TEST_PRESETS.custom; const revision = preset === 'revision';
   const slot = document.querySelector('#test-builder-slot');
   if (preset === 'pyq') { slot.innerHTML = '<section class="card builder-card"><div class="empty">Loading PYQ subjects and tests…</div></section>'; showPyqCatalog(); return; }
+  if (preset === 'coreBtr') { slot.innerHTML = '<section class="card builder-card"><div class="empty">Loading Core BTR sections and collections…</div></section>'; showCoreBtrCatalog(); return; }
   slot.innerHTML = `<section class="card builder-card"><div class="section-heading"><div><span class="eyebrow">${e(item[0])}</span><h2>Configure this test</h2></div><button class="button ghost compact" data-action="close-builder">Close</button></div><form id="test-form" class="stack" data-preset="${e(preset)}"><div class="filters">${filterFields({ revision })}</div><div class="builder-footer"><div><b data-match-count>Counting available questions…</b><div class="subtle">Browse without timers, or preview this exact set before starting.</div></div><div class="row"><label class="inline-label">Questions <select name="count"><option>10</option><option>20</option><option selected>50</option><option>100</option><option value="all">All matching</option></select></label><button class="button secondary" name="intent" value="browse">Open questions</button><button class="button" name="intent" value="test">Preview ${e(item[0])}</button></div></div></form></section>`;
   const form = document.querySelector('#test-form'); if (preset === 'pyq') form.elements.pyq.value = 'yes'; setupDependentFilters(form);
   form.onsubmit = async (event) => {
@@ -768,6 +771,31 @@ async function showPyqCatalog() {
 async function openSelectedPyqTest(target, start) {
   const definition = { mode: 'test', preset: 'pyq', title: target.dataset.title || 'PYQ test',
     filters: { platforms: [], subjects: [], systems: [], topics: [], subtopics: [], source_tests: [target.dataset.test], statuses: ['all'], exams: [], years: [], sessions: [], pyq: 'yes' },
+    requested: 'all', autoSubmit: true, origin: '#/tests' };
+  if (start) await createSession(definition); else await openQuestionSet(definition);
+}
+
+async function showCoreBtrCatalog() {
+  const slot = document.querySelector('#test-builder-slot'); if (!slot) return;
+  if (!state.coreBtrCatalog) {
+    const result = await db.rpc('qbank_core_btr_catalog');
+    if (result.error) { slot.innerHTML = `<section class="card notice"><b>Core BTR catalog unavailable.</b><p>${e(result.error.message)}</p></section>`; return; }
+    state.coreBtrCatalog = result.data || [];
+  }
+  const bySection = new Map();
+  state.coreBtrCatalog.forEach((row) => {
+    if (!bySection.has(row.section)) bySection.set(row.section, new Map());
+    const collections = bySection.get(row.section);
+    if (!collections.has(row.collection_type)) collections.set(row.collection_type, []);
+    collections.get(row.collection_type).push(row);
+  });
+  const labels = { TOPIC_TEST: 'Topic tests', ALL_QBANK_EXCLUDING_PYQ: 'All QBank excluding PYQs', CORE_BTR_PYQ: 'Core BTR PYQs', ZV_RECOMMENDED: 'ZV Recommended' };
+  slot.innerHTML = `<section class="card builder-card"><div class="section-heading"><div><span class="eyebrow">CORE BTR</span><h2>Choose section and collection</h2><p class="subtle">Metadata loads first. Questions are fetched only for the selected collection.</p></div><button class="button ghost compact" data-action="close-builder">Close</button></div><div class="pyq-catalog">${[...bySection.entries()].map(([section, collections]) => `<details><summary><b>${e(section)}</b><span>${[...collections.values()].flat().reduce((sum, row) => sum + Number(row.question_count || 0), 0)} memberships</span></summary>${[...collections.entries()].map(([type, tests]) => `<div class="pyq-exam"><h3>${e(labels[type] || type)}</h3><div class="list">${tests.map((test) => `<div class="pyq-test-row"><div><b>${e(test.title)}</b><small>${Number(test.question_count || 0)} questions · Analytics: ${e(test.analytics_subject)}</small></div><div class="row"><button class="button secondary compact" data-action="open-core-btr-test" data-test="${e(test.test_id)}" data-title="${e(`Core BTR · ${section} · ${test.title}`)}">Browse</button><button class="button compact" data-action="start-core-btr-test" data-test="${e(test.test_id)}" data-title="${e(`Core BTR · ${section} · ${test.title}`)}">Start test</button></div></div>`).join('')}</div></div>`).join('')}</details>`).join('')}</div></section>`;
+}
+
+async function openSelectedCoreBtrTest(target, start) {
+  const definition = { mode: 'test', preset: 'coreBtr', title: target.dataset.title || 'Core BTR test',
+    filters: { platforms: [], subjects: [], systems: [], topics: [], subtopics: [], source_tests: [target.dataset.test], statuses: ['all'], exams: [], years: [], sessions: [], pyq: '' },
     requested: 'all', autoSubmit: true, origin: '#/tests' };
   if (start) await createSession(definition); else await openQuestionSet(definition);
 }
@@ -1602,6 +1630,7 @@ document.addEventListener('click', async (event) => {
   if (action === 'signout') await db.auth.signOut(); if (action === 'signup') await signUp(); if (action === 'reset-password') await resetPassword(); if (action === 'retry') render();
   if (action === 'choose-preset') showTestBuilder(target.dataset.preset); if (action === 'close-builder') document.querySelector('#test-builder-slot').innerHTML = '';
   if (action === 'open-pyq-test') await openSelectedPyqTest(target, false); if (action === 'start-pyq-test') await openSelectedPyqTest(target, true);
+  if (action === 'open-core-btr-test') await openSelectedCoreBtrTest(target, false); if (action === 'start-core-btr-test') await openSelectedCoreBtrTest(target, true);
   if (action === 'answer') await selectAnswer(target.dataset.key); if (action === 'submit-multi-answer') await submitMultiAnswer(); if (action === 'previous') await navigateActive(state.active.index - 1);
   if (action === 'next') { if (state.active.index === state.active.questions.length - 1) { if (state.active.kind === 'browse') { goToHash(state.active.origin || '#/qbank'); return; } if (state.active.completedReview) return resultScreen(); return submitActive(false); } await navigateActive(state.active.index + 1); }
   if (action === 'jump') await navigateActive(Number(target.dataset.index)); if (action === 'bookmark') await toggleBookmark(); if (action === 'mark') await toggleMark();
