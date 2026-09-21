@@ -22,6 +22,7 @@ const state = {
   analyticsPyqBreakdown: null,
   analyticsView: null,
   analyticsPyqSet: new Set(),
+  analyticsSnapshot: null,
   pyqCatalog: null,
   coreBtrCatalog: null,
   recallFilters: { platform_id: '', subject_id: '', scope: 'all' },
@@ -54,6 +55,8 @@ function toast(text, kind = '') {
   document.querySelector('#toast-region')?.append(node);
   setTimeout(() => node.remove(), 4200);
 }
+
+function invalidateLearnerCaches() { state.analyticsSnapshot = null; }
 
 function safeUrl(value, image = false) {
   try {
@@ -523,7 +526,8 @@ function taxonomySummary(questionSet) {
 
 function registerActionSet(definition) {
   const token = `set-${Date.now()}-${state.actionSets.size + 1}`;
-  state.actionSets.set(token, { origin: `#/${state.route}`, ...definition, questionIds: [...new Set((definition.questionIds || []).map(String))] });
+  const questionIds = definition.questionIds == null ? null : [...new Set(definition.questionIds.map(String))];
+  state.actionSets.set(token, { origin: `#/${state.route}`, ...definition, questionIds });
   return token;
 }
 
@@ -951,11 +955,13 @@ async function recordAttempt(question, answer) {
     const learning = state.active.learning.get(question.id) || { user_id: state.user.id, question_id: question.id };
     state.active.learning.set(question.id, { ...learning, srm_active: result.data?.active, srm_state: result.data?.state, srm_due_at: result.data?.due_at, srm_interval_minutes: result.data?.interval_minutes });
     await saveActiveAnswer(question.id);
+    invalidateLearnerCaches();
     return result.data;
   }
   if (isMissingTable(result.error) || /function .* does not exist|schema cache/i.test(result.error.message)) {
     const saved = await db.from('question_attempts').insert({ user_id: state.user.id, question_id: question.id, selected_option: answer.selected_option, is_correct: isAnswerCorrect(question, answer), mode, answered_at: new Date().toISOString() });
     if (saved.error) toast(`Answer sync failed: ${saved.error.message}`, 'error');
+    else invalidateLearnerCaches();
   } else toast(result.error.message, 'error');
   return null;
 }
@@ -1036,6 +1042,7 @@ async function toggleBookmark() {
   bookmarked ? active.bookmarks.add(question.id) : active.bookmarks.delete(question.id);
   const learning = active.learning.get(question.id) || { user_id: state.user.id, question_id: question.id };
   active.learning.set(question.id, { ...learning, bookmarked });
+  invalidateLearnerCaches();
   toast(bookmarked ? 'Bookmarked' : 'Bookmark removed');
   await saveActiveAnswer(question.id); renderActive();
 }
@@ -1044,7 +1051,7 @@ async function toggleMark() {
   const question = activeQuestion(); const active = state.active; const marked = !active.marked.has(question.id);
   const result = await optional(db.from('user_question_state').upsert({ user_id: state.user.id, question_id: question.id, marked_for_review: marked, revision: marked }, { onConflict: 'user_id,question_id' }), 'learning');
   if (result.error) return toast(result.error.message, 'error');
-  marked ? active.marked.add(question.id) : active.marked.delete(question.id); await saveActiveAnswer(question.id); renderActive();
+  marked ? active.marked.add(question.id) : active.marked.delete(question.id); invalidateLearnerCaches(); await saveActiveAnswer(question.id); renderActive();
 }
 
 async function updateAnswerMetadata(field, value) {
@@ -1151,7 +1158,9 @@ async function review() {
   const learning = await optional(db.from('user_question_state').select('*').eq('user_id', state.user.id), 'learning');
   const rows = learning.data || [];
   const selected = state.reviewFilters || { platforms: [], subjects: [], systems: [], topics: [], subtopics: [], source_tests: [], pyq: '' };
-  const validIds = new Set(await matchingQuestionIds({ ...selected, statuses: ['all'], year: '', search: '', source: '' }));
+  const learningQuestionIds = [...new Set(rows.map((row) => String(row.question_id)))];
+  const hasPopulationFilter = ['platforms','subjects','systems','topics','subtopics','source_tests'].some((key) => selected[key]?.length) || Boolean(selected.pyq);
+  const validIds = new Set(hasPopulationFilter ? await matchingQuestionIds({ ...selected, question_ids: learningQuestionIds, statuses: ['all'], year: '', search: '', source: '' }) : learningQuestionIds);
   const categories = [
     ['incorrect', 'Incorrect', rows.filter((x) => x.last_is_correct === false || x.wrong), 'Questions whose current learning state is incorrect.'],
     ['correct', 'Correct', rows.filter((x) => x.last_is_correct === true), 'Questions whose current learning state is correct.'],
@@ -1161,7 +1170,6 @@ async function review() {
     ['difficult', 'Personally Difficult', rows.filter((x) => x.personally_difficult), 'Questions flagged as difficult.'],
     ['slow', 'Slow >50s', rows.filter((x) => Number(x.last_time_seconds) > TARGET_SECONDS), 'Questions whose latest relevant time exceeded 50 seconds.'],
   ];
-  const learningQuestionIds = [...new Set(rows.map((row) => String(row.question_id)))];
   const taxonomyRows = [];
   for (let index = 0; index < learningQuestionIds.length; index += 200) {
     const result = await db.from('questions').select('id,platform_id,subject_id').in('id', learningQuestionIds.slice(index, index + 200));
@@ -1340,6 +1348,40 @@ function analyticsSelectionLabel(filters) {
   return parts.join(' / ') || 'All usable questions';
 }
 
+function snapshotMetric(row = {}) {
+  const available = Number(row.available || 0); const attempted = Number(row.attempted || 0);
+  const latestCorrect = Number(row.latest_correct || 0); const totalAttempts = Number(row.total_attempts || 0);
+  const attemptCorrect = Number(row.attempt_correct || 0); const timedAttempts = Number(row.timed_attempts || 0);
+  return { ...row, available, attempted, latestCorrect, latestIncorrect: Number(row.latest_incorrect || 0),
+    totalAttempts, coverage: pct(attempted, available), latestAccuracy: pct(latestCorrect, attempted),
+    attemptAccuracy: pct(attemptCorrect, totalAttempts), averageTime: timedAttempts ? Math.round(Number(row.timed_seconds || 0) / timedAttempts) : null };
+}
+
+function lazyAnalyticsAction({ title, filters, label, secondary = false }) {
+  const token = registerActionSet({ mode: 'test', preset: 'analytics', title, filters, questionIds: null, requested: 'all', origin: '#/analytics' });
+  return `<button class="button ${secondary ? 'secondary ' : ''}compact" data-action="open-action-set" data-set="${e(token)}">${e(label)}</button>`;
+}
+
+async function analyticsSnapshot() {
+  if (state.analyticsSnapshot) return state.analyticsSnapshot;
+  const started = performance.now(); const result = await db.rpc('qbank_analytics_snapshot');
+  if (result.error) throw result.error;
+  state.analyticsSnapshot = { ...result.data, client_ms: Math.round(performance.now() - started) };
+  return state.analyticsSnapshot;
+}
+
+function renderAnalyticsSnapshot(snapshot) {
+  const overall = snapshotMetric(snapshot.overall); const pyq = snapshotMetric(snapshot.pyq);
+  const subjects = (snapshot.subjects || []).map((row) => ({ ...snapshotMetric(row), id: String(row.subject_id), name: row.name }));
+  const base = { platforms: [], subjects: [], systems: [], topics: [], subtopics: [], source_tests: [], statuses: ['all'], exams: [], years: [], sessions: [], pyq: '' };
+  const wrong = lazyAnalyticsAction({ title: 'Current incorrect questions', filters: { ...base, statuses: ['incorrect'] }, label: 'Review Incorrect' });
+  const bookmarks = lazyAnalyticsAction({ title: 'Bookmarked questions', filters: { ...base, statuses: ['bookmarked'] }, label: 'Open Bookmarks', secondary: true });
+  const pyqWrong = lazyAnalyticsAction({ title: 'Incorrect PYQs', filters: { ...base, statuses: ['incorrect'], pyq: 'yes' }, label: 'Review Wrong PYQs', secondary: true });
+  return `<section class="analytics-compact"><div class="section-heading"><div><span class="eyebrow">QBANK SNAPSHOT</span><h2>Coverage and current performance</h2><p class="subtle">Compact server summary · no question bodies or full-corpus ID list loaded.</p></div><span class="pill">${snapshot.client_ms} ms</span></div>${metricStrip([['Available', overall.available], ['Attempted', overall.attempted, overall.coverage], ['Latest accuracy', overall.latestAccuracy], ['Currently wrong', overall.latestIncorrect], ['Bookmarked', Number(overall.bookmarked || 0)], ['Marked', Number(overall.marked || 0)], ['Avg time', overall.averageTime == null ? '—' : `${overall.averageTime}s`]])}<div class="analytics-command-actions">${wrong}${bookmarks}</div></section>
+  <section class="analytics-compact analytics-pyq"><div class="section-heading"><div><span class="eyebrow">PYQ PERFORMANCE</span><h2>Previous-year questions</h2></div><button class="button ghost compact" data-action="analytics-section" data-section="pyq">Open PYQ analytics</button></div>${metricStrip([['Available', pyq.available], ['Attempted', pyq.attempted, pyq.coverage], ['Latest accuracy', pyq.latestAccuracy], ['Currently wrong', pyq.latestIncorrect], ['Repeated', Number(pyq.repeated_incorrect || 0)], ['Recovered', Number(pyq.recovered || 0)]])}<div class="analytics-command-actions">${pyqWrong}</div></section>
+  <section class="analytics-compact"><div class="section-heading"><div><span class="eyebrow">BY SUBJECT</span><h2>Combined learner state across every source</h2></div></div><div class="subject-list">${subjects.map((row) => `<article><div><b>${e(row.name)}</b><small>${row.attempted}/${row.available} attempted · ${row.latestAccuracy} accuracy · ${row.latestIncorrect} wrong · ${Number(row.bookmarked || 0)} bookmarked</small></div><button class="button secondary compact" data-action="analytics-subject" data-subject="${e(row.id)}">Open</button></article>`).join('')}</div></section>`;
+}
+
 async function legacyAnalytics() {
   loading('Calculating selected analytics…');
   const filters = state.analyticsFilters || { platforms: [], subjects: [], systems: [], topics: [], subtopics: [], statuses: ['all'], exams: [], years: [], sessions: [], pyq: '', srm: '' };
@@ -1497,6 +1539,11 @@ async function renderAnalyticsExplore(overallIds, model) {
 
 async function analytics() {
   loading('Calculating analytics…');
+  if (state.analyticsSection === 'overview') {
+    const snapshot = await analyticsSnapshot();
+    layout(`<div class="page-heading analytics-heading"><span class="eyebrow">ANALYTICS</span><h1>Turn performance into a study plan</h1></div>${analyticsTabs()}<div class="analytics-view">${renderAnalyticsSnapshot(snapshot)}</div>`);
+    return;
+  }
   const allFilters = { platforms: [], subjects: [], systems: [], topics: [], subtopics: [], source_tests: [], statuses: ['all'], exams: [], years: [], sessions: [], pyq: '', year: '', search: '', source: '' };
   const [overallPopulation, pyqPopulation, allFacets] = await Promise.all([
     resolvePopulation(allFilters, { includeIds: true, limit: null }),
@@ -1664,7 +1711,7 @@ document.addEventListener('click', async (event) => {
   if (action === 'analytics-pyq-subject') { state.analyticsSubjectId = target.dataset.subject; state.analyticsPyqBreakdown = null; await analytics(); }
   if (action === 'analytics-pyq-back') { state.analyticsSubjectId = null; state.analyticsPyqBreakdown = null; await analytics(); }
   if (action === 'analytics-pyq-breakdown') { state.analyticsPyqBreakdown = target.dataset.level; await analytics(); }
-  if (action === 'analytics-subject') { state.analyticsSubjectId = target.dataset.subject; await analytics(); }
+  if (action === 'analytics-subject') { state.analyticsSection = 'subjects'; state.analyticsSubjectId = target.dataset.subject; await analytics(); }
   if (action === 'analytics-subject-back') { state.analyticsSubjectId = null; await analytics(); }
   if (action === 'analytics-open-ids') { const questionIds = String(target.dataset.ids || '').split(',').filter(Boolean); await openQuestionSet({ mode: 'test', preset: 'analytics', title: target.dataset.label || 'Analytics review', filters: { platforms: [], subjects: [], systems: [], topics: [], subtopics: [], source_tests: [], statuses: ['all'], exams: [], years: [], sessions: [], pyq: '' }, questionIds, origin: '#/analytics' }); }
   if (action === 'select-analytics-breakdown') { state.analyticsBreakdown = target.dataset.level; document.querySelectorAll('[data-action="select-analytics-breakdown"]').forEach((button) => { button.classList.toggle('secondary', button !== target); }); renderAnalyticsBreakdown(state.analyticsBreakdown, 1); }
