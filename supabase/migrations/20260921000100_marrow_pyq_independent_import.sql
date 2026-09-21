@@ -183,7 +183,8 @@ begin
       explanation_html,question_images,explanation_images,video_url,audio_url,exam_tags,source_test_label,
       source_type,source_platform_id,is_pyq,is_neet_pg,is_inicet,exam_year,exam_shift,source_reference,
       status,content_origin,source_collection,is_usable)
-    values((row->>'question_id')::uuid,v_platform_id,v_subject_id,row->>'source_question_id',row->>'stem_excerpt','[]',
+    values((row->>'question_id')::uuid,v_platform_id,v_subject_id,
+      (row->>'source_question_id')||'@'||left(row->>'content_sha256',12),row->>'stem_excerpt','[]',
       array_to_string(array(select jsonb_array_elements_text(row->'correct_option_keys')),','),null,'[]','[]',
       nullif(row->>'video_url',''),nullif(row->>'audio_url',''),
       case when row->>'exam_key'='aiims' then array['aiims'] else '{}'::text[] end,

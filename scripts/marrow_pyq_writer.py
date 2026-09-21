@@ -239,6 +239,16 @@ def api_get(url: str, key: str, table: str, query: str) -> tuple[list, int]:
     return rows, count
 
 
+def api_all(url: str, key: str, table: str, query: str) -> list:
+    rows, offset = [], 0
+    while True:
+        page, _ = api_get(url, key, table, f"{query}&limit=1000&offset={offset}")
+        rows.extend(page)
+        if len(page) < 1000:
+            return rows
+        offset += len(page)
+
+
 def independent_pyq_plan(doc: dict) -> dict:
     """Validate the staged V1 as independent Marrow content, without canonical merges."""
     tests = {row["id"]: row for row in doc["source_tests"]}
@@ -409,12 +419,33 @@ def production_dry_run(doc: dict, url: str, key: str) -> dict:
     if len(platforms) != 1:
         raise ValueError("Marrow platform must resolve uniquely")
     platform_id = platforms[0]["id"]
-    tests, tests_count = api_get(url, key, "qbank_source_tests", "select=id&platform_id=eq." + urllib.parse.quote(platform_id) + "&limit=1")
-    payloads, payload_count = api_get(url, key, "qbank_question_payloads", "select=question_id&platform_id=eq." + urllib.parse.quote(platform_id) + "&limit=1")
+    tests = api_all(url, key, "qbank_source_tests", "select=id&platform_id=eq." + urllib.parse.quote(platform_id))
+    tests_count = len(tests)
+    payloads = api_all(url, key, "qbank_question_payloads", "select=question_id&platform_id=eq." + urllib.parse.quote(platform_id))
+    payload_count = len(payloads)
     _, prep_count = api_get(url, key, "qbank_question_payloads", "select=question_id&limit=1")
     _, _ = api_get(url, key, "canonical_question_versions", "select=question_id&limit=1")
-    if tests_count != 0 or payload_count != 0 or prep_count != doc["db_snapshot"]["payloads"]:
+    expected_test_ids = {row["id"] for row in doc["source_tests"]}
+    expected_question_ids = {row["question_id"] for row in doc["content_versions"]}
+    if not {row["id"] for row in tests} <= expected_test_ids or not {row["question_id"] for row in payloads} <= expected_question_ids:
+        raise ValueError("production contains non-staged Marrow keys")
+    if prep_count != doc["db_snapshot"]["payloads"] + payload_count:
         raise ValueError("production changed since staging; refresh and restage before apply")
+    owned = api_all(url, key, "qbank_import_batch_records",
+                    "select=entity_type,entity_key&batch_id=eq." + urllib.parse.quote(BATCH_ID))
+    expected_by_type = {
+        "source_test": expected_test_ids,
+        "payload_object": {row["id"] for row in doc["payload_objects"]},
+        "question": expected_question_ids, "question_payload": expected_question_ids,
+        "review_metadata": {row["question_id"] for row in doc["content_versions"] if row["review_reason"]},
+        "source_occurrence": {row["id"] for row in doc["occurrences"]},
+    }
+    for row in owned:
+        if row["entity_type"] != "import_run" and row["entity_key"] not in expected_by_type.get(row["entity_type"], set()):
+            raise ValueError("batch ownership contains a non-staged entity")
+    owned_keys = {(row["entity_type"], row["entity_key"]) for row in owned}
+    if any(("source_test", row["id"]) not in owned_keys for row in tests) or any(("question_payload", row["question_id"]) not in owned_keys for row in payloads):
+        raise ValueError("existing Marrow rows are not owned by this batch")
     protected = {}
     for table in ("questions", "qbank_source_tests", "qbank_source_occurrences",
                   "question_attempts", "test_sessions", "user_question_state", "bookmarks"):
@@ -424,6 +455,16 @@ def production_dry_run(doc: dict, url: str, key: str) -> dict:
                    for manifest in manifests.values()]
     if len(rpc_results) != 19 or any(row.get("status") != "dry_run" for row in rpc_results):
         raise ValueError("production RPC dry-run did not validate every subject batch")
+    expected_counts = {entity_type: len(keys) for entity_type, keys in expected_by_type.items()}
+    expected_counts["import_run"] = 19
+    owned_counts = {entity_type: 0 for entity_type in expected_counts}
+    for row in owned:
+        if row["entity_type"] in owned_counts:
+            owned_counts[row["entity_type"]] += 1
+    remaining_deltas = {
+        entity_type: expected_counts[entity_type] - owned_counts[entity_type]
+        for entity_type in expected_counts
+    }
     return {"authenticated": True, "writes": 0, "platform_id": platform_id,
             "existing_marrow_tests": tests_count, "existing_marrow_versions": payload_count,
             "existing_total_payloads": prep_count,
@@ -434,6 +475,8 @@ def production_dry_run(doc: dict, url: str, key: str) -> dict:
             "preexisting_marrow_test_ids": [row["id"] for row in tests],
             "preexisting_marrow_question_ids": [row["question_id"] for row in payloads],
             "rpc_subject_batches_validated": len(rpc_results),
+            "remaining_deltas": remaining_deltas,
+            "idempotent_noop": all(delta == 0 for delta in remaining_deltas.values()),
             "independent_pyq_plan": plan,
             "production_apply_ready": True}
 

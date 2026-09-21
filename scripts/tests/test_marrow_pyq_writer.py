@@ -123,7 +123,7 @@ class MarrowPyqWriterTests(unittest.TestCase):
         self.assertEqual(result["expected_new_occurrences"], 5938)
         self.assertEqual(result["rpc_subject_batches_validated"], 19)
         self.assertEqual(rpc_mock.call_count, 19)
-        self.assertEqual(len(calls), 12)
+        self.assertEqual(len(calls), 13)
 
     def test_production_project_guard_precedes_network(self):
         with patch("scripts.marrow_pyq_writer.api_get") as get:
