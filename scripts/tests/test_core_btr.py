@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from scripts.core_btr_stage import collection_type, corrected_section
-from scripts.core_btr_writer import BATCH_ID, load_artifact, manifests, preflight
+from scripts.core_btr_writer import BATCH_ID, create_backup, load_artifact, manifests, preflight
 
 
 ARTIFACT = Path("import-reports/core-btr-stage-v1.json.gz")
@@ -50,6 +50,14 @@ class CoreBtrTests(unittest.TestCase):
         self.assertEqual(sum(x["occurrence_count"] for x in rows.values()), 19137)
         self.assertEqual(sum(x["payload_object_count"] for x in rows.values()), 67)
 
+    def test_backup_is_reused_during_resume(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = create_backup(self.doc, {"protected_counts": {"questions": 1}}, Path(directory))
+            original = target.read_bytes()
+            resumed = create_backup(self.doc, {"protected_counts": {"questions": 2}}, Path(directory))
+            self.assertEqual(resumed, target)
+            self.assertEqual(resumed.read_bytes(), original)
+
     def test_production_preflight_is_read_only(self):
         subject_names = sorted({x["analytics_subject"] for x in self.doc["source_tests"]})
         counts = {"questions": 29176, "qbank_source_tests": 1471,
@@ -68,6 +76,8 @@ class CoreBtrTests(unittest.TestCase):
         self.assertEqual(result["writes"], 0)
         self.assertEqual(result["batch_id"], BATCH_ID)
         self.assertEqual(result["projected_deltas"]["questions"], 14066)
+        self.assertEqual(result["remaining_deltas"], result["projected_deltas"])
+        self.assertFalse(result["idempotent_noop"])
 
 
 if __name__ == "__main__":

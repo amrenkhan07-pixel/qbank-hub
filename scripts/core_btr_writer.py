@@ -158,22 +158,39 @@ def preflight(doc: dict, url: str, key: str) -> dict:
     projected = {"import_runs": len(manifests(doc)), "source_tests": 284, "storage_objects": 67,
         "payload_objects": 67, "questions": 14066, "payload_indexes": 14066,
         "source_occurrences": 19137, "canonical_links": 0}
+    remaining = {
+        "import_runs": projected["import_runs"] - existing["runs"],
+        "source_tests": projected["source_tests"] - existing["tests"],
+        "storage_objects": projected["storage_objects"] - existing["payload_objects"],
+        "payload_objects": projected["payload_objects"] - existing["payload_objects"],
+        "questions": projected["questions"] - existing["questions"],
+        "payload_indexes": projected["payload_indexes"] - existing["questions"],
+        "source_occurrences": projected["source_occurrences"] - existing["occurrences"],
+        "canonical_links": 0,
+    }
+    if any(value < 0 for value in remaining.values()):
+        raise ValueError("production Core BTR counts exceed the staged artifact")
     return {"project_ref": PROJECT_REF, "authenticated": True, "writes": 0,
             "batch_id": BATCH_ID, "existing_core_btr": existing, "protected_counts": protected,
             "subjects": len(subject_names), "projected_deltas": projected,
+            "remaining_deltas": remaining, "idempotent_noop": not any(remaining.values()),
             "payload_stored_bytes": doc["summary"]["payload_stored_bytes"], "production_apply_ready": True}
 
 
 def create_backup(doc: dict, result: dict, directory: Path) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     target = directory / "affected-slice-manifest.json"
+    if target.exists():
+        existing = json.loads(target.read_text())
+        if (existing.get("batch_id") != BATCH_ID or existing.get("artifact_sha256") != ARTIFACT_SHA256
+                or existing.get("project_ref") != PROJECT_REF):
+            raise ValueError("backup directory contains a different Core BTR manifest")
+        return target
     manifest = {"batch_id": BATCH_ID, "artifact_sha256": ARTIFACT_SHA256, "project_ref": PROJECT_REF,
         "created_before_import": True, "preimport_counts": result["protected_counts"],
         "planned_test_ids": sorted(x["id"] for x in doc["source_tests"]),
         "planned_question_ids": sorted(x["question_id"] for x in doc["content_versions"]),
         "planned_occurrence_keys": sorted(x["occurrence_key"] for x in doc["occurrences"])}
-    if target.exists() and json.loads(target.read_text()) != manifest:
-        raise ValueError("backup directory contains a different Core BTR manifest")
     target.write_text(stable_json(manifest))
     return target
 
