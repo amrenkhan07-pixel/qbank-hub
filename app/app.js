@@ -1,3 +1,5 @@
+import { createGTExamMode } from './gt-exam-mode.js?v=20260923-1';
+import { createGrandTests } from './grand-tests.js?v=20260923-gt-mode';
 import { db, initError, isMissingTable, requireUser, withAuthTimeout } from './supabase.js';
 import { analyticsActionQuestionIds, analyticsMetadataCapabilities, analyticsPlatformDisagreement, analyticsStudyPriority, analyticsTopicSubtopicRedundant, assertValidation, buildTaxonomyIndex, canonicalCorrectOptionKeys, filterAnalyticsPopulation, isCanonicalAnswerCorrect, normalizeOptionKeys, resolveTaxonomyCascade, validateGeneratedQuestionSet, validateQuestionStateBindings, validateResumeSnapshot, validateSrmQueue } from './validation.js?v=20260902-srm2';
 import { runTaxonomyDomRegression } from './taxonomy-dom-regression.js?v=20260902-canonical-subject';
@@ -90,7 +92,7 @@ function richHtml(value) {
 }
 
 function layout(content) {
-  const nav = [['home', 'Home'], ['qbank', 'QBank'], ['tests', 'Test'], ['recall', 'Recall'], ['review', 'Review'], ['analytics', 'Analytics'], ['my-bank', 'My Bank']];
+  const nav = [['home', 'Home'], ['qbank', 'QBank'], ['tests', 'Test'], ['recall', 'Recall'], ['review', 'Review'], ['analytics', 'Analytics'], ['grand-test-analytics', 'GT Analytics'], ['my-bank', 'My Bank']];
   root.innerHTML = `<header class="topbar"><div class="shell topbar-row"><a class="brand" href="#/home">QBank <span>Hub</span></a><div class="user-actions"><span class="email">${e(state.user?.email)}</span><button class="button secondary compact" data-action="signout">Sign out</button></div></div><nav class="shell nav" aria-label="Primary navigation">${nav.map(([id, label]) => `<a href="#/${id}" class="${state.route === id ? 'active' : ''}">${label}</a>`).join('')}</nav></header><main class="shell">${content}</main>`;
 }
 
@@ -121,7 +123,7 @@ async function loadMeta(force = false) {
     optional(db.from('systems').select('id,name,platform_subject_id').order('sort_order').order('name')),
     optional(db.from('topics').select('id,name,platform_subject_id,system_id,parent_topic_id').order('sort_order').order('name')),
     optional(db.from('subtopics').select('id,name,topic_id').order('sort_order').order('name'), 'subtopics'),
-    optional(paged(() => db.from('qbank_source_tests').select('id,title,platform_id,subject_id,sequence,declared_question_count,is_pyq').order('sequence').order('id')), 'hybrid'),
+    optional(paged(() => db.from('qbank_source_tests').select('id,title,platform_id,subject_id,sequence,declared_question_count,is_pyq').not('subject_id', 'is', null).order('sequence').order('id')), 'hybrid'),
   ]);
   if (subjects.error) throw subjects.error;
   if (platforms.error) throw platforms.error;
@@ -732,19 +734,26 @@ const TEST_PRESETS = {
   revision: ['Revision Test', 'Incorrect, bookmarked, marked, recall-due or slow questions.'],
   pyq: ['PYQ Test', 'Filter trusted PYQ metadata by platform, year and subject.'],
   coreBtr: ['Core BTR', 'Browse the original Core BTR sections and collections.'],
-  grand: ['Grand Test', 'Broad exam-style set from the available pool.'],
+  grand: ['Grand Test', 'Choose a platform for a timed Grand Test or source review.'],
   custom: ['Custom Test', 'Expose every applicable filter.'],
 };
 
 async function tests() {
   layout(`<div class="page-heading"><span class="eyebrow">TEST</span><h1>Choose a test type</h1><p>Start with intent, then narrow the question pool.</p></div><section class="preset-grid">${Object.entries(TEST_PRESETS).map(([id, item]) => `<button class="card preset-card" data-action="choose-preset" data-preset="${id}"><b>${e(item[0])}</b><span>${e(item[1])}</span></button>`).join('')}</section><section id="test-builder-slot"></section><section class="card section-card"><div class="section-heading"><div><span class="eyebrow">CONTINUE</span><h2>Unfinished tests</h2></div><a href="#/history">History</a></div><div id="resume-tests" class="empty">Loading…</div></section>`);
+  const resumeHost = document.querySelector('#resume-tests');
   const result = await optional(db.from('test_sessions').select('*').eq('user_id', state.user.id).eq('status', 'in_progress').order('updated_at', { ascending: false }).limit(10), 'sessions');
-  document.querySelector('#resume-tests').innerHTML = result.data?.length ? `<ul class="list">${result.data.map((session) => `<li><div><b>${e(session.title || session.preset || 'Test')}</b><div class="subtle">Question ${(session.current_position || 0) + 1}/${session.total_questions} · ${date(session.updated_at)}</div></div><button class="button secondary" data-action="resume" data-id="${e(session.id)}">Resume</button></li>`).join('')}</ul>` : '<div class="empty">No unfinished tests.</div>';
+  if (!resumeHost.isConnected) return;
+  resumeHost.innerHTML = result.data?.length ? `<ul class="list">${result.data.map((session) => `<li><div><b>${e(session.title || session.preset || 'Test')}</b><div class="subtle">Question ${(session.current_position || 0) + 1}/${session.total_questions} · ${date(session.updated_at)}</div></div><button class="button secondary" data-action="resume" data-id="${e(session.id)}">Resume</button></li>`).join('')}</ul>` : '<div class="empty">No unfinished tests.</div>';
 }
 
+const gtMode = createGTExamMode({ db, e, richHtml, safeUrl, decodePayloadObject, layout });
+const grandTests = createGrandTests({ db, e, richHtml, safeUrl, decodePayloadObject, layout, startGT: (host,test) => gtMode.setup(host,test,()=>grandTests.showCatalog(host)) });
+
 function showTestBuilder(preset) {
+  grandTests.cancel(); gtMode.cancel();
   const item = TEST_PRESETS[preset] || TEST_PRESETS.custom; const revision = preset === 'revision';
   const slot = document.querySelector('#test-builder-slot');
+  if (preset === 'grand') { grandTests.showCatalog(slot); return; }
   if (preset === 'pyq') { slot.innerHTML = '<section class="card builder-card"><div class="empty">Loading PYQ subjects and tests…</div></section>'; showPyqCatalog(); return; }
   if (preset === 'coreBtr') { slot.innerHTML = '<section class="card builder-card"><div class="empty">Loading Core BTR sections and collections…</div></section>'; showCoreBtrCatalog(); return; }
   slot.innerHTML = `<section class="card builder-card"><div class="section-heading"><div><span class="eyebrow">${e(item[0])}</span><h2>Configure this test</h2></div><button class="button ghost compact" data-action="close-builder">Close</button></div><form id="test-form" class="stack" data-preset="${e(preset)}"><div class="filters">${filterFields({ revision })}</div><div class="builder-footer"><div><b data-match-count>Counting available questions…</b><div class="subtle">Browse without timers, or preview this exact set before starting.</div></div><div class="row"><label class="inline-label">Questions <select name="count"><option>10</option><option>20</option><option selected>50</option><option>100</option><option value="all">All matching</option></select></label><button class="button secondary" name="intent" value="browse">Open questions</button><button class="button" name="intent" value="test">Preview ${e(item[0])}</button></div></div></form></section>`;
@@ -1656,10 +1665,11 @@ async function recordRecallResponse(value) {
 }
 
 async function render() {
+  gtMode.cancel(); grandTests.cancel();
   stopActiveTimer(); state.route = route(); if (!state.user) return auth();
   try {
     await loadMeta();
-    if (state.route === 'home') return home(); if (state.route === 'qbank') return qbank(); if (state.route === 'tests') return tests(); if (state.route === 'recall') return recall(); if (state.route === 'review') return review(); if (state.route === 'analytics') return analytics(); if (state.route === 'my-bank' || state.route === 'manage') return myBank(); if (state.route === 'history') return history(); return home();
+    if (state.route === 'home') return home(); if (state.route === 'qbank') return qbank(); if (state.route === 'tests') return tests(); if (state.route === 'recall') return recall(); if (state.route === 'review') return review(); if (state.route === 'analytics') return analytics(); if (state.route === 'grand-test-analytics') return grandTests.analytics(); if (state.route === 'grand-test-attempt') return gtMode.attempt(new URLSearchParams(location.hash.split('?')[1]).get('id')); if (state.route === 'my-bank' || state.route === 'manage') return myBank(); if (state.route === 'history') return history(); return home();
   } catch (error) { console.error(error); layout(`<div class="card notice"><b>Something went wrong.</b><p>${e(error.message || 'Please try again.')}</p><button class="button secondary" data-action="retry">Try again</button></div>`); }
 }
 
@@ -1685,7 +1695,7 @@ async function resetPassword() { const email = document.querySelector('[name="em
 document.addEventListener('click', async (event) => {
   const target = event.target.closest('[data-action]'); if (!target) return; const action = target.dataset.action;
   if (action === 'signout') await db.auth.signOut(); if (action === 'signup') await signUp(); if (action === 'reset-password') await resetPassword(); if (action === 'retry') render();
-  if (action === 'choose-preset') showTestBuilder(target.dataset.preset); if (action === 'close-builder') document.querySelector('#test-builder-slot').innerHTML = '';
+  if (action === 'choose-preset') showTestBuilder(target.dataset.preset); if (action === 'close-builder') { grandTests.cancel(); gtMode.cancel(); document.querySelector('#test-builder-slot').innerHTML = ''; }
   if (action === 'open-pyq-test') await openSelectedPyqTest(target, false); if (action === 'start-pyq-test') await openSelectedPyqTest(target, true);
   if (action === 'open-core-btr-test') await openSelectedCoreBtrTest(target, false); if (action === 'start-core-btr-test') await openSelectedCoreBtrTest(target, true);
   if (action === 'answer') await selectAnswer(target.dataset.key); if (action === 'submit-multi-answer') await submitMultiAnswer(); if (action === 'previous') await navigateActive(state.active.index - 1);

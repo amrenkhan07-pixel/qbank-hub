@@ -497,3 +497,6 @@ fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
   .palette { grid-template-columns: repeat(6, minmax(34px, 1fr)); }
   .status-legend { gap: 7px 12px; }
 }
+
+/* GT browsing has no fixed attempt controls; keep disclosure links unobstructed. */
+.question-actions.gt-browse-actions { position: static; margin: 20px 0 0; padding: 16px 0 0; background: transparent; box-shadow: none; }
