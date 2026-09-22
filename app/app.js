@@ -1739,6 +1739,8 @@ async function bootstrap() {
   loading(); state.user = await requireUser();
   if (db) {
     db.auth.onAuthStateChange((_event, session) => {
+      // bootstrap already renders the initial session; a duplicate render can erase GT selection.
+      if (_event === 'INITIAL_SESSION') return;
       state.user = session?.user || null;
       state.meta.subjects = [];
       setTimeout(render, 0);
