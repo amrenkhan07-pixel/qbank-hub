@@ -1,5 +1,6 @@
-import { createGTExamMode } from './gt-exam-mode.js?v=20260923-1';
-import { createGrandTests } from './grand-tests.js?v=20260923-gt-mode';
+import {readClock,freezeClock,runClock,checkpointClock,initialClock} from './session-timers.js?v=20260923-pause1';
+import { createGTExamMode } from './gt-exam-mode.js?v=20260923-pause1';
+import { createGrandTests } from './grand-tests.js?v=20260923-pause1';
 import { db, initError, isMissingTable, requireUser, withAuthTimeout } from './supabase.js';
 import { analyticsActionQuestionIds, analyticsMetadataCapabilities, analyticsPlatformDisagreement, analyticsStudyPriority, analyticsTopicSubtopicRedundant, assertValidation, buildTaxonomyIndex, canonicalCorrectOptionKeys, filterAnalyticsPopulation, isCanonicalAnswerCorrect, normalizeOptionKeys, resolveTaxonomyCascade, validateGeneratedQuestionSet, validateQuestionStateBindings, validateResumeSnapshot, validateSrmQueue } from './validation.js?v=20260902-srm2';
 import { runTaxonomyDomRegression } from './taxonomy-dom-regression.js?v=20260902-canonical-subject';
@@ -611,10 +612,10 @@ async function startPendingSession() {
     ...payload, ...(session || {}), kind: mode, questions, index: 0, answers: {},
     bookmarks: personal.bookmarks, marked: personal.marked, learning: personal.learning,
     questionStartedAt: startedMs, questionTimeRemainingSeconds: null,
-    totalTimeUsedMs: 0, totalTimerStartedAt: startedMs,
     explanationOpen: false, completedReview: false,
   };
   state.pendingSet = null;
+  await persistTimer(state.active);
   renderActive();
 }
 
@@ -867,9 +868,10 @@ function renderActive() {
     return `<button data-action="jump" data-index="${index}" class="palette-item ${base} ${index === active.index ? 'current' : ''}" aria-label="Question ${index + 1}${bookmark ? ', bookmarked' : ''}${marked ? ', marked for review' : ''}"><span>${index + 1}</span>${badges}</button>`;
   }).join('');
   const tools = browsing ? '' : `<section class="card question-tools"><span class="eyebrow">QUESTION TOOLS</span><button class="tool-button bookmark-tool ${active.bookmarks.has(question.id) ? 'active' : ''}" data-action="bookmark" aria-pressed="${active.bookmarks.has(question.id)}"><span>${active.bookmarks.has(question.id) ? '★' : '☆'}</span>${active.bookmarks.has(question.id) ? 'Bookmarked' : 'Bookmark'}</button><button class="tool-button review-tool ${active.marked.has(question.id) ? 'active' : ''}" data-action="mark" aria-pressed="${active.marked.has(question.id)}"><span>!</span>${active.marked.has(question.id) ? 'Marked for review' : 'Mark for review'}</button>${srmButton}<button class="tool-button" data-action="note"><span>＋</span>Note</button><button class="tool-button" data-action="report"><span>⚑</span>Report</button></section>`;
-  layout(`<section class="question-header"><div><span class="pill">${browsing ? 'Browse' : active.completedReview ? 'Review' : active.kind === 'recall' ? 'Recall' : active.kind === 'test' ? e(TEST_PRESETS[active.preset]?.[0] || 'Test') : 'Practice'}</span><h1>${e(active.title || 'Question set')}</h1></div>${browsing ? `<div class="row"><button class="button" data-action="preview-browsed-set">Start test with these exact questions</button><button class="button secondary" data-action="back-to-origin">Back</button></div>` : active.kind === 'recall' ? '<span class="pill">Priority order · no timer</span>' : timerRunning ? `<div class="timer-cluster"><div><span>QUESTION TIMER</span><b id="question-timer">00:50</b></div><div><span>TOTAL TIMER</span><b id="total-timer">${timerText(active.questions.length * TARGET_SECONDS)}</b></div></div>` : ''}</section><div class="question-layout"><section class="card question-card"><div class="question-topline"><span>Question ${active.index + 1} of ${active.questions.length}</span><span class="question-context">${questionMeta(question)}</span></div><div class="progress"><i style="width:${((active.index + 1) / active.questions.length) * 100}%"></i></div>${renderQuestion(question, answer, reveal)}${browsing ? '' : feedbackControls(answer || {}, reveal, Boolean(answer?.selected_option) && !isAnswerCorrect(question, answer))}<div class="question-actions"><button class="button secondary" data-action="previous" ${active.index === 0 ? 'disabled' : ''}>← Previous</button><button class="button" data-action="next">${active.index === active.questions.length - 1 ? (browsing ? 'Back' : active.completedReview ? 'Back to results' : 'Finish') : 'Next →'}</button></div></section><aside class="question-sidebar">${tools}<section class="card palette-card"><div class="section-heading"><div><span class="eyebrow">NAVIGATOR</span><h3>Questions</h3></div><span>${answered}/${active.questions.length}</span></div><div class="status-legend" aria-label="Question status legend"><span class="correct">Correct</span><span class="incorrect">Incorrect</span><span class="review">Review</span><span class="bookmark">Bookmarked</span><span class="unattempted">Unattempted</span></div><div class="palette">${palette}</div>${active.questions.length > 500 ? '<p class="subtle">Palette shows the first 500 positions; Previous/Next continues through all questions.</p>' : ''}${active.kind === 'test' && !active.completedReview ? `<p class="subtle">${active.questions.length - answered} unanswered</p><button class="button danger full" data-action="submit">Submit test</button>` : ''}</section></aside></div>`);
+  layout(`<section class="question-header"><div><span class="pill">${browsing ? 'Browse' : active.completedReview ? 'Review' : active.kind === 'recall' ? 'Recall' : active.kind === 'test' ? e(TEST_PRESETS[active.preset]?.[0] || 'Test') : 'Practice'}</span><h1>${e(active.title || 'Question set')}</h1></div>${browsing ? `<div class="row"><button class="button" data-action="preview-browsed-set">Start test with these exact questions</button><button class="button secondary" data-action="back-to-origin">Back</button></div>` : active.kind === 'recall' ? '<span class="pill">Priority order · no timer</span>' : timerRunning ? `<div class="timer-cluster"><div><span>QUESTION TIMER</span><b id="question-timer">00:50</b></div><div><span>TOTAL TIMER</span><b id="total-timer">${timerText(active.questions.length * TARGET_SECONDS)}</b></div><button class="button secondary compact" data-action="toggle-timers" ${answer?.selected_option||active.timerBusy?'disabled':''}>${sharedClock(active).manualPaused?'Resume':'Pause'}</button>${sharedClock(active).paused?'<span class="pill">PAUSED</span>':''}</div>` : ''}</section><div class="question-layout"><section class="card question-card"><div class="question-topline"><span>Question ${active.index + 1} of ${active.questions.length}</span><span class="question-context">${questionMeta(question)}</span></div><div class="progress"><i style="width:${((active.index + 1) / active.questions.length) * 100}%"></i></div>${renderQuestion(question, answer, reveal)}${browsing ? '' : feedbackControls(answer || {}, reveal, Boolean(answer?.selected_option) && !isAnswerCorrect(question, answer))}<div class="question-actions"><button class="button secondary" data-action="previous" ${active.index === 0 ? 'disabled' : ''}>← Previous</button><button class="button" data-action="next">${active.index === active.questions.length - 1 ? (browsing ? 'Back' : active.completedReview ? 'Back to results' : 'Finish') : 'Next →'}</button></div></section><aside class="question-sidebar">${tools}<section class="card palette-card"><div class="section-heading"><div><span class="eyebrow">NAVIGATOR</span><h3>Questions</h3></div><span>${answered}/${active.questions.length}</span></div><div class="status-legend" aria-label="Question status legend"><span class="correct">Correct</span><span class="incorrect">Incorrect</span><span class="review">Review</span><span class="bookmark">Bookmarked</span><span class="unattempted">Unattempted</span></div><div class="palette">${palette}</div>${active.questions.length > 500 ? '<p class="subtle">Palette shows the first 500 positions; Previous/Next continues through all questions.</p>' : ''}${active.kind === 'test' && !active.completedReview ? `<p class="subtle">${active.questions.length - answered} unanswered</p><button class="button danger full" data-action="submit">Submit test</button>` : ''}</section></aside></div>`);
   if (timerRunning) updateActiveTimerDisplay();
-  if (timerShouldTick) startActiveTimers(); else stopActiveTimer();
+  if (sharedClock(active).manualPaused) document.querySelectorAll('[data-action=answer],[data-action=next],[data-action=previous],[data-action=jump],[data-action=submit-multi-answer]').forEach(el=>el.disabled=true);
+  if (timerShouldTick && !sharedClock(active).paused) startActiveTimers(); else stopActiveTimer();
 }
 
 function stopActiveTimer() {
@@ -878,79 +880,53 @@ function stopActiveTimer() {
 }
 
 function totalTimerLimit(active) { return active.questions.length * TARGET_SECONDS * 1000; }
-
-function totalTimeUsed(active, at = Date.now()) {
-  const running = active.totalTimerStartedAt == null ? 0 : Math.max(0, at - active.totalTimerStartedAt);
-  return Math.min(totalTimerLimit(active), Math.max(0, Number(active.totalTimeUsedMs) || 0) + running);
+function sharedClock(active) {
+ if (!active.timer_state) active.timer_state=initialClock(active.index,active.questionStartedAt||Date.now());
+ return active.timer_state;
 }
-
-function totalTimeRemaining(active, at = Date.now()) {
-  return Math.ceil(Math.max(0, totalTimerLimit(active) - totalTimeUsed(active, at)) / 1000);
+function totalTimeUsed(active,at=Date.now()){return readClock(sharedClock(active),at,totalTimerLimit(active)).totalUsedMs;}
+function totalTimeRemaining(active,at=Date.now()){return Math.ceil(Math.max(0,totalTimerLimit(active)-totalTimeUsed(active,at))/1000);}
+function pauseTotalTimer(active,at=Date.now()){active.timer_state=freezeClock(sharedClock(active),at,totalTimerLimit(active));}
+function resumeTotalTimer(active,at=Date.now()){if(!sharedClock(active).manualPaused)active.timer_state=runClock(sharedClock(active),at);}
+function questionTimeRemaining(active,answer=null,at=Date.now()){return Math.ceil(Math.max(0,50000-readClock(sharedClock(active),at,totalTimerLimit(active)).questionUsedMs)/1000);}
+function answeredQuestionTimeRemaining(answer){return Math.max(0,Number(answer?.question_time_remaining_seconds??(TARGET_SECONDS-Number(answer?.time_spent_seconds||0))));}
+function pauseAttemptTimers(active,at=Date.now()){pauseTotalTimer(active,at);active.questionTimeRemainingSeconds=questionTimeRemaining(active,null,at);stopActiveTimer();persistTimer(active);}
+const timerWrites=new Map();
+function timerKey(active){return `qbank-clock-v1:${state.user?.id}:${active.id}`;}
+function persistTimer(active=state.active,remote=true){
+ if(!active?.id||active.kind==='browse'||active.kind==='recall'||active.status!=='in_progress')return Promise.resolve();
+ active.timer_state=checkpointClock(sharedClock(active),Date.now(),totalTimerLimit(active));
+ const snapshot={...active.timer_state,position:active.index};active.timer_state=snapshot;
+ try{localStorage.setItem(timerKey(active),JSON.stringify(snapshot));}catch{}
+ if(!remote)return Promise.resolve();
+ const id=active.id,userId=state.user.id;
+ const write=(timerWrites.get(id)||Promise.resolve()).catch(()=>{}).then(async()=>{const r=await db.from('test_sessions').update({timer_state:snapshot}).eq('id',id).eq('user_id',userId);if(r.error)throw r.error;});
+ timerWrites.set(id,write);return write.catch(error=>toast('Timer saved on this device; cloud sync failed: '+error.message,'error'));
 }
-
-function pauseTotalTimer(active, at = Date.now()) {
-  if (active.totalTimerStartedAt == null) return;
-  active.totalTimeUsedMs = totalTimeUsed(active, at);
-  active.totalTimerStartedAt = null;
+async function toggleAttemptPause(){
+ const active=state.active;if(!active||active.completedReview||active.timerBusy)return;
+ active.timerBusy=true;
+ if(sharedClock(active).manualPaused)active.timer_state=runClock(sharedClock(active));else active.timer_state=freezeClock(sharedClock(active),Date.now(),totalTimerLimit(active),true);
+ stopActiveTimer();renderActive();await persistTimer(active);active.timerBusy=false;renderActive();
 }
-
-function resumeTotalTimer(active, at = Date.now()) {
-  if (active.totalTimerStartedAt == null && totalTimeRemaining(active, at) > 0) active.totalTimerStartedAt = at;
+function updateActiveTimerDisplay(at=Date.now()){
+ const active=state.active;if(!active)return;
+ const q=document.querySelector('#question-timer'),t=document.querySelector('#total-timer');
+ if(q)q.textContent=timerText(questionTimeRemaining(active,null,at));if(t)t.textContent=timerText(totalTimeRemaining(active,at));
 }
-
-function questionTimeRemaining(active, answer = null, at = Date.now()) {
-  if (active.questionTimeRemainingSeconds != null) return Math.max(0, Number(active.questionTimeRemainingSeconds) || 0);
-  if (answer?.selected_option) return Math.max(0, TARGET_SECONDS - Math.max(0, Number(answer.time_spent_seconds) || 0));
-  return Math.ceil(Math.max(0, active.questionStartedAt + TARGET_SECONDS * 1000 - at) / 1000);
+function startActiveTimers(){
+ stopActiveTimer();const active=state.active;if(!active||sharedClock(active).paused)return;
+ let lastCloud=Date.now();
+ const tick=()=>{
+  if(state.active!==active||active.completedReview||active.status!=='in_progress'){stopActiveTimer();return;}
+  const wasPaused=sharedClock(active).paused;persistTimer(active,false);updateActiveTimerDisplay();
+  if(Date.now()-lastCloud>=15000){lastCloud=Date.now();persistTimer(active);}
+  if(sharedClock(active).paused){stopActiveTimer();if(!wasPaused)persistTimer(active);}
+  if(totalTimeRemaining(active)===0&&active.kind==='test'&&active.auto_submit)submitActive(true);
+ };
+ tick();if(!sharedClock(active).paused)state.timer=setInterval(tick,250);
 }
-
-function answeredQuestionTimeRemaining(answer) {
-  return Math.max(0, Number(answer?.question_time_remaining_seconds ?? (TARGET_SECONDS - Math.max(0, Number(answer?.time_spent_seconds) || 0))) || 0);
-}
-
-function pauseAttemptTimers(active, at = Date.now()) {
-  const deadline = active.questionStartedAt + TARGET_SECONDS * 1000;
-  active.questionTimeRemainingSeconds = questionTimeRemaining(active, null, at);
-  pauseTotalTimer(active, Math.min(at, deadline));
-  stopActiveTimer();
-}
-
-function updateActiveTimerDisplay(at = Date.now()) {
-  const active = state.active; const question = activeQuestion(); const answer = active?.answers?.[question?.id];
-  if (!active || !question) return;
-  const questionRemaining = questionTimeRemaining(active, answer, at);
-  const totalRemaining = totalTimeRemaining(active, at);
-  const questionNode = document.querySelector('#question-timer');
-  const totalNode = document.querySelector('#total-timer');
-  if (questionNode) { questionNode.textContent = timerText(questionRemaining); questionNode.classList.toggle('low', questionRemaining <= 10); questionNode.classList.toggle('expired', questionRemaining === 0); }
-  if (totalNode) { totalNode.textContent = timerText(totalRemaining); totalNode.classList.toggle('low', totalRemaining <= Math.min(60, TARGET_SECONDS)); totalNode.classList.toggle('expired', totalRemaining === 0); }
-}
-
-function startActiveTimers() {
-  stopActiveTimer();
-  const tick = () => {
-    const active = state.active;
-    if (!active || active.completedReview || active.status !== 'in_progress') return stopActiveTimer();
-    const now = Date.now();
-    const questionDeadline = active.questionStartedAt + TARGET_SECONDS * 1000;
-    const questionRemaining = questionTimeRemaining(active, active.answers[activeQuestion()?.id], now);
-    if (questionRemaining === 0) {
-      active.questionTimeRemainingSeconds = 0;
-      pauseTotalTimer(active, questionDeadline);
-    }
-    const totalRemaining = totalTimeRemaining(active, questionRemaining === 0 ? questionDeadline : now);
-    updateActiveTimerDisplay(questionRemaining === 0 ? questionDeadline : now);
-    if (questionRemaining === 0) stopActiveTimer();
-    if (totalRemaining === 0 && active.kind === 'test' && active.auto_submit) {
-      stopActiveTimer();
-      submitActive(true);
-    }
-  };
-  tick();
-  if (state.active?.questionTimeRemainingSeconds == null && state.active?.questionStartedAt + TARGET_SECONDS * 1000 > Date.now()) state.timer = setInterval(tick, 250);
-}
-
-function elapsedOnQuestion(at = Date.now()) { return Math.min(TARGET_SECONDS, Math.max(0, Math.floor((at - state.active.questionStartedAt) / 1000))); }
+function elapsedOnQuestion(at=Date.now()){return Math.floor(readClock(sharedClock(state.active),at,totalTimerLimit(state.active)).questionUsedMs/1000);}
 
 async function recordAttempt(question, answer) {
   if (!answer?.selected_option || answer.attemptRecorded) return answer?.srmFeedback || null;
@@ -983,6 +959,7 @@ async function ensureAttemptRecorded(question, answer) {
 
 async function saveActiveAnswer(questionId) {
   if (!state.active.id || !state.features.sessions) return;
+  await persistTimer(state.active);
   const answer = state.active.answers[questionId] || {}; const question = state.active.questions.find((q) => q.id === questionId);
   const value = { session_id: state.active.id, question_id: questionId, selected_option: answer.selected_option || null, marked_for_review: state.active.marked.has(questionId), answered_at: answer.selected_option ? answer.answered_at || new Date().toISOString() : null, is_correct: answer.selected_option ? isAnswerCorrect(question, answer) : null, time_spent_seconds: answer.time_spent_seconds || 0, confidence: answer.confidence || null, error_reason: answer.error_reason || null, client_event_id: answer.client_event_id || null };
   const saved = await optional(db.from('test_answers').upsert(value, { onConflict: 'session_id,question_id' }), 'sessions');
@@ -990,7 +967,7 @@ async function saveActiveAnswer(questionId) {
 }
 
 async function selectAnswer(key) {
-  const active = state.active; const question = activeQuestion(); if (!active || active.completedReview) return;
+  const active = state.active; const question = activeQuestion(); if (!active || active.completedReview || sharedClock(active).manualPaused) return;
   const existing = active.answers[question.id]; const multiple = correctKeys(question).length > 1;
   if (active.kind === 'practice' && existing?.selected_option && (!multiple || existing.submitted)) return;
   const selectedAt = Date.now();
@@ -1018,15 +995,18 @@ async function submitMultiAnswer() {
 
 async function navigateActive(index) {
   const active = state.active; const current = activeQuestion();
+  if(sharedClock(active).manualPaused)return;
   const navigationAt = Date.now();
-  if (active.kind !== 'browse') pauseTotalTimer(active, Math.min(navigationAt, active.questionStartedAt + TARGET_SECONDS * 1000));
+  if (active.kind !== 'browse') pauseTotalTimer(active, navigationAt);
   stopActiveTimer();
   if (current && active.kind !== 'browse') { const answer = active.answers[current.id] || {}; if (!answer.selected_option) answer.time_spent_seconds = Math.max(answer.time_spent_seconds || 0, elapsedOnQuestion(navigationAt)); active.answers[current.id] = answer; await ensureAttemptRecorded(current, answer); await saveActiveAnswer(current.id); }
   active.index = Math.max(0, Math.min(index, active.questions.length - 1)); active.questionStartedAt = active.kind === 'browse' ? null : Date.now();
   const destinationAnswer = active.answers[active.questions[active.index]?.id];
   active.questionTimeRemainingSeconds = destinationAnswer?.selected_option ? answeredQuestionTimeRemaining(destinationAnswer) : null;
+  if(active.kind!=='browse'){active.timer_state={...sharedClock(active),position:active.index,questionUsedMs:destinationAnswer?.selected_option?(TARGET_SECONDS-answeredQuestionTimeRemaining(destinationAnswer))*1000:0,paused:true};}
   if (active.kind !== 'browse' && !destinationAnswer?.selected_option) resumeTotalTimer(active, active.questionStartedAt);
   active.explanationOpen = false;
+  await persistTimer(active);
   if (active.id) await optional(db.from('test_sessions').update({ current_position: active.index, last_question_started_at: new Date().toISOString() }).eq('id', active.id).eq('user_id', state.user.id), 'sessions');
   renderActive();
 }
@@ -1126,13 +1106,15 @@ async function resumeSession(id) {
     assertValidation(validateResumeSnapshot({ session, storedRows: itemsResult.data || [], questions, answers: answersResult.data || [] }), 'Resume');
     assertValidation(validateQuestionStateBindings({ questions, answers, bookmarks: personal.bookmarks, marked: new Set([...personal.marked, ...(answersResult.data || []).filter((answer) => answer.marked_for_review).map((answer) => answer.question_id)]) }), 'Resumed question state');
     const resumedAt = Date.now();
-    const elapsedBeforeResume = existingActive
-      ? totalTimeUsed(existingActive, resumedAt)
-      : Math.min(questions.length * TARGET_SECONDS * 1000, Math.max(0, resumedAt - new Date(session.started_at).getTime()));
     const resumedIndex = Math.min(session.current_position || 0, Math.max(questions.length - 1, 0));
     const resumedAnswer = answers[questions[resumedIndex]?.id];
-    const resumePaused = Boolean(resumedAnswer?.selected_option || (existingActive && existingActive.totalTimerStartedAt == null));
-    state.active = { ...session, kind: ['practice', 'recall'].includes(session.mode) ? session.mode : 'test', questions, index: resumedIndex, answers, bookmarks: personal.bookmarks, marked: new Set([...personal.marked, ...(answersResult.data || []).filter((x) => x.marked_for_review).map((x) => x.question_id)]), learning: personal.learning, questionStartedAt: resumedAt, questionTimeRemainingSeconds: resumedAnswer?.selected_option ? answeredQuestionTimeRemaining(resumedAnswer) : null, totalTimeUsedMs: elapsedBeforeResume, totalTimerStartedAt: !resumePaused && elapsedBeforeResume < questions.length * TARGET_SECONDS * 1000 ? resumedAt : null, explanationOpen: false, completedReview: session.status !== 'in_progress' };
+    let localClock;try{localClock=JSON.parse(localStorage.getItem(`qbank-clock-v1:${state.user.id}:${id}`));}catch{}
+    const candidates=[session.timer_state,localClock,existingActive?.timer_state].filter(c=>c?.version===1&&c.position===resumedIndex);
+    let restoredClock=candidates.sort((a,b)=>b.savedAt-a.savedAt)[0];
+    if(!restoredClock){const used=Object.values(answers).reduce((n,a)=>n+Number(a.time_spent_seconds||0)*1000,0);restoredClock={...initialClock(resumedIndex,resumedAt),totalUsedMs:used,questionUsedMs:Number(resumedAnswer?.time_spent_seconds||0)*1000,paused:Boolean(resumedAnswer?.selected_option)};}
+    restoredClock=checkpointClock(restoredClock,resumedAt,questions.length*50000);
+    state.active = { ...session, kind: ['practice', 'recall'].includes(session.mode) ? session.mode : 'test', questions, index: resumedIndex, answers, bookmarks: personal.bookmarks, marked: new Set([...personal.marked, ...(answersResult.data || []).filter((x) => x.marked_for_review).map((x) => x.question_id)]), learning: personal.learning, questionStartedAt: resumedAt, questionTimeRemainingSeconds: resumedAnswer?.selected_option ? answeredQuestionTimeRemaining(resumedAnswer) : null, timer_state: restoredClock, explanationOpen: false, completedReview: session.status !== 'in_progress' };
+    await persistTimer(state.active);
     renderActive();
   } catch (error) { toast(error.message || 'Could not resume session.', 'error'); location.hash = '#/home'; }
 }
@@ -1141,13 +1123,14 @@ async function submitActive(timedOut = false) {
   const active = state.active; if (!active || active.completedReview) return;
   const answeredRows = Object.values(active.answers).filter((a) => a?.selected_option); const unanswered = active.questions.length - answeredRows.length;
   if (!timedOut && !confirm(`Finish this ${active.kind}? ${unanswered} question${unanswered === 1 ? '' : 's'} unanswered.`)) return;
+  pauseTotalTimer(active);await persistTimer(active);
   stopActiveTimer(); const current = activeQuestion(); if (current) { const currentAnswer = active.answers[current.id]; await ensureAttemptRecorded(current, currentAnswer); await saveActiveAnswer(current.id); }
   let completed = null;
   if (active.id) { const result = await db.rpc('submit_test_session', { p_session_id: active.id, p_timed_out: timedOut }); if (result.error) return toast(result.error.message, 'error'); completed = result.data; }
   if (active.kind === 'test') for (const question of active.questions) { const answer = active.answers[question.id]; if (answer?.selected_option) await ensureAttemptRecorded(question, answer); }
   if (Array.isArray(completed)) completed = completed[0] || null;
   const totalCorrect = completed?.total_correct ?? active.questions.filter((q) => isAnswerCorrect(q, active.answers[q.id])).length;
-  state.active = { ...active, ...(completed || {}), total_questions: completed?.total_questions ?? active.questions.length, total_correct: totalCorrect, incorrect_count: completed?.incorrect_count ?? answeredRows.length - totalCorrect, unanswered_count: completed?.unanswered_count ?? unanswered, total_time_seconds: completed?.total_time_seconds ?? Math.floor((Date.now() - new Date(active.started_at).getTime()) / 1000), timed_out: completed?.timed_out ?? timedOut, status: completed?.status ?? (timedOut ? 'timed_out' : 'completed'), completedReview: false };
+  state.active = { ...active, ...(completed || {}), total_questions: completed?.total_questions ?? active.questions.length, total_correct: totalCorrect, incorrect_count: completed?.incorrect_count ?? answeredRows.length - totalCorrect, unanswered_count: completed?.unanswered_count ?? unanswered, total_time_seconds: completed?.total_time_seconds ?? Math.floor(totalTimeUsed(active)/1000), timed_out: completed?.timed_out ?? timedOut, status: completed?.status ?? (timedOut ? 'timed_out' : 'completed'), completedReview: false };
   resultScreen();
 }
 
@@ -1666,6 +1649,7 @@ async function recordRecallResponse(value) {
 
 async function render() {
   gtMode.cancel(); grandTests.cancel();
+  persistTimer(state.active);
   stopActiveTimer(); state.route = route(); if (!state.user) return auth();
   try {
     await loadMeta();
@@ -1694,6 +1678,7 @@ async function resetPassword() { const email = document.querySelector('[name="em
 
 document.addEventListener('click', async (event) => {
   const target = event.target.closest('[data-action]'); if (!target) return; const action = target.dataset.action;
+  if (action === 'toggle-timers') await toggleAttemptPause();
   if (action === 'signout') await db.auth.signOut(); if (action === 'signup') await signUp(); if (action === 'reset-password') await resetPassword(); if (action === 'retry') render();
   if (action === 'choose-preset') showTestBuilder(target.dataset.preset); if (action === 'close-builder') { grandTests.cancel(); gtMode.cancel(); document.querySelector('#test-builder-slot').innerHTML = ''; }
   if (action === 'open-pyq-test') await openSelectedPyqTest(target, false); if (action === 'start-pyq-test') await openSelectedPyqTest(target, true);
@@ -1734,6 +1719,7 @@ document.addEventListener('click', async (event) => {
 
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape') document.querySelector('#modal')?.remove(); });
 window.addEventListener('hashchange', render);
+window.addEventListener('pagehide',()=>persistTimer(state.active,false));
 
 async function bootstrap() {
   loading(); state.user = await requireUser();

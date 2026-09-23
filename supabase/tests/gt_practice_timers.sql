@@ -1,0 +1,34 @@
+begin;
+do $$
+declare u uuid:=gen_random_uuid(); other_user uuid:=gen_random_uuid(); t uuid; a jsonb; b jsonb; ident uuid; blocked boolean; sid uuid:=gen_random_uuid(); result public.test_sessions;
+begin
+ insert into auth.users(id) values(u),(other_user);
+ select source_test_id into t from qbank_gt_private.answer_keys limit 1;
+ perform set_config('request.jwt.claim.sub',u::text,true);
+ execute 'set local role authenticated';
+ a:=public.qbank_gt_start_mode(t,'ini_cet_200','practice_mode');ident:=(a->>'id')::uuid;
+ a:=public.qbank_gt_pause(ident,true);b:=public.qbank_gt_pause(ident,true);
+ if a->>'paused_at'<>b->>'paused_at' or a->>'effective_elapsed_seconds'<>b->>'effective_elapsed_seconds' then raise exception 'Pause not idempotent/frozen';end if;
+ blocked:=false;begin perform public.qbank_gt_answer(ident,1,'["A"]',false);exception when others then if sqlerrm='Practice GT is paused' then blocked:=true;else raise;end if;end;if not blocked then raise exception 'Paused answer accepted';end if;
+ perform set_config('request.jwt.claim.sub',other_user::text,true);
+ blocked:=false;begin perform public.qbank_gt_pause(ident,false);exception when others then if sqlerrm='Attempt not found' then blocked:=true;else raise;end if;end;if not blocked then raise exception 'Other user resumed';end if;
+ perform set_config('request.jwt.claim.sub',u::text,true);
+ execute 'reset role';update public.qbank_gt_attempts set started_at=started_at-interval '5 minutes',expires_at=expires_at-interval '5 minutes',paused_at=paused_at-interval '5 minutes' where id=ident;
+ execute 'set local role authenticated';b:=public.qbank_gt_state(ident);
+ if a->>'effective_elapsed_seconds'<>b->>'effective_elapsed_seconds' then raise exception 'Paused elapsed drift';end if;
+ b:=public.qbank_gt_pause(ident,false);if (b->>'paused_duration_ms')::numeric<300000 or (b->>'effective_elapsed_seconds')::numeric>2 then raise exception 'Resume deducted paused time';end if;
+ a:=public.qbank_gt_pause(ident,false);if a->>'paused_duration_ms'<>b->>'paused_duration_ms' then raise exception 'Double resume counted pause twice';end if;
+ execute 'reset role';update public.qbank_gt_attempts set started_at=started_at-interval '45 minutes',expires_at=expires_at-interval '45 minutes' where id=ident;
+ execute 'set local role authenticated';a:=public.qbank_gt_state(ident);if a->>'active_section'<>'1' then raise exception 'Section not advanced';end if;
+ blocked:=false;begin perform public.qbank_gt_answer(ident,1,'[]',false);exception when others then if sqlerrm='Section locked' then blocked:=true;else raise;end if;end;if not blocked then raise exception 'Old section unlocked';end if;
+ a:=public.qbank_gt_pause(ident,true);a:=public.qbank_gt_pause(ident,false);if a->>'active_section'<>'1' then raise exception 'Pause unlocked section';end if;
+ execute 'reset role';update public.qbank_gt_attempts set started_at=started_at-interval '4 hours',expires_at=expires_at-interval '4 hours' where id=ident;
+ execute 'set local role authenticated';a:=public.qbank_gt_state(ident);if a->>'status'<>'completed' then raise exception 'Practice not completed';end if;
+ a:=public.qbank_gt_start(t,'ini_cet_200');ident:=(a->>'id')::uuid;
+ blocked:=false;begin perform public.qbank_gt_pause(ident,true);exception when others then if sqlerrm='Exam Mode cannot pause' then blocked:=true;else raise;end if;end;if not blocked then raise exception 'Strict exam paused';end if;
+ insert into public.test_sessions(id,user_id,mode,status,started_at,total_questions,duration_minutes,timer_state) values(sid,u,'test','in_progress',now()-interval '1 hour',20,17,'{"version":1,"paused":true,"totalUsedMs":188000,"questionUsedMs":27000,"startedAt":0}');
+ if public.qbank_session_elapsed_ms('{"version":1,"paused":true,"totalUsedMs":188000,"questionUsedMs":27000,"startedAt":0}')<>188000 then raise exception 'Normal pause drift';end if;
+ result:=public.submit_test_session(sid,false);if result.total_time_seconds<>188 or result.timed_out then raise exception 'Completion included pause';end if;
+ execute 'reset role';
+end $$;
+rollback;
