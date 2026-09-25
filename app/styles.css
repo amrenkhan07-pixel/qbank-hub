@@ -500,3 +500,7 @@ fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 
 /* GT browsing has no fixed attempt controls; keep disclosure links unobstructed. */
 .question-actions.gt-browse-actions { position: static; margin: 20px 0 0; padding: 16px 0 0; background: transparent; box-shadow: none; }
+
+/* Recall expiry is advisory; answers and navigation stay available. */
+.timer-expired, #recall-timeout { color: #ad3d32; }
+#recall-timeout { display: block; font-size: .8rem; }

@@ -1,4 +1,4 @@
-import {readClock,freezeClock,runClock,checkpointClock,initialClock} from './session-timers.js?v=20260923-pause1';
+import {readClock,freezeClock,runClock,checkpointClock,initialClock} from './session-timers.js?v=20260926-recall1';
 import { createGTExamMode } from './gt-exam-mode.js?v=20260923-pause1';
 import { createGrandTests } from './grand-tests.js?v=20260925-taxonomy1';
 import { db, initError, isMissingTable, requireUser, withAuthTimeout } from './supabase.js';
@@ -8,6 +8,18 @@ import { runTaxonomyDomRegression } from './taxonomy-dom-regression.js?v=2026090
 const root = document.querySelector('#app');
 const TARGET_SECONDS = 50;
 const PAGE_SIZE = 500;
+const RECALL_BATCH_SIZE = 20;
+const metadataRequests = new Map();
+const facetCache = new Map();
+const payloadRequests = new Map();
+const populationCache = new Map();
+let recallGeneration = 0;
+function recallTimerSeconds() {
+  try { const value = localStorage.getItem(`qbank-recall-timer:${state.user?.id}`); return ['0', '50', '55'].includes(value) ? Number(value) : 50; } catch { return 50; }
+}
+function recallTimerSetting(value = recallTimerSeconds()) {
+  return `<label>Recall timer <select data-recall-timer aria-label="Recall timer">${[0, 50, 55].map(n => `<option value="${n}" ${n === value ? 'selected' : ''}>${n ? n + ' sec' : 'Off'}</option>`).join('')}</select></label>`;
+}
 const filterCountRequests = new WeakMap();
 const state = {
   user: null,
@@ -59,7 +71,7 @@ function toast(text, kind = '') {
   setTimeout(() => node.remove(), 4200);
 }
 
-function invalidateLearnerCaches() { state.analyticsSnapshot = null; }
+function invalidateLearnerCaches() { state.analyticsSnapshot = null; facetCache.clear(); populationCache.clear(); }
 
 function safeUrl(value, image = false) {
   try {
@@ -116,7 +128,23 @@ async function optional(query, feature) {
 }
 
 async function loadMeta(force = false) {
-  if (!force && state.meta.subjects.length && state.meta.platforms.length) return;
+  const basic = state.route === 'recall' || route() === 'recall';
+  const key = `${state.user?.id}:${basic ? 'basic' : 'full'}`;
+  if (force) metadataRequests.clear();
+  if (metadataRequests.has(key)) return metadataRequests.get(key);
+  const request = (async () => {
+    if (!basic) return loadFullMeta(force);
+    if (state.meta.subjects.length && state.meta.platforms.length) return;
+    const [subjects, platforms] = await Promise.all([db.from('subjects').select('id,name').order('name'), db.from('platforms').select('id,name').order('name')]);
+    if (subjects.error || platforms.error) throw subjects.error || platforms.error;
+    state.meta = { ...state.meta, subjects: subjects.data || [], platforms: platforms.data || [] };
+  })();
+  metadataRequests.set(key, request);
+  try { return await request; } catch (error) { metadataRequests.delete(key); throw error; }
+}
+
+async function loadFullMeta(force = false) {
+  if (!force && state.meta.fullLoaded) return;
   const [subjects, platforms, platformSubjects, systems, topics, subtopics, sourceTests] = await Promise.all([
     db.from('subjects').select('id,name').order('name'),
     db.from('platforms').select('id,name').order('name'),
@@ -133,7 +161,7 @@ async function loadMeta(force = false) {
   const hydratedTopics = (topics.data || []).map((topic) => ({ ...topic, subject_id: subjectByPlatformSubject.get(topic.platform_subject_id) || '' }));
   const topicById = new Map(hydratedTopics.map((topic) => [topic.id, topic]));
   state.meta = {
-    subjects: subjects.data || [], platforms: platforms.data || [],
+    fullLoaded: true, subjects: subjects.data || [], platforms: platforms.data || [],
     systems: (systems.data || []).map((system) => ({ ...system, subject_id: subjectByPlatformSubject.get(system.platform_subject_id) || '' })),
     topics: hydratedTopics.filter((topic) => !topic.parent_topic_id),
     subtopics: (subtopics.data || []).map((subtopic) => ({ ...subtopic, subject_id: topicById.get(subtopic.topic_id)?.subject_id || '' })),
@@ -141,7 +169,18 @@ async function loadMeta(force = false) {
   };
 }
 
-async function resolvePopulation(filters, { includeIds = true, limit = null, offset = 0, order = 'canonical' } = {}) {
+async function resolvePopulation(filters, options = {}) {
+  const cacheable = options.includeIds === false;
+  if (!cacheable) return fetchPopulation(filters, options);
+  const key = JSON.stringify([state.user?.id, filters, options]);
+  const cached = populationCache.get(key);
+  if (cached && Date.now() - cached.at < 15000) return cached.promise;
+  const promise = fetchPopulation(filters, options);
+  populationCache.set(key, { at: Date.now(), promise });
+  if (populationCache.size > 32) populationCache.delete(populationCache.keys().next().value);
+  try { return await promise; } catch (error) { populationCache.delete(key); throw error; }
+}
+async function fetchPopulation(filters, { includeIds = true, limit = null, offset = 0, order = 'canonical' } = {}) {
   const result = await db.rpc('qbank_resolve_population', {
     p_filters: filters || {}, p_include_ids: includeIds, p_limit: limit, p_offset: offset, p_order: order,
   });
@@ -150,6 +189,15 @@ async function resolvePopulation(filters, { includeIds = true, limit = null, off
 }
 
 async function resolveFacets(filters) {
+  const key = JSON.stringify([state.user?.id, filters]);
+  const cached = facetCache.get(key);
+  if (cached && Date.now() - cached.at < 30000) return cached.promise;
+  const promise = fetchFacets(filters);
+  facetCache.set(key, { at: Date.now(), promise });
+  if (facetCache.size > 32) facetCache.delete(facetCache.keys().next().value);
+  try { return await promise; } catch (error) { facetCache.delete(key); throw error; }
+}
+async function fetchFacets(filters) {
   const result = await db.rpc('qbank_filter_facets', { p_filters: filters || {} });
   if (result.error) throw result.error;
   const data = result.data || {};
@@ -379,7 +427,15 @@ async function sha256Buffer(buffer) {
 }
 
 async function decodePayloadObject(object) {
-  if (state.payloadCache.has(object.object_path)) return state.payloadCache.get(object.object_path);
+  const key = `${object.object_path}:${object.sha256}`;
+  if (payloadRequests.has(key)) return payloadRequests.get(key);
+  const request = fetchPayloadObject(object);
+  payloadRequests.set(key, request);
+  try { return await request; } finally { payloadRequests.delete(key); }
+}
+async function fetchPayloadObject(object) {
+  const cacheKey = `${object.object_path}:${object.sha256}`;
+  if (state.payloadCache.has(cacheKey)) return state.payloadCache.get(cacheKey);
   const downloaded = await db.storage.from('qbank-payloads').download(object.object_path);
   if (downloaded.error) throw downloaded.error;
   const compressed = await downloaded.data.arrayBuffer();
@@ -391,7 +447,8 @@ async function decodePayloadObject(object) {
   }
   const payload = JSON.parse(new TextDecoder().decode(decoded));
   if (payload.schema_version !== 1 || !Array.isArray(payload.questions)) throw new Error('Unsupported QBank payload schema.');
-  state.payloadCache.set(object.object_path, payload);
+  state.payloadCache.set(cacheKey, payload);
+  if (state.payloadCache.size > 8) state.payloadCache.delete(state.payloadCache.keys().next().value);
   return payload;
 }
 
@@ -506,6 +563,7 @@ async function prepareQuestionSet({ mode = 'test', preset = 'custom', title = 'Q
     const population = await resolvePopulation(normalizedFilters, { includeIds: true, limit: requestedLimit, order: normalizedFilters.source_tests?.length ? 'source' : 'sample' });
     populationCount = population.count; selectedIds = population.questionIds;
   }
+  if (mode === 'recall') selectedIds = selectedIds.slice(0, RECALL_BATCH_SIZE);
   const questions = await loadQuestionsByIds(selectedIds, normalizedFilters);
   const membership = await validationMembership(normalizedFilters, questions);
   assertValidation(validateGeneratedQuestionSet({ questions, filters: normalizedFilters, requested: selectedIds.length, matchingCount: populationCount, ...membership }), 'Generated question set');
@@ -544,7 +602,7 @@ function readyScreen(questionSet) {
   state.pendingSet = questionSet;
   const summary = taxonomySummary(questionSet);
   const recallMode = questionSet.mode === 'recall';
-  layout(`<div class="page-heading"><span class="eyebrow">READY</span><h1>${e(questionSet.title)}</h1><p>Your exact question set and order are frozen. Nothing starts until you press ${recallMode ? 'START RECALL' : 'START TEST'}.</p></div><section class="card ready-card"><div class="result-grid"><div class="metric"><span>Questions</span><b>${questionSet.questions.length}</b></div>${recallMode ? '<div class="metric"><span>Order</span><b>Priority</b></div><div class="metric"><span>Timer</span><b>Off</b></div>' : `<div class="metric"><span>Per question</span><b>50s</b></div><div class="metric"><span>Total target</span><b>${timerText(questionSet.targetSeconds)}</b></div>`}<div class="metric"><span>Mode</span><b>${recallMode ? 'Recall' : questionSet.mode === 'practice' ? 'Practice' : 'Test'}</b></div></div><dl class="ready-summary"><div><dt>Platforms</dt><dd>${e(summary.platforms)}</dd></div><div><dt>Subjects</dt><dd>${e(summary.subjects)}</dd></div><div><dt>Topics</dt><dd>${e(summary.topics)}</dd></div><div><dt>Subtopics</dt><dd>${e(summary.subtopics)}</dd></div></dl><div class="row"><button class="button large" data-action="start-pending-test">${recallMode ? 'START RECALL' : 'START TEST'}</button><button class="button secondary" data-action="cancel-question-set">BACK / CANCEL</button></div></section>`);
+  layout(`<div class="page-heading"><span class="eyebrow">READY</span><h1>${e(questionSet.title)}</h1><p>Your exact question set and order are frozen. Nothing starts until you press ${recallMode ? 'START RECALL' : 'START TEST'}.</p></div><section class="card ready-card"><div class="result-grid"><div class="metric"><span>Questions</span><b>${questionSet.questions.length}</b></div>${recallMode ? `<div class="metric"><span>Order</span><b>Priority</b></div><div class="metric">${recallTimerSetting()}</div>` : `<div class="metric"><span>Per question</span><b>50s</b></div><div class="metric"><span>Total target</span><b>${timerText(questionSet.targetSeconds)}</b></div>`}<div class="metric"><span>Mode</span><b>${recallMode ? 'Recall' : questionSet.mode === 'practice' ? 'Practice' : 'Test'}</b></div></div><dl class="ready-summary"><div><dt>Platforms</dt><dd>${e(summary.platforms)}</dd></div><div><dt>Subjects</dt><dd>${e(summary.subjects)}</dd></div><div><dt>Topics</dt><dd>${e(summary.topics)}</dd></div><div><dt>Subtopics</dt><dd>${e(summary.subtopics)}</dd></div></dl><div class="row"><button class="button large" data-action="start-pending-test">${recallMode ? 'START RECALL' : 'START TEST'}</button><button class="button secondary" data-action="cancel-question-set">BACK / CANCEL</button></div></section>`);
 }
 
 async function createSession(definition) {
@@ -590,7 +648,7 @@ async function startPendingSession() {
   const payload = {
     user_id: state.user.id, title, mode, status: 'in_progress', filters, total_questions: questions.length,
     duration_minutes: Math.max(1, Math.ceil(questions.length * TARGET_SECONDS / 60)), started_at: now,
-    current_position: 0, preset, target_seconds_per_question: TARGET_SECONDS, auto_submit: autoSubmit,
+    current_position: 0, preset, target_seconds_per_question: mode === 'recall' ? recallTimerSeconds() : TARGET_SECONDS, auto_submit: autoSubmit,
     last_question_started_at: now,
   };
   let session = null;
@@ -609,9 +667,9 @@ async function startPendingSession() {
   const personal = await loadPersonalState(questions.map((q) => q.id));
   assertValidation(validateQuestionStateBindings({ questions, answers: {}, bookmarks: personal.bookmarks, marked: personal.marked }), 'Question state');
   state.active = {
-    ...payload, ...(session || {}), kind: mode, questions, index: 0, answers: {},
+    ...payload, ...(session || {}), kind: mode, questions, index: 0, answers: {}, solvingVisible: true,
     bookmarks: personal.bookmarks, marked: personal.marked, learning: personal.learning,
-    questionStartedAt: startedMs, questionTimeRemainingSeconds: null,
+    questionStartedAt: Date.now(), questionTimeRemainingSeconds: null,
     explanationOpen: false, completedReview: false,
   };
   state.pendingSet = null;
@@ -689,6 +747,7 @@ function srmIntervalLabel(minutes, dueAt = null) {
 }
 
 async function recall() {
+  const generation = ++recallGeneration;
   loading('Building your Recall queue…');
   const filters = state.recallFilters || { platform_id: '', subject_id: '', scope: 'all' };
   const platformIds = filters.platform_id ? [filters.platform_id] : null;
@@ -696,10 +755,11 @@ async function recall() {
   const params = { p_platform_ids: platformIds, p_subject_ids: subjectIds };
   const [summaryResult, queueResult, settingsResult, recallFacets] = await Promise.all([
     db.rpc('qbank_srm_summary', params),
-    db.rpc('qbank_srm_queue', { ...params, p_pyq_only: filters.scope === 'pyq', p_repeated_only: filters.scope === 'repeated', p_limit: 500 }),
+    db.rpc('qbank_srm_queue', { ...params, p_pyq_only: filters.scope === 'pyq', p_repeated_only: filters.scope === 'repeated', p_limit: RECALL_BATCH_SIZE }),
     optional(db.from('user_srm_settings').select('*').eq('user_id', state.user.id).maybeSingle(), 'srm'),
-    resolveFacets({ platforms: platformIds || [], subjects: [], systems: [], topics: [], subtopics: [], source_tests: [], statuses: ['all'], pyq: '' }),
+    platformIds ? resolveFacets({ platforms: platformIds, subjects: [], systems: [], topics: [], subtopics: [], source_tests: [], statuses: ['all'], pyq: '' }) : null,
   ]);
+  if (generation !== recallGeneration || state.route !== 'recall') return;
   if (summaryResult.error || queueResult.error) {
     state.features.srm = false;
     return layout(`<div class="page-heading"><span class="eyebrow">RECALL</span><h1>Spaced repetition</h1></div>${featureNotice('Apply the deterministic SRM migration to activate Recall.')}`);
@@ -714,7 +774,7 @@ async function recall() {
     : state.meta.subjects;
   layout(`<div class="page-heading"><span class="eyebrow">RECALL</span><h1>Review what matters, when it matters</h1><p>Due questions are ranked by overdue time, PYQ value, repeated errors and your study flags.</p></div>
   <section class="recall-summary">${metricStrip([['Due now', summary.due_now ?? 0], ['Overdue', summary.overdue ?? 0], ['PYQ due', summary.pyq_due ?? 0], ['Repeated mistakes', summary.repeated_due ?? 0], ['Reviewed today', summary.reviewed_today ?? 0], ['Retention today', summary.retention_today == null ? '—' : `${summary.retention_today}%`]])}</section>
-  <section class="card recall-start"><form id="recall-filter-form" class="recall-filter-row"><div class="field"><label>Platform</label><select name="platform_id"><option value="">All due</option>${state.meta.platforms.map((item) => `<option value="${e(item.id)}" ${filters.platform_id === item.id ? 'selected' : ''}>${e(item.name)}</option>`).join('')}</select></div><div class="field"><label>Subject</label><select name="subject_id"><option value="">All subjects</option>${visibleSubjects.map((item) => `<option value="${e(item.id)}" ${filters.subject_id === item.id ? 'selected' : ''}>${e(item.name)}</option>`).join('')}</select></div><div class="field"><label>Queue</label><select name="scope"><option value="all" ${filters.scope === 'all' ? 'selected' : ''}>All Due</option><option value="pyq" ${filters.scope === 'pyq' ? 'selected' : ''}>PYQ Due</option><option value="repeated" ${filters.scope === 'repeated' ? 'selected' : ''}>Repeated Mistakes</option></select></div><button class="button secondary" type="submit">Apply</button></form><div class="recall-primary-action"><div><b>${queue.length} ready in today’s queue</b><span class="subtle">Lower-priority overdue items remain safely queued.</span></div><button class="button large" data-action="start-recall" ${queue.length ? '' : 'disabled'}>Start Recall</button></div></section>
+  <section class="card recall-start"><form id="recall-filter-form" class="recall-filter-row"><div class="field"><label>Platform</label><select name="platform_id"><option value="">All due</option>${state.meta.platforms.map((item) => `<option value="${e(item.id)}" ${filters.platform_id === item.id ? 'selected' : ''}>${e(item.name)}</option>`).join('')}</select></div><div class="field"><label>Subject</label><select name="subject_id"><option value="">All subjects</option>${visibleSubjects.map((item) => `<option value="${e(item.id)}" ${filters.subject_id === item.id ? 'selected' : ''}>${e(item.name)}</option>`).join('')}</select></div><div class="field"><label>Queue</label><select name="scope"><option value="all" ${filters.scope === 'all' ? 'selected' : ''}>All Due</option><option value="pyq" ${filters.scope === 'pyq' ? 'selected' : ''}>PYQ Due</option><option value="repeated" ${filters.scope === 'repeated' ? 'selected' : ''}>Repeated Mistakes</option></select></div><button class="button secondary" type="submit">Apply</button></form><div class="recall-primary-action"><div><b>${queue.length} ready in this batch</b><span class="subtle">Up to 20 questions per batch. Remaining due items stay queued.</span></div><button class="button large" data-action="start-recall" ${queue.length ? '' : 'disabled'}>Start Recall</button>${recallTimerSetting()}</div></section>
   <section class="card recall-queue-card"><div class="section-heading"><div><span class="eyebrow">DUE QUEUE</span><h2>Today’s prioritized reviews</h2></div></div>${queue.length ? `<ol class="recall-queue">${queue.slice(0, 12).map((row) => `<li><div><b>${e(row.reason.replaceAll('_', ' '))}</b><small>${row.is_pyq ? 'PYQ · ' : ''}${row.consecutive_incorrect ? `${row.consecutive_incorrect} consecutive wrong · ` : ''}${row.overdue_seconds >= 86400 ? `${Math.floor(row.overdue_seconds / 86400)}d overdue` : row.overdue_seconds > 0 ? 'Due now' : 'Scheduled now'}</small></div><span class="pill">${e(row.srm_state)}</span></li>`).join('')}</ol>${queue.length > 12 ? `<p class="subtle">+ ${queue.length - 12} more in today’s queue</p>` : ''}` : '<div class="empty">Nothing is due in this selection.</div>'}</section>
   <section class="card recall-settings"><details><summary>Daily load and how Recall works</summary><div class="recall-info"><p><b>Incorrect</b> returns sooner. <b>Correct but unsure</b> gets short reinforcement. <b>Correct and sure</b> earns a longer interval. Repeated mistakes and due PYQs rank higher, without changing accuracy.</p><form id="recall-settings-form" class="recall-filter-row"><input type="hidden" name="timezone_name" value="${e(settings.timezone_name)}" /><div class="field"><label>New/day</label><select name="new_daily_limit">${[10,20,40].map((value) => `<option ${Number(settings.new_daily_limit) === value ? 'selected' : ''}>${value}</option>`).join('')}<option value="custom" ${![10,20,40].includes(Number(settings.new_daily_limit)) ? 'selected' : ''}>Custom</option></select></div><div class="field"><label>Review/day</label><select name="review_daily_limit">${[10,20,40,60].map((value) => `<option ${Number(settings.review_daily_limit) === value ? 'selected' : ''}>${value}</option>`).join('')}<option value="custom" ${![10,20,40,60].includes(Number(settings.review_daily_limit)) ? 'selected' : ''}>Custom</option></select></div><div class="field"><label>Custom new</label><input type="number" name="custom_new" min="1" max="500" value="${e(settings.new_daily_limit)}" /></div><div class="field"><label>Custom reviews</label><input type="number" name="custom_review" min="1" max="500" value="${e(settings.review_daily_limit)}" /></div><button class="button secondary" type="submit">Save limits</button></form></div></details></section>`);
   document.querySelector('#recall-filter-form').onsubmit = (event) => { event.preventDefault(); const value = Object.fromEntries(new FormData(event.currentTarget)); state.recallFilters = value; recall(); };
@@ -848,7 +908,7 @@ function feedbackControls(answer, reveal, wrong) {
 }
 
 function renderActive() {
-  const active = state.active; const question = activeQuestion(); if (!active || !question) return;
+  const active = state.active; const question = activeQuestion(); if (!active || !question || active.solvingVisible === false) return;
   const answer = active.answers[question.id]; const reveal = active.completedReview || ['practice', 'recall'].includes(active.kind) && Boolean(answer?.selected_option) && (correctKeys(question).length === 1 || answer.submitted);
   const answered = Object.values(active.answers).filter((item) => item?.selected_option).length;
   const browsing = active.kind === 'browse';
@@ -856,7 +916,7 @@ function renderActive() {
   const srmButton = learning.srm_active
     ? `<button class="button ghost active-control" data-action="srm-remove">In Recall</button><button class="button ghost" data-action="srm-reset">Reset Recall</button>`
     : '<button class="button ghost" data-action="srm-add">Add to Recall</button>';
-  const timerRunning = !browsing && active.kind !== 'recall' && !active.completedReview && active.status === 'in_progress';
+  const timerRunning = !browsing && (active.kind !== 'recall' || active.target_seconds_per_question !== 0) && !active.completedReview && active.status === 'in_progress';
   const timerShouldTick = timerRunning && !answer?.selected_option && active.questionTimeRemainingSeconds !== 0;
   const palette = active.questions.slice(0, 500).map((item, index) => {
     const itemAnswer = active.answers[item.id]; const selected = Boolean(itemAnswer?.selected_option);
@@ -868,7 +928,7 @@ function renderActive() {
     return `<button data-action="jump" data-index="${index}" class="palette-item ${base} ${index === active.index ? 'current' : ''}" aria-label="Question ${index + 1}${bookmark ? ', bookmarked' : ''}${marked ? ', marked for review' : ''}"><span>${index + 1}</span>${badges}</button>`;
   }).join('');
   const tools = browsing ? '' : `<section class="card question-tools"><span class="eyebrow">QUESTION TOOLS</span><button class="tool-button bookmark-tool ${active.bookmarks.has(question.id) ? 'active' : ''}" data-action="bookmark" aria-pressed="${active.bookmarks.has(question.id)}"><span>${active.bookmarks.has(question.id) ? '★' : '☆'}</span>${active.bookmarks.has(question.id) ? 'Bookmarked' : 'Bookmark'}</button><button class="tool-button review-tool ${active.marked.has(question.id) ? 'active' : ''}" data-action="mark" aria-pressed="${active.marked.has(question.id)}"><span>!</span>${active.marked.has(question.id) ? 'Marked for review' : 'Mark for review'}</button>${srmButton}<button class="tool-button" data-action="note"><span>＋</span>Note</button><button class="tool-button" data-action="report"><span>⚑</span>Report</button></section>`;
-  layout(`<section class="question-header"><div><span class="pill">${browsing ? 'Browse' : active.completedReview ? 'Review' : active.kind === 'recall' ? 'Recall' : active.kind === 'test' ? e(TEST_PRESETS[active.preset]?.[0] || 'Test') : 'Practice'}</span><h1>${e(active.title || 'Question set')}</h1></div>${browsing ? `<div class="row"><button class="button" data-action="preview-browsed-set">Start test with these exact questions</button><button class="button secondary" data-action="back-to-origin">Back</button></div>` : active.kind === 'recall' ? '<span class="pill">Priority order · no timer</span>' : timerRunning ? `<div class="timer-cluster"><div><span>QUESTION TIMER</span><b id="question-timer">00:50</b></div><div><span>TOTAL TIMER</span><b id="total-timer">${timerText(active.questions.length * TARGET_SECONDS)}</b></div><button class="button secondary compact" data-action="toggle-timers" ${answer?.selected_option||active.timerBusy?'disabled':''}>${sharedClock(active).manualPaused?'Resume':'Pause'}</button>${sharedClock(active).paused?'<span class="pill">PAUSED</span>':''}</div>` : ''}</section><div class="question-layout"><section class="card question-card"><div class="question-topline"><span>Question ${active.index + 1} of ${active.questions.length}</span><span class="question-context">${questionMeta(question)}</span></div><div class="progress"><i style="width:${((active.index + 1) / active.questions.length) * 100}%"></i></div>${renderQuestion(question, answer, reveal)}${browsing ? '' : feedbackControls(answer || {}, reveal, Boolean(answer?.selected_option) && !isAnswerCorrect(question, answer))}<div class="question-actions"><button class="button secondary" data-action="previous" ${active.index === 0 ? 'disabled' : ''}>← Previous</button><button class="button" data-action="next">${active.index === active.questions.length - 1 ? (browsing ? 'Back' : active.completedReview ? 'Back to results' : 'Finish') : 'Next →'}</button></div></section><aside class="question-sidebar">${tools}<section class="card palette-card"><div class="section-heading"><div><span class="eyebrow">NAVIGATOR</span><h3>Questions</h3></div><span>${answered}/${active.questions.length}</span></div><div class="status-legend" aria-label="Question status legend"><span class="correct">Correct</span><span class="incorrect">Incorrect</span><span class="review">Review</span><span class="bookmark">Bookmarked</span><span class="unattempted">Unattempted</span></div><div class="palette">${palette}</div>${active.questions.length > 500 ? '<p class="subtle">Palette shows the first 500 positions; Previous/Next continues through all questions.</p>' : ''}${active.kind === 'test' && !active.completedReview ? `<p class="subtle">${active.questions.length - answered} unanswered</p><button class="button danger full" data-action="submit">Submit test</button>` : ''}</section></aside></div>`);
+  layout(`<section class="question-header"><div><span class="pill">${browsing ? 'Browse' : active.completedReview ? 'Review' : active.kind === 'recall' ? 'Recall' : active.kind === 'test' ? e(TEST_PRESETS[active.preset]?.[0] || 'Test') : 'Practice'}</span><h1>${e(active.title || 'Question set')}</h1></div>${browsing ? `<div class="row"><button class="button" data-action="preview-browsed-set">Start test with these exact questions</button><button class="button secondary" data-action="back-to-origin">Back</button></div>` : active.kind === 'recall' ? `<div class="timer-cluster">${recallTimerSetting(active.target_seconds_per_question ?? 50)}${timerRunning ? '<div><span>QUESTION TIMER</span><b id="question-timer"></b><span id="recall-timeout" role="status"></span></div>' : ''}<a class="button secondary" href="#/recall" data-action="exit-recall">Exit Recall</a></div>` : timerRunning ? `<div class="timer-cluster"><div><span>QUESTION TIMER</span><b id="question-timer">00:50</b></div><div><span>TOTAL TIMER</span><b id="total-timer">${timerText(active.questions.length * TARGET_SECONDS)}</b></div><button class="button secondary compact" data-action="toggle-timers" ${answer?.selected_option||active.timerBusy?'disabled':''}>${sharedClock(active).manualPaused?'Resume':'Pause'}</button>${sharedClock(active).paused?'<span class="pill">PAUSED</span>':''}</div>` : ''}</section><div class="question-layout"><section class="card question-card"><div class="question-topline"><span>Question ${active.index + 1} of ${active.questions.length}</span><span class="question-context">${questionMeta(question)}</span></div><div class="progress"><i style="width:${((active.index + 1) / active.questions.length) * 100}%"></i></div>${renderQuestion(question, answer, reveal)}${browsing ? '' : feedbackControls(answer || {}, reveal, Boolean(answer?.selected_option) && !isAnswerCorrect(question, answer))}<div class="question-actions"><button class="button secondary" data-action="previous" ${active.index === 0 ? 'disabled' : ''}>← Previous</button><button class="button" data-action="next">${active.index === active.questions.length - 1 ? (browsing ? 'Back' : active.completedReview ? 'Back to results' : 'Finish') : 'Next →'}</button></div></section><aside class="question-sidebar">${tools}<section class="card palette-card"><div class="section-heading"><div><span class="eyebrow">NAVIGATOR</span><h3>Questions</h3></div><span>${answered}/${active.questions.length}</span></div><div class="status-legend" aria-label="Question status legend"><span class="correct">Correct</span><span class="incorrect">Incorrect</span><span class="review">Review</span><span class="bookmark">Bookmarked</span><span class="unattempted">Unattempted</span></div><div class="palette">${palette}</div>${active.questions.length > 500 ? '<p class="subtle">Palette shows the first 500 positions; Previous/Next continues through all questions.</p>' : ''}${active.kind === 'test' && !active.completedReview ? `<p class="subtle">${active.questions.length - answered} unanswered</p><button class="button danger full" data-action="submit">Submit test</button>` : ''}</section></aside></div>`);
   if (timerRunning) updateActiveTimerDisplay();
   if (sharedClock(active).manualPaused) document.querySelectorAll('[data-action=answer],[data-action=next],[data-action=previous],[data-action=jump],[data-action=submit-multi-answer]').forEach(el=>el.disabled=true);
   if (timerShouldTick && !sharedClock(active).paused) startActiveTimers(); else stopActiveTimer();
@@ -879,26 +939,28 @@ function stopActiveTimer() {
   state.timer = null;
 }
 
-function totalTimerLimit(active) { return active.questions.length * TARGET_SECONDS * 1000; }
+function totalTimerLimit(active) { return active.kind === 'recall' ? Infinity : active.questions.length * TARGET_SECONDS * 1000; }
+function questionTimerLimit(active) { return active.kind === 'recall' ? (active.target_seconds_per_question === 0 ? Infinity : (active.target_seconds_per_question ?? 50) * 1000) : 50000; }
 function sharedClock(active) {
  if (!active.timer_state) active.timer_state=initialClock(active.index,active.questionStartedAt||Date.now());
+ if (active.kind === 'recall') active.timer_state.questionLimitMs = questionTimerLimit(active);
  return active.timer_state;
 }
 function totalTimeUsed(active,at=Date.now()){return readClock(sharedClock(active),at,totalTimerLimit(active)).totalUsedMs;}
 function totalTimeRemaining(active,at=Date.now()){return Math.ceil(Math.max(0,totalTimerLimit(active)-totalTimeUsed(active,at))/1000);}
 function pauseTotalTimer(active,at=Date.now()){active.timer_state=freezeClock(sharedClock(active),at,totalTimerLimit(active));}
 function resumeTotalTimer(active,at=Date.now()){if(!sharedClock(active).manualPaused)active.timer_state=runClock(sharedClock(active),at);}
-function questionTimeRemaining(active,answer=null,at=Date.now()){return Math.ceil(Math.max(0,50000-readClock(sharedClock(active),at,totalTimerLimit(active)).questionUsedMs)/1000);}
+function questionTimeRemaining(active,answer=null,at=Date.now()){return Math.ceil(Math.max(0,questionTimerLimit(active)-readClock(sharedClock(active),at,totalTimerLimit(active)).questionUsedMs)/1000);}
 function answeredQuestionTimeRemaining(answer){return Math.max(0,Number(answer?.question_time_remaining_seconds??(TARGET_SECONDS-Number(answer?.time_spent_seconds||0))));}
 function pauseAttemptTimers(active,at=Date.now()){pauseTotalTimer(active,at);active.questionTimeRemainingSeconds=questionTimeRemaining(active,null,at);stopActiveTimer();persistTimer(active);}
 const timerWrites=new Map();
 function timerKey(active){return `qbank-clock-v1:${state.user?.id}:${active.id}`;}
 function persistTimer(active=state.active,remote=true){
- if(!active?.id||active.kind==='browse'||active.kind==='recall'||active.status!=='in_progress')return Promise.resolve();
+ if(!active?.id||active.kind==='browse'||active.status!=='in_progress')return Promise.resolve();
  active.timer_state=checkpointClock(sharedClock(active),Date.now(),totalTimerLimit(active));
- const snapshot={...active.timer_state,position:active.index};active.timer_state=snapshot;
+ const snapshot={...active.timer_state,position:active.index,...(active.kind === 'recall' ? {recallSeconds:active.target_seconds_per_question ?? 50} : {})};active.timer_state=snapshot;
  try{localStorage.setItem(timerKey(active),JSON.stringify(snapshot));}catch{}
- if(!remote)return Promise.resolve();
+ if(!remote || active.kind === 'recall')return Promise.resolve();
  const id=active.id,userId=state.user.id;
  const write=(timerWrites.get(id)||Promise.resolve()).catch(()=>{}).then(async()=>{const r=await db.from('test_sessions').update({timer_state:snapshot}).eq('id',id).eq('user_id',userId);if(r.error)throw r.error;});
  timerWrites.set(id,write);return write.catch(error=>toast('Timer saved on this device; cloud sync failed: '+error.message,'error'));
@@ -912,7 +974,10 @@ async function toggleAttemptPause(){
 function updateActiveTimerDisplay(at=Date.now()){
  const active=state.active;if(!active)return;
  const q=document.querySelector('#question-timer'),t=document.querySelector('#total-timer');
- if(q)q.textContent=timerText(questionTimeRemaining(active,null,at));if(t)t.textContent=timerText(totalTimeRemaining(active,at));
+ const remaining = questionTimeRemaining(active,null,at);
+ if(q && q.textContent !== timerText(remaining))q.textContent=timerText(remaining);if(t && t.textContent !== timerText(totalTimeRemaining(active,at)))t.textContent=timerText(totalTimeRemaining(active,at));
+ const timeout=document.querySelector('#recall-timeout');
+ if(timeout){const expired=remaining===0;timeout.textContent=expired?'Time’s up — continue when ready':'';q?.classList.toggle('timer-expired',expired);}
 }
 function startActiveTimers(){
  stopActiveTimer();const active=state.active;if(!active||sharedClock(active).paused)return;
@@ -957,19 +1022,30 @@ async function ensureAttemptRecorded(question, answer) {
   await recordAttempt(question, answer);
 }
 
+const answerWrites = new Map();
 async function saveActiveAnswer(questionId) {
-  if (!state.active.id || !state.features.sessions) return;
-  await persistTimer(state.active);
-  const answer = state.active.answers[questionId] || {}; const question = state.active.questions.find((q) => q.id === questionId);
-  const value = { session_id: state.active.id, question_id: questionId, selected_option: answer.selected_option || null, marked_for_review: state.active.marked.has(questionId), answered_at: answer.selected_option ? answer.answered_at || new Date().toISOString() : null, is_correct: answer.selected_option ? isAnswerCorrect(question, answer) : null, time_spent_seconds: answer.time_spent_seconds || 0, confidence: answer.confidence || null, error_reason: answer.error_reason || null, client_event_id: answer.client_event_id || null };
-  const saved = await optional(db.from('test_answers').upsert(value, { onConflict: 'session_id,question_id' }), 'sessions');
-  if (!saved.error) await optional(db.from('test_sessions').update({ current_position: state.active.index, last_question_started_at: new Date(state.active.questionStartedAt).toISOString(), updated_at: new Date().toISOString() }).eq('id', state.active.id).eq('user_id', state.user.id), 'sessions');
+  const active = state.active;
+  if (!active?.id || !state.features.sessions) return;
+  const answer = active.answers[questionId] || {}; const question = active.questions.find((q) => q.id === questionId);
+  const value = { session_id: active.id, question_id: questionId, selected_option: answer.selected_option || null, marked_for_review: active.marked.has(questionId), answered_at: answer.selected_option ? answer.answered_at || new Date().toISOString() : null, is_correct: answer.selected_option ? isAnswerCorrect(question, answer) : null, time_spent_seconds: answer.time_spent_seconds || 0, confidence: answer.confidence || null, error_reason: answer.error_reason || null, client_event_id: answer.client_event_id || null };
+  const key = `${active.id}:${questionId}`, signature = JSON.stringify(value), previous = answerWrites.get(key);
+  if (active.kind === 'recall' && previous?.signature === signature) return previous.promise;
+  const position = active.index, started = active.questionStartedAt, userId = state.user.id;
+  const promise = (async () => {
+    if (previous) await previous.promise.catch(() => {});
+    await persistTimer(active);
+    const saved = await optional(db.from('test_answers').upsert(value, { onConflict: 'session_id,question_id' }), 'sessions');
+    if (saved.error) throw saved.error;
+    if (active.kind !== 'recall') await optional(db.from('test_sessions').update({ current_position: position, last_question_started_at: new Date(started).toISOString(), updated_at: new Date().toISOString() }).eq('id', active.id).eq('user_id', userId), 'sessions');
+  })();
+  answerWrites.set(key, {signature, promise});
+  try { await promise; } catch (error) { if (answerWrites.get(key)?.promise === promise) answerWrites.delete(key); throw error; }
 }
 
 async function selectAnswer(key) {
   const active = state.active; const question = activeQuestion(); if (!active || active.completedReview || sharedClock(active).manualPaused) return;
   const existing = active.answers[question.id]; const multiple = correctKeys(question).length > 1;
-  if (active.kind === 'practice' && existing?.selected_option && (!multiple || existing.submitted)) return;
+  if (['practice', 'recall'].includes(active.kind) && existing?.selected_option && (!multiple || existing.submitted)) return;
   const selectedAt = Date.now();
   const selection = new Set(selectedKeys(existing));
   if (multiple) { if (selection.has(key)) selection.delete(key); else selection.add(key); }
@@ -995,20 +1071,26 @@ async function submitMultiAnswer() {
 
 async function navigateActive(index) {
   const active = state.active; const current = activeQuestion();
-  if(sharedClock(active).manualPaused)return;
+  if(active.navigationBusy || sharedClock(active).manualPaused)return;
+  active.navigationBusy = true;
+  const originalRoute = state.route;
+  try {
   const navigationAt = Date.now();
   if (active.kind !== 'browse') pauseTotalTimer(active, navigationAt);
   stopActiveTimer();
   if (current && active.kind !== 'browse') { const answer = active.answers[current.id] || {}; if (!answer.selected_option) answer.time_spent_seconds = Math.max(answer.time_spent_seconds || 0, elapsedOnQuestion(navigationAt)); active.answers[current.id] = answer; await ensureAttemptRecorded(current, answer); await saveActiveAnswer(current.id); }
+  if (state.active !== active || state.route !== originalRoute || active.solvingVisible === false) return;
   active.index = Math.max(0, Math.min(index, active.questions.length - 1)); active.questionStartedAt = active.kind === 'browse' ? null : Date.now();
   const destinationAnswer = active.answers[active.questions[active.index]?.id];
   active.questionTimeRemainingSeconds = destinationAnswer?.selected_option ? answeredQuestionTimeRemaining(destinationAnswer) : null;
-  if(active.kind!=='browse'){active.timer_state={...sharedClock(active),position:active.index,questionUsedMs:destinationAnswer?.selected_option?(TARGET_SECONDS-answeredQuestionTimeRemaining(destinationAnswer))*1000:0,paused:true};}
+  if(active.kind!=='browse'){active.timer_state={...sharedClock(active),position:active.index,questionUsedMs:destinationAnswer?.selected_option?(active.kind === 'recall' ? Number(destinationAnswer.time_spent_seconds || 0) : TARGET_SECONDS-answeredQuestionTimeRemaining(destinationAnswer))*1000:0,paused:true};}
   if (active.kind !== 'browse' && !destinationAnswer?.selected_option) resumeTotalTimer(active, active.questionStartedAt);
   active.explanationOpen = false;
   await persistTimer(active);
+  if (active.kind === 'recall') renderActive();
   if (active.id) await optional(db.from('test_sessions').update({ current_position: active.index, last_question_started_at: new Date().toISOString() }).eq('id', active.id).eq('user_id', state.user.id), 'sessions');
-  renderActive();
+  if (state.active === active && state.route === originalRoute && active.kind !== 'recall') renderActive();
+  } finally { active.navigationBusy = false; }
 }
 
 async function toggleBookmark() {
@@ -1112,8 +1194,10 @@ async function resumeSession(id) {
     const candidates=[session.timer_state,localClock,existingActive?.timer_state].filter(c=>c?.version===1&&c.position===resumedIndex);
     let restoredClock=candidates.sort((a,b)=>b.savedAt-a.savedAt)[0];
     if(!restoredClock){const used=Object.values(answers).reduce((n,a)=>n+Number(a.time_spent_seconds||0)*1000,0);restoredClock={...initialClock(resumedIndex,resumedAt),totalUsedMs:used,questionUsedMs:Number(resumedAnswer?.time_spent_seconds||0)*1000,paused:Boolean(resumedAnswer?.selected_option)};}
-    restoredClock=checkpointClock(restoredClock,resumedAt,questions.length*50000);
-    state.active = { ...session, kind: ['practice', 'recall'].includes(session.mode) ? session.mode : 'test', questions, index: resumedIndex, answers, bookmarks: personal.bookmarks, marked: new Set([...personal.marked, ...(answersResult.data || []).filter((x) => x.marked_for_review).map((x) => x.question_id)]), learning: personal.learning, questionStartedAt: resumedAt, questionTimeRemainingSeconds: resumedAnswer?.selected_option ? answeredQuestionTimeRemaining(resumedAnswer) : null, timer_state: restoredClock, explanationOpen: false, completedReview: session.status !== 'in_progress' };
+    if (session.mode === 'recall' && [0,50,55].includes(restoredClock.recallSeconds)) session.target_seconds_per_question = restoredClock.recallSeconds;
+    if (session.mode === 'recall') { restoredClock.questionLimitMs = session.target_seconds_per_question === 0 ? Infinity : (session.target_seconds_per_question ?? 50) * 1000; restoredClock.startedAt = resumedAt; restoredClock.paused = Boolean(resumedAnswer?.selected_option); }
+    restoredClock=checkpointClock(restoredClock,resumedAt,session.mode === 'recall' ? Infinity : questions.length*50000);
+    state.active = { ...session, solvingVisible: true, kind: ['practice', 'recall'].includes(session.mode) ? session.mode : 'test', questions, index: resumedIndex, answers, bookmarks: personal.bookmarks, marked: new Set([...personal.marked, ...(answersResult.data || []).filter((x) => x.marked_for_review).map((x) => x.question_id)]), learning: personal.learning, questionStartedAt: resumedAt, questionTimeRemainingSeconds: resumedAnswer?.selected_option ? answeredQuestionTimeRemaining(resumedAnswer) : null, timer_state: restoredClock, explanationOpen: false, completedReview: session.status !== 'in_progress' };
     await persistTimer(state.active);
     renderActive();
   } catch (error) { toast(error.message || 'Could not resume session.', 'error'); location.hash = '#/home'; }
@@ -1648,6 +1732,8 @@ async function recordRecallResponse(value) {
 }
 
 async function render() {
+  recallGeneration++;
+  if (state.active?.kind === 'recall') { state.active.solvingVisible = false; pauseTotalTimer(state.active); }
   gtMode.cancel(); grandTests.cancel();
   persistTimer(state.active);
   stopActiveTimer(); state.route = route(); if (!state.user) return auth();
@@ -1678,6 +1764,11 @@ async function resetPassword() { const email = document.querySelector('[name="em
 
 document.addEventListener('click', async (event) => {
   const target = event.target.closest('[data-action]'); if (!target) return; const action = target.dataset.action;
+  const guarded = ['answer', 'submit-multi-answer', 'previous', 'next', 'jump', 'bookmark', 'mark', 'confidence', 'error-reason', 'srm-add', 'srm-remove', 'srm-reset', 'start-recall', 'start-pending-test', 'resume', 'submit'].includes(action);
+  if (guarded && state.actionBusy) return;
+  if (guarded) state.actionBusy = true;
+  try {
+  if (action === 'exit-recall') { event.preventDefault(); pauseTotalTimer(state.active); persistTimer(state.active, false); stopActiveTimer(); state.active.solvingVisible = false; return goToHash('#/recall'); }
   if (action === 'toggle-timers') await toggleAttemptPause();
   if (action === 'signout') await db.auth.signOut(); if (action === 'signup') await signUp(); if (action === 'reset-password') await resetPassword(); if (action === 'retry') render();
   if (action === 'choose-preset') showTestBuilder(target.dataset.preset); if (action === 'close-builder') { grandTests.cancel(); gtMode.cancel(); document.querySelector('#test-builder-slot').innerHTML = ''; }
@@ -1715,6 +1806,22 @@ document.addEventListener('click', async (event) => {
   if (action === 'review-mistakes') { const questions = state.active.questions.filter((q) => state.active.answers[q.id]?.selected_option && !isAnswerCorrect(q, state.active.answers[q.id])); if (!questions.length) return toast('No incorrect questions in this session.'); state.active = { ...state.active, questions, index: 0, completedReview: true, questionStartedAt: Date.now() }; renderActive(); }
   if (action === 'retake') await createSession({ mode: state.active.kind, preset: state.active.preset || 'retake', title: `${state.active.title || 'Test'} retake`, filters: state.active.filters || {}, questionIds: state.active.questions.map((question) => question.id), requested: state.active.questions.length, autoSubmit: state.active.kind === 'test', origin: '#/history' });
   if (action === 'my-bank-tab') showMyBankTab(target.dataset.tab);
+  } catch (error) { toast(error.message || 'Could not save. Please try again.', 'error'); } finally { if (guarded) state.actionBusy = false; }
+});
+
+document.addEventListener('change', (event) => {
+  if (!event.target.matches('[data-recall-timer]')) return;
+  if (state.actionBusy) { event.target.value = String(state.active?.target_seconds_per_question ?? recallTimerSeconds()); return; }
+  const seconds = Number(event.target.value); if (![0, 50, 55].includes(seconds)) return;
+  try { localStorage.setItem(`qbank-recall-timer:${state.user?.id}`, String(seconds)); } catch {}
+  const active = state.active;
+  if (active?.kind === 'recall' && document.querySelector('.question-layout')) {
+    active.target_seconds_per_question = seconds;
+    active.timer_state = { ...initialClock(active.index), questionLimitMs: questionTimerLimit(active), paused: Boolean(active.answers[activeQuestion().id]?.selected_option) };
+    active.questionTimeRemainingSeconds = null;
+    persistTimer(active, false); renderActive();
+    if (active.id) optional(db.from('test_sessions').update({target_seconds_per_question: seconds}).eq('id', active.id).eq('user_id', state.user.id), 'sessions');
+  }
 });
 
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape') document.querySelector('#modal')?.remove(); });
@@ -1727,8 +1834,10 @@ async function bootstrap() {
     db.auth.onAuthStateChange((_event, session) => {
       // bootstrap already renders the initial session; a duplicate render can erase GT selection.
       if (_event === 'INITIAL_SESSION') return;
+      if (state.user?.id === session?.user?.id) return;
       state.user = session?.user || null;
-      state.meta.subjects = [];
+      metadataRequests.clear(); facetCache.clear(); populationCache.clear(); answerWrites.clear();
+      state.meta.fullLoaded = false; state.meta.subjects = []; state.meta.platforms = [];
       setTimeout(render, 0);
     });
     if (state.user) {

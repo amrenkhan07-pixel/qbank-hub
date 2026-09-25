@@ -1,0 +1,218 @@
+{
+  "before": {
+    "initial": {
+      "elapsedMs": 764,
+      "queries": 17,
+      "responseBytes": 506658,
+      "calls": [
+        {
+          "name": "systems:select",
+          "bytes": 2,
+          "requestBytes": 4
+        },
+        {
+          "name": "topics:select",
+          "bytes": 2,
+          "requestBytes": 4
+        },
+        {
+          "name": "subtopics:select",
+          "bytes": 2,
+          "requestBytes": 4
+        },
+        {
+          "name": "qbank_source_tests:select",
+          "bytes": 2,
+          "requestBytes": 4
+        },
+        {
+          "name": "subjects:select",
+          "bytes": 31,
+          "requestBytes": 4
+        },
+        {
+          "name": "platforms:select",
+          "bytes": 39,
+          "requestBytes": 4
+        },
+        {
+          "name": "platform_subjects:select",
+          "bytes": 2,
+          "requestBytes": 4
+        },
+        {
+          "name": "qbank_srm_summary",
+          "bytes": 14,
+          "requestBytes": 44
+        },
+        {
+          "name": "qbank_srm_queue",
+          "bytes": 6381,
+          "requestBytes": 101
+        },
+        {
+          "name": "qbank_filter_facets",
+          "bytes": 19,
+          "requestBytes": 130
+        },
+        {
+          "name": "user_srm_settings:select",
+          "bytes": 77,
+          "requestBytes": 4
+        },
+        {
+          "name": "questions:select",
+          "bytes": 486141,
+          "requestBytes": 4
+        },
+        {
+          "name": "question_options:select",
+          "bytes": 13201,
+          "requestBytes": 4
+        },
+        {
+          "name": "qbank_resolve_population",
+          "bytes": 259,
+          "requestBytes": 462
+        },
+        {
+          "name": "test_sessions:insert",
+          "bytes": 482,
+          "requestBytes": 459
+        },
+        {
+          "name": "test_session_questions:insert",
+          "bytes": 2,
+          "requestBytes": 503891
+        },
+        {
+          "name": "user_question_state:select",
+          "bytes": 2,
+          "requestBytes": 4
+        }
+      ]
+    },
+    "next": {
+      "elapsedMs": 185,
+      "queries": 3,
+      "responseBytes": 6,
+      "calls": [
+        {
+          "name": "test_answers:upsert",
+          "bytes": 2,
+          "requestBytes": 221
+        },
+        {
+          "name": "test_sessions:update",
+          "bytes": 2,
+          "requestBytes": 116
+        },
+        {
+          "name": "test_sessions:update",
+          "bytes": 2,
+          "requestBytes": 76
+        }
+      ]
+    },
+    "questions": 40
+  },
+  "after": {
+    "initial": {
+      "elapsedMs": 630,
+      "queries": 11,
+      "responseBytes": 253609,
+      "calls": [
+        {
+          "name": "subjects:select",
+          "bytes": 31,
+          "requestBytes": 4
+        },
+        {
+          "name": "platforms:select",
+          "bytes": 39,
+          "requestBytes": 4
+        },
+        {
+          "name": "qbank_srm_summary",
+          "bytes": 14,
+          "requestBytes": 44
+        },
+        {
+          "name": "qbank_srm_queue",
+          "bytes": 3181,
+          "requestBytes": 100
+        },
+        {
+          "name": "user_srm_settings:select",
+          "bytes": 77,
+          "requestBytes": 4
+        },
+        {
+          "name": "questions:select",
+          "bytes": 243061,
+          "requestBytes": 4
+        },
+        {
+          "name": "question_options:select",
+          "bytes": 6581,
+          "requestBytes": 4
+        },
+        {
+          "name": "qbank_resolve_population",
+          "bytes": 139,
+          "requestBytes": 342
+        },
+        {
+          "name": "test_sessions:insert",
+          "bytes": 482,
+          "requestBytes": 459
+        },
+        {
+          "name": "test_session_questions:insert",
+          "bytes": 2,
+          "requestBytes": 251911
+        },
+        {
+          "name": "user_question_state:select",
+          "bytes": 2,
+          "requestBytes": 4
+        }
+      ]
+    },
+    "next": {
+      "elapsedMs": 126,
+      "queries": 2,
+      "responseBytes": 4,
+      "calls": [
+        {
+          "name": "test_answers:upsert",
+          "bytes": 2,
+          "requestBytes": 221
+        },
+        {
+          "name": "test_sessions:update",
+          "bytes": 2,
+          "requestBytes": 76
+        }
+      ],
+      "visibleMs": 64
+    },
+    "questions": 20,
+    "checks": [
+      "20-question server bound",
+      "50-second default",
+      "55-second expiry with no auto-submit or skip",
+      "per-question reset",
+      "Off keeps elapsed-time analytics",
+      "deferred explanation DOM",
+      "bookmark and mark correctness",
+      "deduplicated answer saves",
+      "one attempt event and confidence on Next",
+      "failed-save retry",
+      "facet and payload in-flight deduplication",
+      "exit during navigation stays exited",
+      "preference persistence"
+    ]
+  },
+  "method": "Synthetic browser fixture, 40 due relational questions, All platforms / All subjects / All Due, 60ms per mocked query plus response size / 2000 ms. Measures cold metadata through first solving render and Next navigation. Not production latency. After limits the first batch to 20; other due questions remain queued."
+}
