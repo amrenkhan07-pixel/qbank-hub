@@ -1,6 +1,6 @@
 import {readClock,freezeClock,runClock,checkpointClock,initialClock} from './session-timers.js?v=20260923-pause1';
 import { createGTExamMode } from './gt-exam-mode.js?v=20260923-pause1';
-import { createGrandTests } from './grand-tests.js?v=20260923-pause1';
+import { createGrandTests } from './grand-tests.js?v=20260925-taxonomy1';
 import { db, initError, isMissingTable, requireUser, withAuthTimeout } from './supabase.js';
 import { analyticsActionQuestionIds, analyticsMetadataCapabilities, analyticsPlatformDisagreement, analyticsStudyPriority, analyticsTopicSubtopicRedundant, assertValidation, buildTaxonomyIndex, canonicalCorrectOptionKeys, filterAnalyticsPopulation, isCanonicalAnswerCorrect, normalizeOptionKeys, resolveTaxonomyCascade, validateGeneratedQuestionSet, validateQuestionStateBindings, validateResumeSnapshot, validateSrmQueue } from './validation.js?v=20260902-srm2';
 import { runTaxonomyDomRegression } from './taxonomy-dom-regression.js?v=20260902-canonical-subject';
