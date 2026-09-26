@@ -57,7 +57,17 @@ const server=http.createServer((req,res)=>{let pathname=new URL(req.url,'http://
  assert.equal(await page.locator('#question-timer').textContent(),'00:55');
  await page.selectOption('[data-recall-timer]','0');assert.equal(await page.locator('#question-timer').count(),0);
  await page.evaluate(()=>{testApi.state.active.timer_state.startedAt-=70000;});
- await page.evaluate(()=>testApi.selectAnswer('B'));
+ const feedback = await page.evaluate(async()=>{
+   const start=performance.now(); let settled=false;
+   window.answerSave=testApi.selectAnswer('B').then(()=>{settled=true;});
+   const visible=Boolean(document.querySelector('.wrong-panel'));
+   const elapsedMs=performance.now()-start;
+   await new Promise(requestAnimationFrame);
+   return {visible,elapsedMs,savePending:!settled};
+ });
+ assert.equal(feedback.visible,true);assert.equal(feedback.savePending,true);
+ results.answerFeedback=feedback;
+ await page.evaluate(()=>window.answerSave);
  assert.equal(await page.evaluate(()=>testApi.state.active.answers.q2.time_spent_seconds),70);
  assert.equal(await page.evaluate(()=>testApi.state.active.answers.q2.attemptRecorded),true);
  assert.equal(await page.locator('.rich-content').filter({hasText:'Explanation detail'}).count(),0);

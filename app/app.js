@@ -1059,14 +1059,23 @@ async function selectAnswer(key) {
   }
   const answer = { ...(existing || {}), client_event_id: existing?.client_event_id || crypto.randomUUID(), selected_option: selectedOption, answered_at: new Date(selectedAt).toISOString(), time_spent_seconds: existing?.selected_option ? existing.time_spent_seconds : elapsedOnQuestion(selectedAt), question_time_remaining_seconds: selectedOption ? questionTimeRemaining(active, null, selectedAt) : null };
   active.answers[question.id] = answer;
+  const answerRoute = location.hash;
+  active.explanationOpen = false;
+  // Answer feedback is local; persistence must not delay the selected/correct state.
+  renderActive();
   if (['practice', 'recall'].includes(active.kind) && !multiple && !existing?.selected_option && !isAnswerCorrect(question, answer)) await recordAttempt(question, answer);
-  await saveActiveAnswer(question.id); active.explanationOpen = false; renderActive();
+  await saveActiveAnswer(question.id);
+  if (state.active === active && activeQuestion()?.id === question.id && location.hash === answerRoute) renderActive();
 }
 
 async function submitMultiAnswer() {
   const question = activeQuestion(); const answer = state.active?.answers?.[question?.id];
   if (!question || !answer?.selected_option || !['practice', 'recall'].includes(state.active.kind)) return;
-  answer.submitted = true; if (!isAnswerCorrect(question, answer)) await recordAttempt(question, answer); await saveActiveAnswer(question.id); state.active.explanationOpen = false; renderActive();
+  const active = state.active, answerRoute = location.hash;
+  answer.submitted = true; active.explanationOpen = false; renderActive();
+  if (!isAnswerCorrect(question, answer)) await recordAttempt(question, answer);
+  await saveActiveAnswer(question.id);
+  if (state.active === active && activeQuestion()?.id === question.id && location.hash === answerRoute) renderActive();
 }
 
 async function navigateActive(index) {
