@@ -1,3 +1,4 @@
+import { createGlobalImportance } from './global-importance.js?v=20261002-v1';
 import {readClock,freezeClock,runClock,checkpointClock,initialClock} from './session-timers.js?v=20260926-recall1';
 import { createGTExamMode } from './gt-exam-mode.js?v=20260923-pause1';
 import { createGrandTests } from './grand-tests.js?v=20260925-taxonomy1';
@@ -105,7 +106,7 @@ function richHtml(value) {
 }
 
 function layout(content) {
-  const nav = [['home', 'Home'], ['qbank', 'QBank'], ['tests', 'Test'], ['recall', 'Recall'], ['review', 'Review'], ['analytics', 'Analytics'], ['grand-test-analytics', 'GT Analytics'], ['my-bank', 'My Bank']];
+  const nav = [['home', 'Home'], ['qbank', 'QBank'], ['tests', 'Test'], ['global-importance', 'Global Importance'], ['importance-recall', 'Recall Today'], ['recall', 'Recall'], ['review', 'Review'], ['analytics', 'Analytics'], ['grand-test-analytics', 'GT Analytics'], ['my-bank', 'My Bank']];
   root.innerHTML = `<header class="topbar"><div class="shell topbar-row"><a class="brand" href="#/home">QBank <span>Hub</span></a><div class="user-actions"><span class="email">${e(state.user?.email)}</span><button class="button secondary compact" data-action="signout">Sign out</button></div></div><nav class="shell nav" aria-label="Primary navigation">${nav.map(([id, label]) => `<a href="#/${id}" class="${state.route === id ? 'active' : ''}">${label}</a>`).join('')}</nav></header><main class="shell">${content}</main>`;
 }
 
@@ -1740,6 +1741,8 @@ async function recordRecallResponse(value) {
   toast(`Recall scheduled: ${value}.`);
 }
 
+const globalImportance = createGlobalImportance({db,state,layout,e,toast,prepareQuestionSet,readyScreen});
+
 async function render() {
   recallGeneration++;
   if (state.active?.kind === 'recall') { state.active.solvingVisible = false; pauseTotalTimer(state.active); }
@@ -1748,7 +1751,7 @@ async function render() {
   stopActiveTimer(); state.route = route(); if (!state.user) return auth();
   try {
     await loadMeta();
-    if (state.route === 'home') return home(); if (state.route === 'qbank') return qbank(); if (state.route === 'tests') return tests(); if (state.route === 'recall') return recall(); if (state.route === 'review') return review(); if (state.route === 'analytics') return analytics(); if (state.route === 'grand-test-analytics') return grandTests.analytics(); if (state.route === 'grand-test-attempt') return gtMode.attempt(new URLSearchParams(location.hash.split('?')[1]).get('id')); if (state.route === 'my-bank' || state.route === 'manage') return myBank(); if (state.route === 'history') return history(); return home();
+    if (['global-importance','importance-subject','importance-recall'].includes(state.route)) return globalImportance.render(); if (state.route === 'home') return home(); if (state.route === 'qbank') return qbank(); if (state.route === 'tests') return tests(); if (state.route === 'recall') return recall(); if (state.route === 'review') return review(); if (state.route === 'analytics') return analytics(); if (state.route === 'grand-test-analytics') return grandTests.analytics(); if (state.route === 'grand-test-attempt') return gtMode.attempt(new URLSearchParams(location.hash.split('?')[1]).get('id')); if (state.route === 'my-bank' || state.route === 'manage') return myBank(); if (state.route === 'history') return history(); return home();
   } catch (error) { console.error(error); layout(`<div class="card notice"><b>Something went wrong.</b><p>${e(error.message || 'Please try again.')}</p><button class="button secondary" data-action="retry">Try again</button></div>`); }
 }
 
