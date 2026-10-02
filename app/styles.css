@@ -535,3 +535,13 @@ fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
   .question-sidebar .tool-button { min-height: 40px; padding: 7px 9px; font-size: 13px; }
   .question-sidebar .palette { max-height: clamp(180px, 32svh, 300px); padding: 4px; }
 }
+
+/* Desktop Global Importance pages need clearance below the final card row. */
+@media (min-width: 1024px) {
+  main.shell:has(> .gi-filters) {
+    height: auto;
+    max-height: none;
+    overflow: visible;
+    padding-bottom: max(112px, env(safe-area-inset-bottom));
+  }
+}
