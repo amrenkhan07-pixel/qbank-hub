@@ -504,3 +504,34 @@ fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 /* Recall expiry is advisory; answers and navigation stay available. */
 .timer-expired, #recall-timeout { color: #ad3d32; }
 #recall-timeout { display: block; font-size: .8rem; }
+
+/* Laptop/desktop question screens only. Keep the phone rules above unchanged. */
+@media (min-width: 1024px) {
+  main.shell:has(> .question-layout) {
+    width: min(1140px, 100%);
+    padding: 18px clamp(18px, 2vw, 24px) max(80px, env(safe-area-inset-bottom));
+  }
+  .question-layout {
+    grid-template-columns: minmax(0, 1fr) 280px;
+    gap: clamp(14px, 1.5vw, 20px);
+    align-items: start;
+  }
+  .question-header { gap: 12px; margin-bottom: 12px; }
+  .question-header > div:first-child { flex: 1 1 280px; min-width: 0; }
+  .question-header h1 { font-size: clamp(23px, 2vw, 28px); overflow-wrap: anywhere; }
+  .question-header .timer-cluster { flex: 0 1 auto; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .question-header .timer-cluster > div { min-width: 94px; padding: 6px 9px; }
+  .question-header .timer-cluster b { font-size: 18px; }
+  .question-card { padding: clamp(18px, 1.6vw, 22px); }
+  .question-card .progress { margin: 10px 0 16px; height: 6px; }
+  .question-card .question-stem { font-size: 16px; line-height: 1.6; margin-bottom: 14px; }
+  .question-card .option { min-height: 44px; margin: 7px 0; padding: 10px 12px; }
+  .question-card .question-actions {
+    position: static; margin: 16px 0 0; padding: 12px 0 0; box-shadow: none;
+  }
+  .question-sidebar { width: 100%; min-width: 0; gap: 12px; }
+  .question-sidebar .question-tools, .question-sidebar .palette-card { padding: 14px; }
+  .question-sidebar .question-tools { gap: 6px; }
+  .question-sidebar .tool-button { min-height: 40px; padding: 7px 9px; font-size: 13px; }
+  .question-sidebar .palette { max-height: clamp(180px, 32svh, 300px); padding: 4px; }
+}
