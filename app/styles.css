@@ -545,3 +545,11 @@ fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
     padding-bottom: max(112px, env(safe-area-inset-bottom));
   }
 }
+
+/* Original imported media, shared by QBank, Recall and GT viewers. */
+.content-image { display:block; max-width:100%; height:auto; margin:12px auto; border-radius:8px; }
+.media-unavailable { display:block; padding:8px 12px; margin:8px 0; border:1px solid var(--line); border-radius:8px; color:var(--muted); font-size:.9rem; }
+
+.content-audio { margin:10px 0; }
+.content-audio label { display:block; }
+.content-audio audio { width:100%; max-width:100%; }

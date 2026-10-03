@@ -1,9 +1,10 @@
+import {renderContent,questionContent,installMediaFailures} from './media-content.js?v=20261003-media1';
 import { createSmartRecall } from './smart-recall.js?v=20261003-v1';
 import { recallQuestionLimit, LABELS as SMART_RECALL_LABELS } from './smart-recall-model.mjs';
 import { createGlobalImportance } from './global-importance.js?v=20261002-v1';
 import {readClock,freezeClock,runClock,checkpointClock,initialClock} from './session-timers.js?v=20260926-recall1';
-import { createGTExamMode } from './gt-exam-mode.js?v=20260923-pause1';
-import { createGrandTests } from './grand-tests.js?v=20260925-taxonomy1';
+import { createGTExamMode } from './gt-exam-mode.js?v=20261003-media1';
+import { createGrandTests } from './grand-tests.js?v=20261003-media1';
 import { db, initError, isMissingTable, requireUser, withAuthTimeout } from './supabase.js';
 import { analyticsActionQuestionIds, analyticsMetadataCapabilities, analyticsPlatformDisagreement, analyticsStudyPriority, analyticsTopicSubtopicRedundant, assertValidation, buildTaxonomyIndex, canonicalCorrectOptionKeys, filterAnalyticsPopulation, isCanonicalAnswerCorrect, normalizeOptionKeys, resolveTaxonomyCascade, validateGeneratedQuestionSet, validateQuestionStateBindings, validateResumeSnapshot, validateSrmQueue } from './validation.js?v=20260902-srm2';
 import { runTaxonomyDomRegression } from './taxonomy-dom-regression.js?v=20260902-canonical-subject';
@@ -84,27 +85,26 @@ function safeUrl(value, image = false) {
   } catch { return ''; }
 }
 
-function richHtml(value) {
-  const input = String(value ?? '');
-  if (!input) return '';
-  const doc = new DOMParser().parseFromString(`<div>${input}</div>`, 'text/html');
-  const allowed = new Set(['P', 'BR', 'B', 'STRONG', 'I', 'EM', 'U', 'UL', 'OL', 'LI', 'H2', 'H3', 'H4', 'BLOCKQUOTE', 'CODE', 'PRE', 'TABLE', 'THEAD', 'TBODY', 'TR', 'TH', 'TD', 'SUP', 'SUB', 'A', 'IMG', 'HR', 'DIV', 'SPAN']);
-  const clean = (node) => {
-    if (node.nodeType === Node.TEXT_NODE) return e(node.textContent);
-    if (node.nodeType !== Node.ELEMENT_NODE) return '';
-    const children = [...node.childNodes].map(clean).join('');
-    if (!allowed.has(node.tagName)) return children;
-    if (node.tagName === 'A') {
-      const href = safeUrl(node.getAttribute('href') || '');
-      return href ? `<a href="${e(href)}" target="_blank" rel="noopener noreferrer">${children}</a>` : children;
-    }
-    if (node.tagName === 'IMG') {
-      const src = safeUrl(node.getAttribute('src') || '', true);
-      return src ? `<img src="${e(src)}" alt="${e(node.getAttribute('alt') || 'Explanation image')}" loading="lazy" />` : '';
-    }
-    return `<${node.tagName.toLowerCase()}>${children}</${node.tagName.toLowerCase()}>`;
-  };
-  return [...doc.body.firstElementChild.childNodes].map(clean).join('');
+function richHtml(value) { return renderContent(value); }
+installMediaFailures(root);
+
+// Old session snapshots omitted image arrays. Recover references for only the visible question.
+async function recoverSnapshotMedia(active, question) {
+  if (!question.restoreMedia || question.mediaLoading) return;
+  question.mediaLoading = true;
+  try {
+    const [source] = await loadQuestionsByIds([question.id], active.filters || {});
+    if (!source) throw new Error('Question media source is unavailable');
+    question.question_images = source.question_images || [];
+    question.explanation_images = source.explanation_images || [];
+    question.image_url = source.image_url || question.image_url || '';
+    question.audio = source.audio || source.audio_url || null;
+    question.video_url = source.video_url || '';
+    question.restoreMedia = false;
+    question.mediaError = false;
+  } catch { question.mediaError = true; }
+  finally { question.mediaLoading = false; }
+  if (state.active === active && activeQuestion()?.id === question.id && active.solvingVisible !== false) renderActive();
 }
 
 function layout(content) {
@@ -899,14 +899,14 @@ function explanationBlock(question, answer, open) {
   const selected = selectedKeys(answer); const right = selected.length > 0 && isAnswerCorrect(question, answer);
   const expected = correctKeys(question).join(', ') || 'Not provided';
   const resultLabel = !selected.length ? `Correct answer: ${e(expected)}` : right ? 'Previously answered correctly' : `Previously answered incorrectly · Correct answer: ${e(expected)}`;
-  const info = [question.source_collection, question.source_test_label, question.source_position ? `Question ${question.source_position}` : '', question.media_status && question.media_status !== 'NO_MEDIA' ? question.media_status.replaceAll('_', ' ') : ''].filter(Boolean).join(' · ');
-  return `<div class="answer-panel ${right ? 'correct-panel' : 'wrong-panel'}"><div class="row"><b>${resultLabel}</b><button class="button ghost compact" data-action="toggle-explanation">${open ? 'Hide explanation' : 'View explanation'}</button></div>${open ? `<div class="rich-content">${question.explanation_html ? richHtml(question.explanation_html) : '<p>No explanation is available for this question.</p>'}</div>${info ? `<details class="question-info"><summary>Question info</summary><p>${e(info)}</p></details>` : ''}` : ''}</div>`;
+  const info = [question.source_collection, question.source_test_label, question.source_position ? `Question ${question.source_position}` : '', question.media_status && !['NO_MEDIA','MEDIA_REFERENCED'].includes(question.media_status) ? question.media_status.replaceAll('_', ' ') : ''].filter(Boolean).join(' · ');
+  return `<div class="answer-panel ${right ? 'correct-panel' : 'wrong-panel'}"><div class="row"><b>${resultLabel}</b><button class="button ghost compact" data-action="toggle-explanation">${open ? 'Hide explanation' : 'View explanation'}</button></div>${open ? `<div class="rich-content">${questionContent(question, 'explanation') || '<p>No explanation is available for this question.</p>'}</div>${info ? `<details class="question-info"><summary>Question info</summary><p>${e(info)}</p></details>` : ''}` : ''}</div>`;
 }
 
 function renderQuestion(question, answer, reveal) {
   const correct = new Set(correctKeys(question)); const selected = new Set(selectedKeys(answer)); const multiple = correct.size > 1;
   const mediaNotice = question.media_status && !['NO_MEDIA', 'MEDIA_REFERENCED'].includes(question.media_status) ? `<div class="notice">Referenced media is not available in this import.</div>` : '';
-  return `<div class="question-stem rich-content">${richHtml(question.question_text)}</div>${question.image_url ? `<img class="question-image" src="${e(safeUrl(question.image_url, true))}" alt="Question illustration" />` : ''}${mediaNotice}<div class="options" role="group" aria-label="Answer choices">${question.options.map((option) => {
+  return `<div class="question-stem rich-content">${questionContent(question, 'question')}</div>${mediaNotice}<div class="options" role="group" aria-label="Answer choices">${question.options.map((option) => {
     const key = String(option.option_key).toUpperCase(); const classes = ['option'];
     if (selected.has(key)) classes.push('selected'); if (reveal && correct.has(key)) classes.push('correct'); if (reveal && selected.has(key) && !correct.has(key)) classes.push('wrong');
     return `<button class="${classes.join(' ')}" data-action="answer" data-key="${e(key)}" ${reveal ? 'disabled' : ''}><b>${e(option.option_key)}.</b><span class="rich-content">${richHtml(option.option_text)}</span></button>`;
@@ -923,6 +923,7 @@ function feedbackControls(answer, reveal, wrong) {
 
 function renderActive() {
   const active = state.active; const question = activeQuestion(); if (!active || !question || active.solvingVisible === false) return;
+  if (question.restoreMedia && !question.mediaLoading && !question.mediaError) void recoverSnapshotMedia(active, question);
   const answer = active.answers[question.id]; const reveal = active.completedReview || ['practice', 'recall'].includes(active.kind) && Boolean(answer?.selected_option) && (correctKeys(question).length === 1 || answer.submitted);
   const answered = Object.values(active.answers).filter((item) => item?.selected_option).length;
   const browsing = active.kind === 'browse';
@@ -943,7 +944,7 @@ function renderActive() {
   }).join('');
   const smartReason=active.filters?.smart_recall?.questions?.find(q=>q.question_id===question.id);
   const tools = browsing ? '' : `<section class="card question-tools"><span class="eyebrow">QUESTION TOOLS</span><button class="tool-button bookmark-tool ${active.bookmarks.has(question.id) ? 'active' : ''}" data-action="bookmark" aria-pressed="${active.bookmarks.has(question.id)}"><span>${active.bookmarks.has(question.id) ? '★' : '☆'}</span>${active.bookmarks.has(question.id) ? 'Bookmarked' : 'Bookmark'}</button><button class="tool-button review-tool ${active.marked.has(question.id) ? 'active' : ''}" data-action="mark" aria-pressed="${active.marked.has(question.id)}"><span>!</span>${active.marked.has(question.id) ? 'Marked for review' : 'Mark for review'}</button>${srmButton}<button class="tool-button" data-action="note"><span>＋</span>Note</button><button class="tool-button" data-action="report"><span>⚑</span>Report</button></section>`;
-  layout(`<section class="question-header"><div><span class="pill">${browsing ? 'Browse' : active.completedReview ? 'Review' : active.kind === 'recall' ? 'Recall' : active.kind === 'test' ? e(TEST_PRESETS[active.preset]?.[0] || 'Test') : 'Practice'}</span><h1>${e(active.title || 'Question set')}</h1></div>${browsing ? `<div class="row"><button class="button" data-action="preview-browsed-set">Start test with these exact questions</button><button class="button secondary" data-action="back-to-origin">Back</button></div>` : active.kind === 'recall' ? `<div class="timer-cluster">${recallTimerSetting(active.target_seconds_per_question ?? 50)}${timerRunning ? '<div><span>QUESTION TIMER</span><b id="question-timer"></b><span id="recall-timeout" role="status"></span></div>' : ''}<a class="button secondary" href="#/recall" data-action="exit-recall">Exit Recall</a></div>` : timerRunning ? `<div class="timer-cluster"><div><span>QUESTION TIMER</span><b id="question-timer">00:50</b></div><div><span>TOTAL TIMER</span><b id="total-timer">${timerText(active.questions.length * TARGET_SECONDS)}</b></div><button class="button secondary compact" data-action="toggle-timers" ${answer?.selected_option||active.timerBusy?'disabled':''}>${sharedClock(active).manualPaused?'Resume':'Pause'}</button>${sharedClock(active).paused?'<span class="pill">PAUSED</span>':''}</div>` : ''}</section><div class="question-layout"><section class="card question-card"><div class="question-topline"><span>Question ${active.index + 1} of ${active.questions.length}</span><span class="question-context">${questionMeta(question)}</span></div><div class="progress"><i style="width:${((active.index + 1) / active.questions.length) * 100}%"></i></div>${smartReason?`<p class="smart-recall-reason">${e(smartReason.primary_concept?smartReason.primary_concept+' · ':'')}${e(smartReason.reason)}</p>`:''}${renderQuestion(question, answer, reveal)}${browsing ? '' : feedbackControls(answer || {}, reveal, Boolean(answer?.selected_option) && !isAnswerCorrect(question, answer))}<div class="question-actions"><button class="button secondary" data-action="previous" ${active.index === 0 ? 'disabled' : ''}>← Previous</button><button class="button" data-action="next">${active.index === active.questions.length - 1 ? (browsing ? 'Back' : active.completedReview ? 'Back to results' : 'Finish') : 'Next →'}</button></div></section><aside class="question-sidebar">${tools}<section class="card palette-card"><div class="section-heading"><div><span class="eyebrow">NAVIGATOR</span><h3>Questions</h3></div><span>${answered}/${active.questions.length}</span></div><div class="status-legend" aria-label="Question status legend"><span class="correct">Correct</span><span class="incorrect">Incorrect</span><span class="review">Review</span><span class="bookmark">Bookmarked</span><span class="unattempted">Unattempted</span></div><div class="palette">${palette}</div>${active.questions.length > 500 ? '<p class="subtle">Palette shows the first 500 positions; Previous/Next continues through all questions.</p>' : ''}${active.kind === 'test' && !active.completedReview ? `<p class="subtle">${active.questions.length - answered} unanswered</p><button class="button danger full" data-action="submit">Submit test</button>` : ''}</section></aside></div>`);
+  layout(`<section class="question-header"><div><span class="pill">${browsing ? 'Browse' : active.completedReview ? 'Review' : active.kind === 'recall' ? 'Recall' : active.kind === 'test' ? e(TEST_PRESETS[active.preset]?.[0] || 'Test') : 'Practice'}</span><h1>${e(active.title || 'Question set')}</h1></div>${browsing ? `<div class="row"><button class="button" data-action="preview-browsed-set">Start test with these exact questions</button><button class="button secondary" data-action="back-to-origin">Back</button></div>` : active.kind === 'recall' ? `<div class="timer-cluster">${recallTimerSetting(active.target_seconds_per_question ?? 50)}${timerRunning ? '<div><span>QUESTION TIMER</span><b id="question-timer"></b><span id="recall-timeout" role="status"></span></div>' : ''}<a class="button secondary" href="#/recall" data-action="exit-recall">Exit Recall</a></div>` : timerRunning ? `<div class="timer-cluster"><div><span>QUESTION TIMER</span><b id="question-timer">00:50</b></div><div><span>TOTAL TIMER</span><b id="total-timer">${timerText(active.questions.length * TARGET_SECONDS)}</b></div><button class="button secondary compact" data-action="toggle-timers" ${answer?.selected_option||active.timerBusy?'disabled':''}>${sharedClock(active).manualPaused?'Resume':'Pause'}</button>${sharedClock(active).paused?'<span class="pill">PAUSED</span>':''}</div>` : ''}</section><div class="question-layout"><section class="card question-card"><div class="question-topline"><span>Question ${active.index + 1} of ${active.questions.length}</span><span class="question-context">${questionMeta(question)}</span></div><div class="progress"><i style="width:${((active.index + 1) / active.questions.length) * 100}%"></i></div>${smartReason?`<p class="smart-recall-reason">${e(smartReason.primary_concept?smartReason.primary_concept+' · ':'')}${e(smartReason.reason)}</p>`:''}${question.mediaLoading ? '<p role="status" class="subtle">Loading original media…</p>' : question.mediaError ? '<p class="media-unavailable">Could not load original media. <button class="button ghost compact" data-action="retry-media">Retry images</button></p>' : ''}${renderQuestion(question, answer, reveal)}${browsing ? '' : feedbackControls(answer || {}, reveal, Boolean(answer?.selected_option) && !isAnswerCorrect(question, answer))}<div class="question-actions"><button class="button secondary" data-action="previous" ${active.index === 0 ? 'disabled' : ''}>← Previous</button><button class="button" data-action="next">${active.index === active.questions.length - 1 ? (browsing ? 'Back' : active.completedReview ? 'Back to results' : 'Finish') : 'Next →'}</button></div></section><aside class="question-sidebar">${tools}<section class="card palette-card"><div class="section-heading"><div><span class="eyebrow">NAVIGATOR</span><h3>Questions</h3></div><span>${answered}/${active.questions.length}</span></div><div class="status-legend" aria-label="Question status legend"><span class="correct">Correct</span><span class="incorrect">Incorrect</span><span class="review">Review</span><span class="bookmark">Bookmarked</span><span class="unattempted">Unattempted</span></div><div class="palette">${palette}</div>${active.questions.length > 500 ? '<p class="subtle">Palette shows the first 500 positions; Previous/Next continues through all questions.</p>' : ''}${active.kind === 'test' && !active.completedReview ? `<p class="subtle">${active.questions.length - answered} unanswered</p><button class="button danger full" data-action="submit">Submit test</button>` : ''}</section></aside></div>`);
   if (timerRunning) updateActiveTimerDisplay();
   if (sharedClock(active).manualPaused) document.querySelectorAll('[data-action=answer],[data-action=next],[data-action=previous],[data-action=jump],[data-action=submit-multi-answer]').forEach(el=>el.disabled=true);
   if (timerShouldTick && !sharedClock(active).paused) startActiveTimers(); else stopActiveTimer();
@@ -1203,7 +1204,7 @@ async function resumeSession(id) {
     const sessionResult = await db.from('test_sessions').select('*').eq('id', id).eq('user_id', state.user.id).single(); if (sessionResult.error) throw sessionResult.error;
     const [itemsResult, answersResult] = await Promise.all([db.from('test_session_questions').select('*').eq('session_id', id).order('position'), db.from('test_answers').select('*').eq('session_id', id)]);
     if (itemsResult.error) throw itemsResult.error;
-    const questions = (itemsResult.data || []).map((item) => ({ id: item.question_id, ...item.question_snapshot, options: item.question_snapshot.options || [] }));
+    const questions = (itemsResult.data || []).map((item) => ({ id: item.question_id, ...item.question_snapshot, options: item.question_snapshot.options || [], restoreMedia: item.question_snapshot.media_status !== 'NO_MEDIA' && (!Array.isArray(item.question_snapshot.question_images) || !Array.isArray(item.question_snapshot.explanation_images)) }));
     const answers = Object.fromEntries((answersResult.data || []).map((answer) => [answer.question_id, answer]));
     if (existingActive) for (const [questionId, answer] of Object.entries(existingActive.answers || {})) {
       if (answers[questionId] && answer.question_time_remaining_seconds != null) answers[questionId].question_time_remaining_seconds = answer.question_time_remaining_seconds;
@@ -1761,7 +1762,8 @@ const globalImportance = createGlobalImportance({db,state,layout,e,toast,prepare
 async function render() {
   recallGeneration++;
   smartRecall.cancel();
-  if (state.active?.kind === 'recall') { state.active.solvingVisible = false; pauseTotalTimer(state.active); }
+  if (state.active) state.active.solvingVisible = false;
+  if (state.active?.kind === 'recall') pauseTotalTimer(state.active);
   gtMode.cancel(); grandTests.cancel();
   persistTimer(state.active);
   stopActiveTimer(); state.route = route(); if (!state.user) return auth();
@@ -1805,6 +1807,7 @@ document.addEventListener('click', async (event) => {
   if (action === 'answer') await selectAnswer(target.dataset.key); if (action === 'submit-multi-answer') await submitMultiAnswer(); if (action === 'previous') await navigateActive(state.active.index - 1);
   if (action === 'next') { if (state.active.index === state.active.questions.length - 1) { if (state.active.kind === 'browse') { goToHash(state.active.origin || '#/qbank'); return; } if (state.active.completedReview) return resultScreen(); return submitActive(false); } await navigateActive(state.active.index + 1); }
   if (action === 'jump') await navigateActive(Number(target.dataset.index)); if (action === 'bookmark') await toggleBookmark(); if (action === 'mark') await toggleMark();
+  if (action === 'retry-media') { const question=activeQuestion(); question.mediaError=false; void recoverSnapshotMedia(state.active,question); }
   if (action === 'toggle-explanation') { state.active.explanationOpen = !state.active.explanationOpen; renderActive(); }
   if (action === 'confidence') await updateAnswerMetadata('confidence', target.dataset.value); if (action === 'error-reason') await updateAnswerMetadata('error_reason', target.dataset.value);
   if (action === 'srm-add') await updateQuestionSrm('add'); if (action === 'srm-remove') await updateQuestionSrm('remove'); if (action === 'srm-reset') await updateQuestionSrm('reset');

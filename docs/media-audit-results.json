@@ -1,0 +1,167 @@
+{
+  "PrepLadder": {
+    "source": "PREP_q_banks.html",
+    "source_bytes": 127164767,
+    "counts": {
+      "tests": 1129,
+      "occurrences": 23118,
+      "unique_payloads": 22844,
+      "questions_with_image_refs": 9569,
+      "explanation_arrays": 8005,
+      "array_type_str": 19286,
+      "multiple_image_refs": 4253,
+      "stem_arrays": 4151
+    },
+    "formats": {
+      "https": 19286
+    },
+    "hosts": {
+      "image.prepladder.com": 19286
+    },
+    "html_markup": {},
+    "image_references": 19286,
+    "unique_reference_strings": 18355,
+    "repeated_references": 931,
+    "examples": [
+      {
+        "url": "https://image.prepladder.com/content/5skDdAfDuGiJO0p3NtP31747218814.png",
+        "uses": 7
+      },
+      {
+        "url": "https://image.prepladder.com/content/FXra7bgMPskDCfNl5v6D1747218814.png",
+        "uses": 7
+      }
+    ]
+  },
+  "Marrow": {
+    "source": "marrow_Previous_Year_Question_Papers.html",
+    "source_bytes": 17550396,
+    "counts": {
+      "tests": 342,
+      "occurrences": 5938,
+      "unique_payloads": 5914,
+      "questions_with_image_refs": 2719,
+      "stem_arrays": 1465,
+      "array_type_str": 5113,
+      "explanation_arrays": 2155,
+      "multiple_image_refs": 1255,
+      "references_with_query": 5
+    },
+    "formats": {
+      "https": 5113
+    },
+    "hosts": {
+      "cdn1.dailyrounds.org": 1535,
+      "dhmbxeygs57ff.cloudfront.net": 3570,
+      "daily-rounds-staging.s3.amazonaws.com": 1,
+      "upload.wikimedia.org": 2,
+      "www2.health.vic.gov.au": 5
+    },
+    "html_markup": {},
+    "image_references": 5113,
+    "unique_reference_strings": 4805,
+    "repeated_references": 308,
+    "examples": [
+      {
+        "url": "https://dhmbxeygs57ff.cloudfront.net/uploads/ffd327a25fb045959c699d4ffb05e602x1280x2235.JPEG",
+        "uses": 4
+      },
+      {
+        "url": "https://dhmbxeygs57ff.cloudfront.net/uploads/60b3695f168e4db489b2f585fd52d74ex1280x1304.JPEG",
+        "uses": 4
+      }
+    ]
+  },
+  "Core BTR": {
+    "source": "COREBTR_Questions_BANKS.html",
+    "source_bytes": 49970432,
+    "counts": {
+      "tests": 284,
+      "occurrences": 19137,
+      "unique_payloads": 14066,
+      "questions_with_image_refs": 3702,
+      "explanation_arrays": 1190,
+      "array_type_str": 4300,
+      "stem_arrays": 2882,
+      "multiple_image_refs": 473
+    },
+    "formats": {
+      "https": 4300
+    },
+    "hosts": {
+      "assets.corebtr.com": 4300
+    },
+    "html_markup": {},
+    "image_references": 4300,
+    "unique_reference_strings": 2442,
+    "repeated_references": 1858,
+    "examples": [
+      {
+        "url": "https://assets.corebtr.com/question_explanation/7ba8f50d-6549-459c-bed6-0734512e3ad5.jpg",
+        "uses": 3
+      },
+      {
+        "url": "https://assets.corebtr.com/questions_image/01KX8EXNQKNHBE7Y77DCHSY09R.jpg",
+        "uses": 3
+      }
+    ]
+  },
+  "total": {
+    "image_references": 28699,
+    "unique_reference_strings": 25602,
+    "repeated_references": 3097
+  },
+  "gt_source": {
+    "questions": 1400,
+    "questions_with_images": 369,
+    "references": 402,
+    "unique_reference_strings": 402
+  },
+  "production_read_only": {
+    "question_count": 43242,
+    "image_questions": 16178,
+    "image_questions_by_platform": {
+      "PrepLadder": 9569,
+      "Marrow": 2719,
+      "Core BTR": 3702,
+      "Cerebellum": 188
+    },
+    "cerebellum_refs": 244,
+    "cerebellum_unique_urls": 242,
+    "db_bytes": 172887187,
+    "questions_relation_bytes": 40927232,
+    "payload_references_relation_bytes": 22495232,
+    "snapshots_relation_bytes": 4980736,
+    "snapshots": 2043,
+    "snapshots_with_media_arrays": 100,
+    "snapshots_with_embedded_images": 0,
+    "payload_objects": 1545,
+    "payload_stored_bytes": 34602948,
+    "payload_uncompressed_bytes": 165671025
+  },
+  "changes": {
+    "database_bytes_added": 0,
+    "image_object_bytes_added": 0,
+    "objects_uploaded": 0,
+    "rows_backfilled": 0,
+    "schema_changes": 0
+  },
+  "tests": {
+    "sourceSamples": 9,
+    "renderChecks": 27,
+    "checks": [
+      "all source text and image-array order preserved in Practice/PYQ, Recall/Today and review shared renderer",
+      "closed explanations contain no image elements",
+      "English/Hindi audio references preserved with preload disabled",
+      "old session recovered lazily for one question using SELECT only",
+      "real image decode and responsive desktop/mobile layout",
+      "same repeated URL reused across two real questions without storing copies",
+      "completed GT viewer uses shared original-media renderer and keeps answers read-only",
+      "inline paragraph/image ordering; inline+array duplicate suppression; picture/srcset/lazy/background normalization; scripts/handlers/iframes blocked",
+      "genuine failed asset shows explicit unavailable message"
+    ],
+    "pageErrors": [],
+    "successful_image_decodes": 32,
+    "distinct_image_urls_decoded": 15
+  }
+}
