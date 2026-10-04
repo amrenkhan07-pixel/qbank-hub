@@ -36,14 +36,14 @@ export function allocate(size,weights,keys=BUCKETS) {
 }
 export function selectedSubjects(p) {return p.focus==='all'?SUBJECTS:p.focus==='prep'?[...p.active,...p.early]:p[p.focus];}
 export const importanceOrder=(a,b)=>b.global_importance_score-a.global_importance_score||(b.latest_exam_year||0)-(a.latest_exam_year||0)||b.total_pyq_occurrences-a.total_pyq_occurrences||a.primary_concept.localeCompare(b.primary_concept)||a.concept_id.localeCompare(b.concept_id);
-export function expandConcepts(concepts) {
- const used=new Set();return [...concepts].sort(importanceOrder).flatMap(c=>(c.question_ids||[]).filter(id=>id!==EXCLUDED_PYQ&&!used.has(id)&&used.add(id)).map(question_id=>({question_id,subject:c.subject,primary_concept:c.primary_concept,tier:c.global_importance_tier,concept_id:c.concept_id})));
+export function expandConcepts(concepts,preserveOrder=false) {
+ const used=new Set();return (preserveOrder?[...concepts]:[...concepts].sort(importanceOrder)).flatMap(c=>(c.question_ids||[]).filter(id=>id!==EXCLUDED_PYQ&&!used.has(id)&&used.add(id)).map(question_id=>({question_id,subject:c.subject,primary_concept:c.primary_concept,tier:c.global_importance_tier,concept_id:c.concept_id})));
 }
 export function buildPlan(p,pools,mode='mixed') {
  validatePreferences(p);
  const targets=mode==='importance'?{importance:p.size,mistakes:0,bookmarks:0,due:0}:mode==='mistakes'?{importance:0,mistakes:p.size,bookmarks:0,due:0}:allocate(p.size,p.weights);
- const groups=Object.fromEntries(BUCKETS.map(b=>[b,[]])),used=new Set();
- const add=(items,n,bucket,fallback=false)=>{let taken=0;for(const q of items){if(taken>=n)break;if(!q?.question_id||q.question_id===EXCLUDED_PYQ||used.has(q.question_id))continue;used.add(q.question_id);groups[bucket].push({...q,bucket,fallback,reason:q.reason||`${q.tier||'PYQ'} Global Importance${p.active.includes(q.subject)?' from active subject':p.early.includes(q.subject)?' + early exposure subject':''}`});taken++;}return taken;};
+ const groups=Object.fromEntries(BUCKETS.map(b=>[b,[]])),used=new Set(),usedConcepts=new Set();
+ const add=(items,n,bucket,fallback=false)=>{let taken=0;for(const q of items){if(taken>=n)break;if(!q?.question_id||q.question_id===EXCLUDED_PYQ||used.has(q.question_id))continue;const concept=q.concept_id?`${q.subject}:${q.concept_id}`:null;if(bucket==='importance'&&concept&&usedConcepts.has(concept))continue;if(concept)usedConcepts.add(concept);used.add(q.question_id);groups[bucket].push({...q,bucket,fallback,reason:q.reason||`${q.tier||'PYQ'} Global Importance${p.active.includes(q.subject)?' from active subject':p.early.includes(q.subject)?' + early exposure subject':''}`});taken++;}return taken;};
  // Reserve personal buckets before selecting overlapping PYQs, so one question is never counted twice.
  for(const bucket of ['mistakes','bookmarks','due'])add(pools[bucket]||[],targets[bucket],bucket);
  const importance=pools.importance||[];

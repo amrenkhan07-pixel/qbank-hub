@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import {safeRecallMetadata,recallConcept,isRecallSelection,studyContext} from '../app/study-flow.mjs';
+import {buildPlan,freshPreferences} from '../app/smart-recall-model.mjs';
+const item={subject:'Microbiology',primary_concept:'Enterobius vermicularis: parasitologic identification',reason:'HIGH Global Importance from active subject',concept_id:'organism',tier:'HIGH',bucket:'importance',question_id:'q1'};
+assert(!safeRecallMetadata(item).includes('Enterobius'));assert(safeRecallMetadata(item).includes('★★★ HIGH'));assert(!safeRecallMetadata({...item,reason:item.primary_concept}).includes('Enterobius'));
+const active={kind:'recall',filters:{smart_recall:{questions:[item]}}};assert.equal(recallConcept(active,'q1').primary_concept,item.primary_concept);assert(isRecallSelection(active));
+const p={...freshPreferences(),size:10,focus:'all'},importance=[item,{...item,question_id:'q2'},...Array.from({length:20},(_,i)=>({...item,question_id:'other'+i,concept_id:'other'+i}))];
+const only=buildPlan(p,{importance},'importance');assert.equal(only.selected.filter(q=>q.concept_id==='organism').length,1);
+const mistakes=[{...item,question_id:'q2',reason:'Repeated mistakes'}];const mixed=buildPlan(p,{importance,mistakes});assert(mixed.selected.some(q=>q.bucket==='mistakes'&&q.question_id==='q2'));assert(!mixed.selected.some(q=>q.bucket==='importance'&&q.concept_id==='organism'));
+assert.equal(studyContext({filters:{subjects:['ph'],topics:['ihd'],source_tests:['9']}},{subjects:[{id:'ph',name:'Pharmacology'}],topics:[{id:'ihd',name:'Ischemic heart disease'}],sourceTests:[{id:'9',title:'QBank 9'}]}),'Pharmacology · Ischemic heart disease · QBank 9');
+console.log('PASS: spoiler-safe metadata, post-answer concept availability, duplicate concept suppression, personal mistake exception, saved study labels.');

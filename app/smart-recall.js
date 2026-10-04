@@ -20,7 +20,13 @@ export function createSmartRecall({db,state,e,toast,prepareQuestionSet,readyScre
  }
  async function start(mode,button){if(busy||!pools)return;const token=generation;busy=true;const label=button.textContent;button.textContent='Preparing Recall…';document.querySelectorAll('#smart-recall-actions button').forEach(b=>b.disabled=true);try{
   const chosen=buildPlan(preferences,pools,mode);if(!chosen.selected.length){toast('No eligible questions in this selection.');return;}
-  const details={version:1,size:preferences.size,mode,counts:chosen.counts,fallbackCount:chosen.fallbackCount,shortfall:chosen.shortfall,focus:focusLabel(),questions:chosen.selected.map(({question_id,bucket,reason,subject,primary_concept})=>({question_id,bucket,reason,subject,primary_concept}))};
+  // Fetch labels only for the chosen set, including personal revision outside the GI frontier.
+  const labels=await db.from('pyq_concept_importance').select('subject,concept_id,primary_concept,global_importance_tier,question_ids').overlaps('question_ids',chosen.selected.map(q=>q.question_id));
+  if(!valid(token))return;
+  if(labels.error)throw labels.error;
+  const byQuestion=new Map((labels.data||[]).flatMap(c=>c.question_ids.map(id=>[id,c])));
+  chosen.selected=chosen.selected.map(q=>{const c=byQuestion.get(q.question_id);return c?{...q,concept_id:c.concept_id,primary_concept:c.primary_concept,tier:c.global_importance_tier}:q;});
+  const details={version:1,exam_focus:preferences.examFocus||'All',size:preferences.size,mode,counts:chosen.counts,fallbackCount:chosen.fallbackCount,shortfall:chosen.shortfall,focus:focusLabel(),questions:chosen.selected.map(({question_id,bucket,reason,subject,primary_concept,concept_id,tier})=>({question_id,bucket,reason,subject,primary_concept,concept_id,tier}))};
   const set=await prepareQuestionSet({mode:'recall',preset:'smart-recall',title:mode==='importance'?'Global Importance Recall':mode==='mistakes'?'Mistakes Recall':'Recall Today',questionIds:chosen.selected.map(q=>q.question_id),filters:{smart_recall:details},requested:preferences.size,autoSubmit:false,origin:'#/home'});
   if(valid(token))readyScreen(set);
  }catch(error){if(valid(token)){toast(error.message||'Could not prepare Recall.','error');const box=document.querySelector('#smart-recall');if(!box)returnHome();}}finally{if(valid(token)){busy=false;if(button.isConnected)button.textContent=label;showSummary();}}}
