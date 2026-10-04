@@ -37,22 +37,24 @@ export function allocate(size,weights,keys=BUCKETS) {
 export function selectedSubjects(p) {return p.focus==='all'?SUBJECTS:p.focus==='prep'?[...p.active,...p.early]:p[p.focus];}
 export const importanceOrder=(a,b)=>b.global_importance_score-a.global_importance_score||(b.latest_exam_year||0)-(a.latest_exam_year||0)||b.total_pyq_occurrences-a.total_pyq_occurrences||a.primary_concept.localeCompare(b.primary_concept)||a.concept_id.localeCompare(b.concept_id);
 export function expandConcepts(concepts,preserveOrder=false) {
- const used=new Set();return (preserveOrder?[...concepts]:[...concepts].sort(importanceOrder)).flatMap(c=>(c.question_ids||[]).filter(id=>id!==EXCLUDED_PYQ&&!used.has(id)&&used.add(id)).map(question_id=>({question_id,subject:c.subject,primary_concept:c.primary_concept,tier:c.global_importance_tier,concept_id:c.concept_id})));
+ const used=new Set();return (preserveOrder?[...concepts]:[...concepts].sort(importanceOrder)).flatMap(c=>(c.question_ids||[]).filter(id=>id!==EXCLUDED_PYQ&&!used.has(id)&&used.add(id)).map(question_id=>({question_id,subject:c.subject,primary_concept:c.primary_concept,tier:c.global_importance_tier,concept_id:c.concept_id,coverage_state:c.coverage_state,recycling:c.coverage_state==='COVERED',reasons:[c.coverage_state==='UNSEEN'?'Unseen concept':c.coverage_state==='WEAK'?'Seen concept · needs successful retrieval':'Previously covered · revision']})));
 }
 export function buildPlan(p,pools,mode='mixed') {
  validatePreferences(p);
  const targets=mode==='importance'?{importance:p.size,mistakes:0,bookmarks:0,due:0}:mode==='mistakes'?{importance:0,mistakes:p.size,bookmarks:0,due:0}:allocate(p.size,p.weights);
+ const scope=items=>(items||[]).filter(q=>!p.temporarySubject||q.subject===p.temporarySubject);
+ const combined=new Map();for(const bucket of BUCKETS)for(const q of scope(pools[bucket])){const prev=combined.get(q.question_id)||[];combined.set(q.question_id,[...new Set([...prev,...(q.reasons||[]),q.reason].filter(Boolean))]);}
  const groups=Object.fromEntries(BUCKETS.map(b=>[b,[]])),used=new Set(),usedConcepts=new Set();
- const add=(items,n,bucket,fallback=false)=>{let taken=0;for(const q of items){if(taken>=n)break;if(!q?.question_id||q.question_id===EXCLUDED_PYQ||used.has(q.question_id))continue;const concept=q.concept_id?`${q.subject}:${q.concept_id}`:null;if(bucket==='importance'&&concept&&usedConcepts.has(concept))continue;if(concept)usedConcepts.add(concept);used.add(q.question_id);groups[bucket].push({...q,bucket,fallback,reason:q.reason||`${q.tier||'PYQ'} Global Importance${p.active.includes(q.subject)?' from active subject':p.early.includes(q.subject)?' + early exposure subject':''}`});taken++;}return taken;};
+ const add=(items,n,bucket,fallback=false)=>{let taken=0;for(const q of scope(items)){if(taken>=n)break;if(!q?.question_id||q.question_id===EXCLUDED_PYQ||used.has(q.question_id))continue;const concept=q.concept_id?`${q.subject}:${q.concept_id}`:null;if(bucket==='importance'&&concept&&usedConcepts.has(concept))continue;if(concept)usedConcepts.add(concept);used.add(q.question_id);groups[bucket].push({...q,reasons:combined.get(q.question_id)||q.reasons||[],bucket,fallback,reason:q.reason||`${q.tier||'PYQ'} Global Importance${p.active.includes(q.subject)?' from active subject':p.early.includes(q.subject)?' + early exposure subject':''}`});taken++;}return taken;};
  // Reserve personal buckets before selecting overlapping PYQs, so one question is never counted twice.
  for(const bucket of ['mistakes','bookmarks','due'])add(pools[bucket]||[],targets[bucket],bucket);
- const importance=pools.importance||[];
+ const importance=balancedImportance(scope(pools.importance));
  if(p.focus==='prep'){
   const split=allocate(targets.importance,{active:p.activePercent,early:100-p.activePercent},['active','early']);
   add(importance.filter(q=>p.active.includes(q.subject)),split.active,'importance');add(importance.filter(q=>p.early.includes(q.subject)),split.early,'importance');
  }else add(importance,targets.importance,'importance');
  let remaining=p.size-used.size;
- const fallbacks=mode==='mistakes'?[['mistakes',pools.mistakes]]:mode==='importance'?[['importance',importance],['importance',pools.allImportance]]:[['importance',importance],['mistakes',pools.mistakes],['bookmarks',pools.bookmarks],['importance',pools.allImportance]];
+ const fallbacks=mode==='mistakes'?[['mistakes',pools.mistakes]]:mode==='importance'?[['importance',importance],['importance',balancedImportance(scope(pools.allImportance))]]:[['importance',importance],['mistakes',pools.mistakes],['bookmarks',pools.bookmarks],['due',pools.due],['importance',balancedImportance(scope(pools.allImportance))]];
  for(const [bucket,items]of fallbacks){remaining-=add(items||[],remaining,bucket,true);if(!remaining)break;}
  // Interleave buckets without changing their priority order.
  const selected=[];for(let i=0;selected.length<used.size;i++)for(const bucket of BUCKETS)if(groups[bucket][i])selected.push(groups[bucket][i]);
@@ -60,3 +62,15 @@ export function buildPlan(p,pools,mode='mixed') {
 }
 
 export const recallQuestionLimit=(preset,filters)=>preset==='smart-recall'&&[10,20,30,50].includes(filters?.smart_recall?.size)?filters.smart_recall.size:20;
+
+// Round-robin subjects within each tier; larger subjects cannot win by raw row count.
+export function balancedImportance(items,day=new Date().toISOString().slice(0,10)) {
+ const hash=s=>[...s].reduce((n,c)=>(Math.imul(n,31)+c.charCodeAt(0))>>>0,7);
+ const result=[];
+ for(const tier of ['HIGH','MEDIUM','LOW','REVISION',undefined]){
+  const groups=new Map();for(const q of items.filter(q=>(q.recycling?'REVISION':q.tier)===tier)){if(!groups.has(q.subject))groups.set(q.subject,[]);groups.get(q.subject).push(q);}
+  const subjects=[...groups.keys()].sort((a,b)=>hash(a+day)-hash(b+day));
+  for(let i=0;i<Math.max(0,...[...groups.values()].map(g=>g.length));i++)for(const subject of subjects)if(groups.get(subject)[i])result.push(groups.get(subject)[i]);
+ }
+ return result;
+}

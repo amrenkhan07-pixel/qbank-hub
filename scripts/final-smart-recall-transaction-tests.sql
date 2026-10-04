@@ -1,0 +1,41 @@
+begin;
+insert into auth.users(id) values('00000000-0000-4000-8000-000000009801');
+select set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000009801',true);
+create temp table results(name text,passed boolean);
+select public.smart_recall_save_preferences('{"version":1,"size":30,"active":["Physiology","Medicine","Pharmacology"],"early":["Ophthalmology","Dermatology","Radiology"]}',0);
+insert into results select 'account preferences persisted',smart_recall_preferences->'active'='["Physiology","Medicine","Pharmacology"]'::jsonb and smart_recall_revision=1 from public.user_srm_settings where user_id=auth.uid();
+do $$begin
+ begin perform public.smart_recall_save_preferences('{}',0);insert into results values('stale save rejected',false);
+ exception when others then insert into results values('stale save rejected',sqlerrm like '%another device%');end;
+end$$;
+create temp table fixture as select q.id,q.subject_id from public.questions q where q.is_usable and not coalesce(q.is_grand_test,false) and q.correct_answer='A' limit 1;
+select public.qbank_record_attempt_v2(id,'B','recall',gen_random_uuid()) from fixture;
+insert into results select 'Recall wrong is universal Incorrect',u.wrong and u.last_is_correct=false and u.attempts=1 from public.user_question_state u join fixture f on f.id=u.question_id where u.user_id=auth.uid();
+select public.qbank_record_attempt_v2(id,'B','qbank',gen_random_uuid()) from fixture;
+insert into results select 'QBank wrong enters Recall Mistakes',exists(select 1 from jsonb_array_elements(public.smart_recall_personal_candidates()->'mistakes') c where c->>'question_id'=(select id::text from fixture) and (c->>'repeated')::int>=2);
+select public.qbank_set_bookmark(id,true) from fixture;
+insert into results select 'bookmark shared and consumed',exists(select 1 from jsonb_array_elements(public.smart_recall_personal_candidates()->'bookmarks') c where c->>'question_id'=(select id::text from fixture));
+select public.qbank_set_bookmark(id,false) from fixture;
+insert into results select 'bookmark removal universal',not exists(select 1 from public.bookmarks where user_id=auth.uid()) and not exists(select 1 from public.user_question_state where user_id=auth.uid() and bookmarked);
+update public.user_question_state set marked_for_review=true,revision=true where user_id=auth.uid();
+insert into results select 'review mark consumed',exists(select 1 from jsonb_array_elements(public.smart_recall_personal_candidates()->'bookmarks') c where c->>'question_id'=(select id::text from fixture) and (c->>'marked_for_review')::boolean);
+update public.user_question_state set marked_for_review=false,revision=false where user_id=auth.uid();
+insert into results select 'review removal universal',jsonb_array_length(public.smart_recall_personal_candidates()->'bookmarks')=0;
+insert into results select 'bounded candidate windows',jsonb_array_length(public.smart_recall_personal_candidates(null,1)->'mistakes')<=1;
+insert into results select 'coverage summary complete',count(*)=19 from public.smart_recall_coverage_summary();
+insert into results select 'candidate context includes unseen',jsonb_array_length(public.smart_recall_importance_pool(null,'All',1))>0 and not exists(select 1 from jsonb_array_elements(public.smart_recall_importance_pool(null,'All',1)) c where c->>'coverage_state'<>'UNSEEN');
+-- A wrong submitted Smart Recall answer never marks the concept covered.
+create temp table concept_fixture as select * from public.pyq_concept_importance limit 1;
+insert into public.test_sessions(id,user_id,mode,status,preset,filters,total_questions,current_position) values('00000000-0000-4000-8000-000000009802',auth.uid(),'recall','in_progress','smart-recall','{}',1,0);
+insert into public.test_session_questions(session_id,question_id,position,question_snapshot) select '00000000-0000-4000-8000-000000009802',question_ids[1],0,'{}' from concept_fixture;
+insert into public.test_answers(session_id,question_id,selected_option,is_correct,answered_at,client_event_id) select '00000000-0000-4000-8000-000000009802',question_ids[1],'B',false,now(),gen_random_uuid() from concept_fixture;
+insert into results select 'wrong does not mean covered',count(*)=1 and bool_and(covered_at is null) from public.smart_recall_concept_coverage where user_id=auth.uid();
+select set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000009803',true);
+grant insert,select on results to authenticated;
+set local role authenticated;
+insert into results select 'settings isolated across accounts',count(*)=0 from public.user_srm_settings;
+insert into results select 'learning isolated across accounts',jsonb_array_length(public.smart_recall_personal_candidates()->'mistakes')=0;
+reset role;
+select jsonb_agg(to_jsonb(results)) results from results;
+
+rollback;
