@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import {mediaUrl,cerebellumMedia,cerebellumNotice,essentialMediaReady} from '../app/cerebellum-media.js';
+assert.equal(mediaUrl('javascript:alert(1)'),'');
+assert.equal(mediaUrl('https://example.test/image with spaces.jpg'),'https://example.test/image%20with%20spaces.jpg');
+const media=[{type:'image',placement:'question',position:1,reference:'https://example.test/q.png',media_status:'external_unverified'},{type:'image',placement:'explanation',position:1,reference:'https://example.test/e.png',media_status:'inaccessible'},{type:'video',placement:'explanation',position:1,reference:'https://example.test/e.mp4',media_status:'external_unverified'}];
+const q={cerebellum_full_v1:true,source_media:media,import_warnings:['option_text_blank']};
+assert.match(cerebellumMedia(q,'explanation'),/e.png/);assert.match(cerebellumMedia(q,'explanation'),/e.mp4/);assert.match(cerebellumMedia(q,'explanation'),/noopener noreferrer/);assert.match(cerebellumNotice(q),/blank answer options/);
+assert.equal(cerebellumMedia({source_media:media},'question'),'');
+assert.equal(essentialMediaReady({},{}),true);
+assert.equal(essentialMediaReady(q,{querySelectorAll:()=>[]}),false);
+assert.equal(essentialMediaReady(q,{querySelectorAll:()=>[{complete:true,naturalWidth:0}]}),false);
+assert.equal(essentialMediaReady(q,{querySelectorAll:()=>[{complete:true,naturalWidth:800}]}),true);
+assert.equal(essentialMediaReady({...q,option_text_blank:true},{querySelectorAll:()=>[]}),false);
+assert.equal(essentialMediaReady({...q,needs_media_review:true},{querySelectorAll:()=>[]}),false);
+console.log('PASS Cerebellum-only media rendering, safe links, placements, pending/failed essential-image guards and incomplete-source guards.');

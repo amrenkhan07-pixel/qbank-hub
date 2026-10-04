@@ -1,3 +1,4 @@
+import { isCerebellum, cerebellumMedia, cerebellumNotice, essentialMediaReady, bindCerebellumMedia } from './cerebellum-media.js?v=20261004-v1';
 import {renderContent,questionContent,installMediaFailures} from './media-content.js?v=20261003-media1';
 import { createSmartRecall } from './smart-recall.js?v=20261003-v1';
 import { recallQuestionLimit, LABELS as SMART_RECALL_LABELS } from './smart-recall-model.mjs';
@@ -153,7 +154,7 @@ async function loadFullMeta(force = false) {
     db.from('platforms').select('id,name').order('name'),
     db.from('platform_subjects').select('id,subject_id'),
     optional(db.from('systems').select('id,name,platform_subject_id').order('sort_order').order('name')),
-    optional(db.from('topics').select('id,name,platform_subject_id,system_id,parent_topic_id').order('sort_order').order('name')),
+    optional(paged(() => db.from('topics').select('id,name,platform_subject_id,system_id,parent_topic_id').order('sort_order').order('name').order('id'))),
     optional(db.from('subtopics').select('id,name,topic_id').order('sort_order').order('name'), 'subtopics'),
     optional(paged(() => db.from('qbank_source_tests').select('id,title,platform_id,subject_id,sequence,declared_question_count,is_pyq').not('subject_id', 'is', null).order('sequence').order('id')), 'hybrid'),
   ]);
@@ -161,7 +162,7 @@ async function loadFullMeta(force = false) {
   if (platforms.error) throw platforms.error;
   if (platformSubjects.error) throw platformSubjects.error;
   const subjectByPlatformSubject = new Map((platformSubjects.data || []).map((row) => [row.id, row.subject_id]));
-  const hydratedTopics = (topics.data || []).map((topic) => ({ ...topic, subject_id: subjectByPlatformSubject.get(topic.platform_subject_id) || '' }));
+  const hydratedTopics = (topics.data || topics || []).map((topic) => ({ ...topic, subject_id: subjectByPlatformSubject.get(topic.platform_subject_id) || '' }));
   const topicById = new Map(hydratedTopics.map((topic) => [topic.id, topic]));
   state.meta = {
     fullLoaded: true, subjects: subjects.data || [], platforms: platforms.data || [],
@@ -488,12 +489,13 @@ async function hydrateHybridQuestions(questions, options, filters = {}) {
       correct_answer: (payload.correct_keys || ref.correct_option_keys || []).join(','),
       correct_option_keys: payload.correct_keys || ref.correct_option_keys || [],
       options: (payload.options || []).map((option, position) => ({ question_id: ref.question_id, option_key: option.key, option_text: option.html, is_correct: option.is_correct, sort_order: position })),
-      question_images: media.filter((item) => item.placement === 'question').map((item) => item.reference),
-      explanation_images: media.filter((item) => item.placement === 'explanation').map((item) => item.reference),
+      question_images: media.filter((item) => item.placement === 'question' && (!payload.cerebellum_full_v1 || item.type === 'image')).map((item) => item.reference),
+      explanation_images: media.filter((item) => item.placement === 'explanation' && (!payload.cerebellum_full_v1 || item.type === 'image')).map((item) => item.reference),
       image_url: media.find((item) => item.placement === 'question')?.reference || '',
       source_test_label: source?.qbank_source_tests?.title || document.source_test?.title || '',
       source_question_id: source?.source_question_id || '', source_position: source?.question_position || null,
       media_status: ref.media_status, audio: payload.audio || null, video_url: payload.video || '',
+      ...(payload.cerebellum_full_v1 ? {cerebellum_full_v1:true,source_media:media,import_warnings:payload.import_warnings||[],option_text_blank:payload.option_text_blank,needs_media_review:payload.needs_media_review} : {}),
     });
   }
   return questions.map((question) => ({ ...question, options: options.get(question.id) || [], ...(byQuestion.get(String(question.id)) || {}) }));
@@ -662,7 +664,7 @@ async function startPendingSession() {
     session = created.data;
     const snapshots = questions.map((q, position) => ({
       session_id: session.id, question_id: q.id, position,
-      question_snapshot: { question_text: q.question_text, correct_answer: q.correct_answer, correct_option_keys: q.correct_option_keys || correctKeys(q), explanation_html: q.explanation_html, source_reference: q.source_reference, source_collection: q.source_collection, source_test_label: q.source_test_label, source_position: q.source_position, media_status: q.media_status, image_url: q.image_url, subject_id: q.subject_id, platform_id: q.platform_id, system_id: q.system_id, options: q.options },
+      question_snapshot: { ...(isCerebellum(q)?{cerebellum_full_v1:true,source_media:q.source_media,import_warnings:q.import_warnings,option_text_blank:q.option_text_blank,needs_media_review:q.needs_media_review,question_images:q.question_images,explanation_images:q.explanation_images,video_url:q.video_url,audio:q.audio}:{}), question_text: q.question_text, correct_answer: q.correct_answer, correct_option_keys: q.correct_option_keys || correctKeys(q), explanation_html: q.explanation_html, source_reference: q.source_reference, source_collection: q.source_collection, source_test_label: q.source_test_label, source_position: q.source_position, media_status: q.media_status, image_url: q.image_url, subject_id: q.subject_id, platform_id: q.platform_id, system_id: q.system_id, options: q.options },
     }));
     for (let i = 0; i < snapshots.length; i += 100) {
       const result = await db.from('test_session_questions').insert(snapshots.slice(i, i + 100));
@@ -900,13 +902,13 @@ function explanationBlock(question, answer, open) {
   const expected = correctKeys(question).join(', ') || 'Not provided';
   const resultLabel = !selected.length ? `Correct answer: ${e(expected)}` : right ? 'Previously answered correctly' : `Previously answered incorrectly · Correct answer: ${e(expected)}`;
   const info = [question.source_collection, question.source_test_label, question.source_position ? `Question ${question.source_position}` : '', question.media_status && !['NO_MEDIA','MEDIA_REFERENCED'].includes(question.media_status) ? question.media_status.replaceAll('_', ' ') : ''].filter(Boolean).join(' · ');
-  return `<div class="answer-panel ${right ? 'correct-panel' : 'wrong-panel'}"><div class="row"><b>${resultLabel}</b><button class="button ghost compact" data-action="toggle-explanation">${open ? 'Hide explanation' : 'View explanation'}</button></div>${open ? `<div class="rich-content">${questionContent(question, 'explanation') || '<p>No explanation is available for this question.</p>'}</div>${info ? `<details class="question-info"><summary>Question info</summary><p>${e(info)}</p></details>` : ''}` : ''}</div>`;
+  return `<div class="answer-panel ${right ? 'correct-panel' : 'wrong-panel'}"><div class="row"><b>${resultLabel}</b><button class="button ghost compact" data-action="toggle-explanation">${open ? 'Hide explanation' : 'View explanation'}</button></div>${open ? `<div class="rich-content">${isCerebellum(question) ? richHtml(question.explanation_html)+cerebellumMedia(question,'explanation') : questionContent(question, 'explanation') || '<p>No explanation is available for this question.</p>'}</div>${info ? `<details class="question-info"><summary>Question info</summary><p>${e(info)}</p></details>` : ''}` : ''}</div>`;
 }
 
 function renderQuestion(question, answer, reveal) {
   const correct = new Set(correctKeys(question)); const selected = new Set(selectedKeys(answer)); const multiple = correct.size > 1;
-  const mediaNotice = question.media_status && !['NO_MEDIA', 'MEDIA_REFERENCED'].includes(question.media_status) ? `<div class="notice">Referenced media is not available in this import.</div>` : '';
-  return `<div class="question-stem rich-content">${questionContent(question, 'question')}</div>${mediaNotice}<div class="options" role="group" aria-label="Answer choices">${question.options.map((option) => {
+  const mediaNotice = isCerebellum(question) ? cerebellumNotice(question) : question.media_status && !['NO_MEDIA', 'MEDIA_REFERENCED'].includes(question.media_status) ? `<div class="notice">Referenced media is not available in this import.</div>` : '';
+  return `<div class="question-stem rich-content">${isCerebellum(question) ? richHtml(question.question_text)+cerebellumMedia(question,'question') : questionContent(question, 'question')}</div>${mediaNotice}<div class="options" role="group" aria-label="Answer choices">${question.options.map((option) => {
     const key = String(option.option_key).toUpperCase(); const classes = ['option'];
     if (selected.has(key)) classes.push('selected'); if (reveal && correct.has(key)) classes.push('correct'); if (reveal && selected.has(key) && !correct.has(key)) classes.push('wrong');
     return `<button class="${classes.join(' ')}" data-action="answer" data-key="${e(key)}" ${reveal ? 'disabled' : ''}><b>${e(option.option_key)}.</b><span class="rich-content">${richHtml(option.option_text)}</span></button>`;
@@ -946,6 +948,7 @@ function renderActive() {
   const tools = browsing ? '' : `<section class="card question-tools"><span class="eyebrow">QUESTION TOOLS</span><button class="tool-button bookmark-tool ${active.bookmarks.has(question.id) ? 'active' : ''}" data-action="bookmark" aria-pressed="${active.bookmarks.has(question.id)}"><span>${active.bookmarks.has(question.id) ? '★' : '☆'}</span>${active.bookmarks.has(question.id) ? 'Bookmarked' : 'Bookmark'}</button><button class="tool-button review-tool ${active.marked.has(question.id) ? 'active' : ''}" data-action="mark" aria-pressed="${active.marked.has(question.id)}"><span>!</span>${active.marked.has(question.id) ? 'Marked for review' : 'Mark for review'}</button>${srmButton}<button class="tool-button" data-action="note"><span>＋</span>Note</button><button class="tool-button" data-action="report"><span>⚑</span>Report</button></section>`;
   layout(`<section class="question-header"><div><span class="pill">${browsing ? 'Browse' : active.completedReview ? 'Review' : active.kind === 'recall' ? 'Recall' : active.kind === 'test' ? e(TEST_PRESETS[active.preset]?.[0] || 'Test') : 'Practice'}</span><h1>${e(active.title || 'Question set')}</h1></div>${browsing ? `<div class="row"><button class="button" data-action="preview-browsed-set">Start test with these exact questions</button><button class="button secondary" data-action="back-to-origin">Back</button></div>` : active.kind === 'recall' ? `<div class="timer-cluster">${recallTimerSetting(active.target_seconds_per_question ?? 50)}${timerRunning ? '<div><span>QUESTION TIMER</span><b id="question-timer"></b><span id="recall-timeout" role="status"></span></div>' : ''}<a class="button secondary" href="#/recall" data-action="exit-recall">Exit Recall</a></div>` : timerRunning ? `<div class="timer-cluster"><div><span>QUESTION TIMER</span><b id="question-timer">00:50</b></div><div><span>TOTAL TIMER</span><b id="total-timer">${timerText(active.questions.length * TARGET_SECONDS)}</b></div><button class="button secondary compact" data-action="toggle-timers" ${answer?.selected_option||active.timerBusy?'disabled':''}>${sharedClock(active).manualPaused?'Resume':'Pause'}</button>${sharedClock(active).paused?'<span class="pill">PAUSED</span>':''}</div>` : ''}</section><div class="question-layout"><section class="card question-card"><div class="question-topline"><span>Question ${active.index + 1} of ${active.questions.length}</span><span class="question-context">${questionMeta(question)}</span></div><div class="progress"><i style="width:${((active.index + 1) / active.questions.length) * 100}%"></i></div>${smartReason?`<p class="smart-recall-reason">${e(smartReason.primary_concept?smartReason.primary_concept+' · ':'')}${e(smartReason.reason)}</p>`:''}${question.mediaLoading ? '<p role="status" class="subtle">Loading original media…</p>' : question.mediaError ? '<p class="media-unavailable">Could not load original media. <button class="button ghost compact" data-action="retry-media">Retry images</button></p>' : ''}${renderQuestion(question, answer, reveal)}${browsing ? '' : feedbackControls(answer || {}, reveal, Boolean(answer?.selected_option) && !isAnswerCorrect(question, answer))}<div class="question-actions"><button class="button secondary" data-action="previous" ${active.index === 0 ? 'disabled' : ''}>← Previous</button><button class="button" data-action="next">${active.index === active.questions.length - 1 ? (browsing ? 'Back' : active.completedReview ? 'Back to results' : 'Finish') : 'Next →'}</button></div></section><aside class="question-sidebar">${tools}<section class="card palette-card"><div class="section-heading"><div><span class="eyebrow">NAVIGATOR</span><h3>Questions</h3></div><span>${answered}/${active.questions.length}</span></div><div class="status-legend" aria-label="Question status legend"><span class="correct">Correct</span><span class="incorrect">Incorrect</span><span class="review">Review</span><span class="bookmark">Bookmarked</span><span class="unattempted">Unattempted</span></div><div class="palette">${palette}</div>${active.questions.length > 500 ? '<p class="subtle">Palette shows the first 500 positions; Previous/Next continues through all questions.</p>' : ''}${active.kind === 'test' && !active.completedReview ? `<p class="subtle">${active.questions.length - answered} unanswered</p><button class="button danger full" data-action="submit">Submit test</button>` : ''}</section></aside></div>`);
   if (timerRunning) updateActiveTimerDisplay();
+  bindCerebellumMedia(question, root, () => !reveal && !sharedClock(active).manualPaused);
   if (sharedClock(active).manualPaused) document.querySelectorAll('[data-action=answer],[data-action=next],[data-action=previous],[data-action=jump],[data-action=submit-multi-answer]').forEach(el=>el.disabled=true);
   if (timerShouldTick && !sharedClock(active).paused) startActiveTimers(); else stopActiveTimer();
 }
@@ -1059,6 +1062,7 @@ async function saveActiveAnswer(questionId) {
 }
 
 async function selectAnswer(key) {
+  if (!essentialMediaReady(activeQuestion(), root)) return toast('Wait for the question image to load. If it fails, skip this question until the source image is recovered.');
   const active = state.active; const question = activeQuestion(); if (!active || active.completedReview || sharedClock(active).manualPaused) return;
   const existing = active.answers[question.id]; const multiple = correctKeys(question).length > 1;
   if (['practice', 'recall'].includes(active.kind) && existing?.selected_option && (!multiple || existing.submitted)) return;
