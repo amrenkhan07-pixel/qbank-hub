@@ -1,3 +1,4 @@
+import {createActiveRecall} from './active-recall.js';
 import {safeRecallMetadata,recallConcept,isRecallSelection,studyContext} from './study-flow.mjs';
 import { isCerebellum, cerebellumMedia, cerebellumNotice, essentialMediaReady, bindCerebellumMedia } from './cerebellum-media.js?v=20261004-v1';
 import {renderContent,questionContent,installMediaFailures} from './media-content.js?v=20261003-media1';
@@ -77,7 +78,7 @@ function toast(text, kind = '') {
   setTimeout(() => node.remove(), 4200);
 }
 
-function invalidateLearnerCaches() { state.analyticsSnapshot = null; facetCache.clear(); populationCache.clear(); }
+function invalidateLearnerCaches() { analyticsTabCache.clear(); activeRecall.invalidate(); state.analyticsSnapshot = null; facetCache.clear(); populationCache.clear(); }
 
 function safeUrl(value, image = false) {
   try {
@@ -110,7 +111,7 @@ async function recoverSnapshotMedia(active, question) {
 }
 
 function layout(content) {
-  const nav = [['home', 'Home'], ['qbank', 'QBank'], ['tests', 'Test'], ['global-importance', 'Global Importance'], ['importance-recall', 'Recall Today'], ['recall', 'Recall'], ['review', 'Review'], ['analytics', 'Analytics'], ['grand-test-analytics', 'GT Analytics'], ['my-bank', 'My Bank']];
+  const nav = [['home', 'Home'], ['qbank', 'QBank'], ['tests', 'Test'], ['global-importance', 'Global Importance'],    ['analytics', 'Analytics'], ['grand-test-analytics', 'GT Analytics'], ['my-bank', 'My Bank']];
   root.innerHTML = `<header class="topbar"><div class="shell topbar-row"><a class="brand" href="#/home">QBank <span>Hub</span></a><div class="user-actions"><span class="email">${e(state.user?.email)}</span><button class="button secondary compact" data-action="signout">Sign out</button></div></div><nav class="shell nav" aria-label="Primary navigation">${nav.map(([id, label]) => `<a href="#/${id}" class="${state.route === id ? 'active' : ''}">${label}</a>`).join('')}</nav></header><main class="shell">${content}</main>`;
 }
 
@@ -569,7 +570,7 @@ async function prepareQuestionSet({ mode = 'test', preset = 'custom', title = 'Q
     const population = await resolvePopulation(normalizedFilters, { includeIds: true, limit: requestedLimit, order: normalizedFilters.source_tests?.length ? 'source' : 'sample' });
     populationCount = population.count; selectedIds = population.questionIds;
   }
-  if (mode === 'recall') selectedIds = selectedIds.slice(0, recallQuestionLimit(preset, normalizedFilters));
+  if (mode === 'recall' && preset !== 'active-recall-v2') selectedIds = selectedIds.slice(0, recallQuestionLimit(preset, normalizedFilters));
   const questions = await loadQuestionsByIds(selectedIds, normalizedFilters);
   const membership = await validationMembership(normalizedFilters, questions);
   assertValidation(validateGeneratedQuestionSet({ questions, filters: normalizedFilters, requested: selectedIds.length, matchingCount: populationCount, ...membership }), 'Generated question set');
@@ -648,8 +649,9 @@ async function loadPersonalState(questionIds) {
   return { bookmarks, marked, learning };
 }
 
-async function startPendingSession() {
+async function startPendingSession(isCurrent = () => true) {
   const questionSet = state.pendingSet; if (!questionSet) return;
+  const sessionUser=state.user?.id;
   const { mode, preset, title, filters, autoSubmit, questions } = questionSet;
   const startedMs = Date.now();
   const now = new Date(startedMs).toISOString();
@@ -672,7 +674,9 @@ async function startPendingSession() {
       if (result.error) throw result.error;
     }
   }
+  if(preset==='active-recall-v2'&&(!isCurrent()||state.user?.id!==sessionUser))return;
   const personal = await loadPersonalState(questions.map((q) => q.id));
+  if(preset==='active-recall-v2'&&(!isCurrent()||state.user?.id!==sessionUser))return;
   assertValidation(validateQuestionStateBindings({ questions, answers: {}, bookmarks: personal.bookmarks, marked: personal.marked }), 'Question state');
   state.active = {
     ...payload, ...(session || {}), kind: mode, questions, index: 0, answers: {}, solvingVisible: true,
@@ -681,7 +685,7 @@ async function startPendingSession() {
     explanationOpen: false, completedReview: false,
   };
   state.pendingSet = null;
-  if (preset === 'smart-recall') {
+  if (preset === 'smart-recall' || preset === 'active-recall-v2') {
     window.history.replaceState({}, '', '#/recall');
     state.route = 'recall';
   }
@@ -708,7 +712,7 @@ async function home() {
   const study=studyContinuation.error?null:studyContinuation.data;
   const active = sessions.data?.[0]; const dueCount = (due.count || due.data?.length || 0) + (cards.count || cards.data?.length || 0);
   const mistakes = new Map(); logs.filter((row) => !row.is_correct).forEach((row) => mistakes.set(row.question_id, (mistakes.get(row.question_id) || 0) + 1));
-  const recommendation = dueCount ? { label: `Review ${dueCount} recall item${dueCount === 1 ? '' : 's'}`, route: '#/recall' }
+  const recommendation = dueCount ? { label: 'Start Active Recall', route: '#/recall' }
     : [...mistakes.values()].some((count) => count > 1) ? { label: 'Revise repeated mistakes', route: '#/review' }
       : { label: 'Start a focused QBank set', route: '#/qbank' };
   let weak = [];
@@ -721,10 +725,11 @@ async function home() {
     weak = [...tally].filter(([, value]) => value.total >= 2 && value.incorrectIds.size).sort((a, b) => a[1].correct / a[1].total - b[1].correct / b[1].total).slice(0, 3).map(([id, value]) => ({ id, name: names.get(String(id))?.name || 'Unclassified', accuracy: pct(value.correct, value.total), questionIds: [...value.incorrectIds] }));
   }
   if(!homeCurrent())return;
-  layout(`<section class="home-hero"><div><span class="eyebrow">YOUR STUDY PLAN</span><h1>What should you do next?</h1><p class="subtle">One clear action, based on your real learning state.</p></div><a class="button large" href="${recommendation.route}">${e(recommendation.label)}</a></section>
-  <section class="action-grid">${active ? `<article class="card action-card priority"><span class="eyebrow">CONTINUE</span><h2>${e(active.mode==='recall'?'Recall practice':studyContext(active,state.meta))}</h2><p>Question ${(active.current_position || 0) + 1} of ${active.total_questions}</p><button class="button" data-action="resume" data-id="${e(active.id)}">Resume exact session</button></article>` : nextModule?`<article class="card action-card priority"><span class="eyebrow">CONTINUE LEARNING</span><h2>Continue ${e(nextModule.subject)}</h2><p>${e(nextModule.platform)} · ${e((nextModule.source_path||[]).join(' → '))}</p><p>Next: ${e(nextModule.title)}</p><button class="button" data-action="continue-learning">Open next QBank</button></article>` : `<article class="card action-card"><span class="eyebrow">CONTINUE</span><h2>No unfinished session</h2><p class="subtle">Start a practice set or test when you are ready.</p><a class="button secondary" href="#/qbank">Build practice</a></article>`}<article class="card action-card"><span class="eyebrow">ACTIVE RECALL</span><h2>${dueCount} due</h2><p>Scheduled questions and personal recall cards ready now.</p><a class="button secondary" href="#/recall">Open Recall</a></article><a class="card action-card link-card" href="#/analytics"><span class="eyebrow">ACCURACY</span><h2>${pct(correct, logs.length)}</h2><p>${logs.length} recent attempts · Open analytics</p></a></section>
+  layout(`<section class="home-hero"><div><span class="eyebrow">YOUR STUDY PLAN</span><h1>What should you do next?</h1><p class="subtle">One clear action, based on your real learning state.</p></div>${dueCount?`<button class="button large" data-action="ar-start">Start Active Recall</button>`:`<a class="button large" href="${recommendation.route}">${e(recommendation.label)}</a>`}</section>
+  <section class="action-grid">${active ? `<article class="card action-card priority"><span class="eyebrow">CONTINUE</span><h2>${e(active.mode==='recall'?'Recall practice':studyContext(active,state.meta))}</h2><p>Question ${(active.current_position || 0) + 1} of ${active.total_questions}</p><button class="button" data-action="resume" data-id="${e(active.id)}">Resume exact session</button></article>` : nextModule?`<article class="card action-card priority"><span class="eyebrow">CONTINUE LEARNING</span><h2>Continue ${e(nextModule.subject)}</h2><p>${e(nextModule.platform)} · ${e((nextModule.source_path||[]).join(' → '))}</p><p>Next: ${e(nextModule.title)}</p><button class="button" data-action="continue-learning">Open next QBank</button></article>` : `<article class="card action-card"><span class="eyebrow">CONTINUE</span><h2>No unfinished session</h2><p class="subtle">Start a practice set or test when you are ready.</p><a class="button secondary" href="#/qbank">Build practice</a></article>`}<article class="card action-card" id="active-recall-home"><span class="eyebrow">ACTIVE RECALL</span><p role="status">Loading knowledge units…</p></article><a class="card action-card link-card" href="#/analytics"><span class="eyebrow">ACCURACY</span><h2>${pct(correct, logs.length)}</h2><p>${logs.length} recent attempts · Open analytics</p></a></section>
   ${study?`<section class="card section-card" id="continue-studying"><span class="eyebrow">CONTINUE STUDYING</span>${study.kind==='resume'?`<h2>Resume ${e(studyContext(study.session,state.meta))}</h2><p>Question ${Number(study.session.current_position||0)+1}/${study.session.total_questions}</p><button class="button" data-action="resume" data-id="${e(study.session.id)}">Continue →</button>`:`<h2>Continue ${e(study.module.subject)}</h2><p>${e(study.module.platform)} · ${e((study.module.source_path||[]).join(' → '))}</p><p>Next: ${e(study.module.title)}</p><button class="button" data-action="continue-learning">Continue →</button>`}</section>`:''}${smartRecall.card()}<section class="card section-card"><div class="section-heading"><div><span class="eyebrow">WEAK AREAS</span><h2>Turn weakness into an exact question set</h2></div><a href="#/analytics">See all analytics</a></div>${weak.length ? `<div class="weak-list">${weak.map((item) => `<article class="weak-item"><span>${e(item.name)}</span><b>${item.accuracy}</b><small>${item.questionIds.length} incorrect contributing question${item.questionIds.length === 1 ? '' : 's'}</small>${actionSetButtons({ mode: 'test', preset: 'analytics', title: `${item.name} weak-area revision`, filters: { platforms: [], subjects: [item.id], systems: [], topics: [], subtopics: [], statuses: ['all'], pyq: '', year: '', search: '', source: '' }, questionIds: item.questionIds }, 'Start revision test')}</article>`).join('')}</div>` : '<div class="empty">Answer a few questions and weak areas will appear here.</div>'}</section><div class="secondary-metrics"><span>${logs.length} recent attempts</span><span>${correct} correct</span></div>`);
   void smartRecall.mount();
+  void activeRecall.mountHome();
 }
 
 async function qbank() {
@@ -767,7 +772,7 @@ function srmIntervalLabel(minutes, dueAt = null) {
   return days === 1 ? 'Tomorrow' : `${days} days`;
 }
 
-async function recall() {
+async function legacyRecall() {
   const generation = ++recallGeneration;
   loading('Building your Recall queue…');
   const filters = state.recallFilters || { platform_id: '', subject_id: '', scope: 'all' };
@@ -821,11 +826,13 @@ const TEST_PRESETS = {
 };
 
 async function tests() {
-  layout(`<div class="page-heading"><span class="eyebrow">TEST</span><h1>Choose a test type</h1><p>Start with intent, then narrow the question pool.</p></div><section class="preset-grid">${Object.entries(TEST_PRESETS).map(([id, item]) => `<button class="card preset-card" data-action="choose-preset" data-preset="${id}"><b>${e(item[0])}</b><span>${e(item[1])}</span></button>`).join('')}</section><section id="test-builder-slot"></section><section class="card section-card"><div class="section-heading"><div><span class="eyebrow">CONTINUE</span><h2>Unfinished tests</h2></div><a href="#/history">History</a></div><div id="resume-tests" class="empty">Loading…</div></section>`);
+  layout(`<div class="page-heading"><span class="eyebrow">TEST</span><h1>Choose a test type</h1><p>Start with intent, then narrow the question pool.</p></div><section class="preset-grid">${Object.entries(TEST_PRESETS).map(([id, item]) => `<button class="card preset-card" data-action="choose-preset" data-preset="${id}"><b>${e(item[0])}</b><span>${e(item[1])}</span></button>`).join('')}</section><section id="test-builder-slot"></section><section class="card section-card"><div class="section-heading"><div><span class="eyebrow">CONTINUE</span><h2>Recent sessions</h2></div><a href="#/history">History</a></div><div id="resume-tests" class="empty">Loading…</div></section>`);
   const resumeHost = document.querySelector('#resume-tests');
-  const result = await optional(db.from('test_sessions').select('*').eq('user_id', state.user.id).eq('status', 'in_progress').order('updated_at', { ascending: false }).limit(10), 'sessions');
-  if (!resumeHost.isConnected) return;
-  resumeHost.innerHTML = result.data?.length ? `<ul class="list">${result.data.map((session) => `<li><div><b>${e(session.title || session.preset || 'Test')}</b><div class="subtle">Question ${(session.current_position || 0) + 1}/${session.total_questions} · ${date(session.updated_at)}</div></div><button class="button secondary" data-action="resume" data-id="${e(session.id)}">Resume</button></li>`).join('')}</ul>` : '<div class="empty">No unfinished tests.</div>';
+  const user=state.user?.id;
+  const result = await db.rpc('qbank_session_history',{p_limit:4,p_offset:0,p_include_unfinished:true});
+  if (!resumeHost.isConnected||state.user?.id!==user) return;
+  resumeHost.innerHTML = result.error?e(result.error.message):result.data?.length?sessionHistoryRows(result.data)+'<a class="button secondary" href="#/history">View History</a>':'<div class="empty">No sessions yet.</div>';
+
 }
 
 const gtMode = createGTExamMode({ db, e, richHtml, safeUrl, decodePayloadObject, layout });
@@ -923,6 +930,7 @@ function renderQuestion(question, answer, reveal) {
 
 function feedbackControls(answer, reveal, wrong) {
   if (!reveal) return '';
+  if (state.active?.preset === 'active-recall-v2') return activeRecallFeedback(answer,wrong);
   const confidence = wrong ? '' : `<div><span class="field-label">How confident were you?</span><div class="segmented"><button data-action="confidence" data-value="sure" class="${answer.confidence === 'sure' ? 'active' : ''}" ${answer.attemptRecorded ? 'disabled' : ''}>SURE</button><button data-action="confidence" data-value="unsure" class="${answer.confidence === 'unsure' ? 'active' : ''}" ${answer.attemptRecorded ? 'disabled' : ''}>GUESSED / UNSURE</button></div><small class="subtle">If skipped, correct answers use the safe “unsure” schedule.</small></div>`;
   const mistake = wrong ? `<div><span class="field-label">What happened? <small>Optional</small></span><div class="reason-chips">${[['didnt_know', "Didn't know"], ['forgot', 'Forgot'], ['misread', 'Misread'], ['confused_options', 'Confused options'], ['overthought', 'Overthought'], ['silly_mistake', 'Silly mistake'], ['guess', 'Guess']].map(([value, label]) => `<button data-action="error-reason" data-value="${value}" class="${answer.error_reason === value ? 'active' : ''}">${label}</button>`).join('')}</div></div>` : '';
   const schedule = answer.srmFeedback ? `<div class="srm-next"><b>Next review: ${e(srmIntervalLabel(answer.srmFeedback.interval_minutes, answer.srmFeedback.due_at))}</b><span>${e(String(answer.srmFeedback.state || 'learning').replaceAll('_', ' '))}</span></div>` : '';
@@ -937,7 +945,7 @@ function renderActive() {
   const browsing = active.kind === 'browse';
   const learning = active.learning.get(question.id) || {};
   const srmButton = learning.srm_active
-    ? `<button class="button ghost active-control" data-action="srm-remove">In Recall</button><button class="button ghost" data-action="srm-reset">Reset Recall</button>`
+    ? `<button class="button ghost active-control" data-action="srm-remove">In Recall</button>${active.preset==='active-recall-v2'?'':'<button class="button ghost" data-action="srm-reset">Reset Recall</button>'}`
     : '<button class="button ghost" data-action="srm-add">Add to Recall</button>';
   const timerRunning = !browsing && (active.kind !== 'recall' || active.target_seconds_per_question !== 0) && !active.completedReview && active.status === 'in_progress';
   const timerShouldTick = timerRunning && !answer?.selected_option && active.questionTimeRemainingSeconds !== 0;
@@ -952,7 +960,8 @@ function renderActive() {
   }).join('');
   const smartReason=recallConcept(active,question.id);
   const tools = browsing ? '' : `<section class="card question-tools"><span class="eyebrow">QUESTION TOOLS</span><button class="tool-button bookmark-tool ${active.bookmarks.has(question.id) ? 'active' : ''}" data-action="bookmark" aria-pressed="${active.bookmarks.has(question.id)}"><span>${active.bookmarks.has(question.id) ? '★' : '☆'}</span>${active.bookmarks.has(question.id) ? 'Bookmarked' : 'Bookmark'}</button><button class="tool-button review-tool ${active.marked.has(question.id) ? 'active' : ''}" data-action="mark" aria-pressed="${active.marked.has(question.id)}"><span>!</span>${active.marked.has(question.id) ? 'Marked for review' : 'Mark for review'}</button>${srmButton}<button class="tool-button" data-action="note"><span>＋</span>Note</button><button class="tool-button" data-action="report"><span>⚑</span>Report</button></section>`;
-  layout(`<section class="question-header"><div><span class="pill">${browsing ? 'Browse' : active.completedReview ? 'Review' : active.kind === 'recall' ? 'Recall' : active.kind === 'test' ? e(TEST_PRESETS[active.preset]?.[0] || 'Test') : 'Practice'}</span><h1>${e(!reveal&&isRecallSelection(active)?'Recall practice':active.title || 'Question set')}</h1></div>${browsing ? `<div class="row"><button class="button" data-action="preview-browsed-set">Start test with these exact questions</button><button class="button secondary" data-action="back-to-origin">Back</button></div>` : active.kind === 'recall' ? `<div class="timer-cluster">${recallTimerSetting(active.target_seconds_per_question ?? 50)}${timerRunning ? '<div><span>QUESTION TIMER</span><b id="question-timer"></b><span id="recall-timeout" role="status"></span></div>' : ''}<a class="button secondary" href="#/recall" data-action="exit-recall">Exit Recall</a></div>` : timerRunning ? `<div class="timer-cluster"><div><span>QUESTION TIMER</span><b id="question-timer">00:50</b></div><div><span>TOTAL TIMER</span><b id="total-timer">${timerText(active.questions.length * TARGET_SECONDS)}</b></div><button class="button secondary compact" data-action="toggle-timers" ${answer?.selected_option||active.timerBusy?'disabled':''}>${sharedClock(active).manualPaused?'Resume':'Pause'}</button>${sharedClock(active).paused?'<span class="pill">PAUSED</span>':''}</div>` : ''}</section><div class="question-layout"><section class="card question-card"><div class="question-topline"><span>Question ${active.index + 1} of ${active.questions.length}</span><span class="question-context">${questionMeta(question)}</span></div><div class="progress"><i style="width:${((active.index + 1) / active.questions.length) * 100}%"></i></div>${smartReason?`<p class="smart-recall-reason">${e(safeRecallMetadata(smartReason))}</p><details class="smart-recall-why"><summary>Why this question?</summary><ul>${[...new Set([safeRecallMetadata(smartReason),...(smartReason.reasons||[])])].map(reason=>`<li>${e(reason)}</li>`).join('')}</ul></details>`:''}${question.mediaLoading ? '<p role="status" class="subtle">Loading original media…</p>' : question.mediaError ? '<p class="media-unavailable">Could not load original media. <button class="button ghost compact" data-action="retry-media">Retry images</button></p>' : ''}${renderQuestion(question, answer, reveal)}${browsing ? '' : feedbackControls(answer || {}, reveal, Boolean(answer?.selected_option) && !isAnswerCorrect(question, answer))}<div class="question-actions"><button class="button secondary" data-action="previous" ${active.index === 0 ? 'disabled' : ''}>← Previous</button><button class="button" data-action="next">${active.index === active.questions.length - 1 ? (browsing ? 'Back' : active.completedReview ? 'Back to results' : 'Finish') : 'Next →'}</button></div></section><aside class="question-sidebar">${tools}<section class="card palette-card"><div class="section-heading"><div><span class="eyebrow">NAVIGATOR</span><h3>Questions</h3></div><span>${answered}/${active.questions.length}</span></div><div class="status-legend" aria-label="Question status legend"><span class="correct">Correct</span><span class="incorrect">Incorrect</span><span class="review">Review</span><span class="bookmark">Bookmarked</span><span class="unattempted">Unattempted</span></div><div class="palette">${palette}</div>${active.questions.length > 500 ? '<p class="subtle">Palette shows the first 500 positions; Previous/Next continues through all questions.</p>' : ''}${active.kind === 'test' && !active.completedReview ? `<p class="subtle">${active.questions.length - answered} unanswered</p><button class="button danger full" data-action="submit">Submit test</button>` : ''}</section></aside></div>`);
+  layout(`<section class="question-header ${active.preset==='active-recall-v2'?'active-recall-session':''}"><div><span class="pill">${browsing ? 'Browse' : active.completedReview ? 'Review' : active.kind === 'recall' ? 'Recall' : active.kind === 'test' ? e(TEST_PRESETS[active.preset]?.[0] || 'Test') : 'Practice'}</span><h1>${e(!reveal&&isRecallSelection(active)?'Recall practice':active.title || 'Question set')}</h1></div>${browsing ? `<div class="row"><button class="button" data-action="preview-browsed-set">Start test with these exact questions</button><button class="button secondary" data-action="back-to-origin">Back</button></div>` : active.kind === 'recall' ? `<div class="timer-cluster">${recallTimerSetting(active.target_seconds_per_question ?? 50)}${timerRunning ? '<div><span>QUESTION TIMER</span><b id="question-timer"></b><span id="recall-timeout" role="status"></span></div>' : ''}<a class="button secondary" href="#/recall" data-action="exit-recall">Exit Recall</a></div>` : timerRunning ? `<div class="timer-cluster"><div><span>QUESTION TIMER</span><b id="question-timer">00:50</b></div><div><span>TOTAL TIMER</span><b id="total-timer">${timerText(active.questions.length * TARGET_SECONDS)}</b></div><button class="button secondary compact" data-action="toggle-timers" ${answer?.selected_option||active.timerBusy?'disabled':''}>${sharedClock(active).manualPaused?'Resume':'Pause'}</button>${sharedClock(active).paused?'<span class="pill">PAUSED</span>':''}</div>` : ''}</section><div class="question-layout ${active.preset==='active-recall-v2'?'active-recall-session':''}"><section class="card question-card"><div class="question-topline"><span>Question ${active.index + 1} of ${active.questions.length}</span><span class="question-context">${questionMeta(question)}</span></div><div class="progress"><i style="width:${((active.index + 1) / active.questions.length) * 100}%"></i></div>${smartReason?`<p class="smart-recall-reason">${e(safeRecallMetadata(smartReason))}</p><details class="smart-recall-why"><summary>Why this question?</summary><ul>${[...new Set([safeRecallMetadata(smartReason),...(smartReason.reasons||[])])].map(reason=>`<li>${e(reason)}</li>`).join('')}</ul></details>`:''}${question.mediaLoading ? '<p role="status" class="subtle">Loading original media…</p>' : question.mediaError ? '<p class="media-unavailable">Could not load original media. <button class="button ghost compact" data-action="retry-media">Retry images</button></p>' : ''}${renderQuestion(question, answer, reveal)}${!reveal&&active.preset==='active-recall-v2'&&activeRecallUnit()?.primary_concept&&active.arOptionsFor!==question.id?'<div class="recall-retrieve-prompt"><p>Retrieve the diagnosis, mechanism or next step before looking at the choices.</p><textarea aria-label="Your retrieval" placeholder="Recall it in your own words (optional; not saved)"></textarea><button class="button" data-action="ar-options">Show answer choices</button></div>':''}${browsing ? '' : feedbackControls(answer || {}, reveal, Boolean(answer?.selected_option) && !isAnswerCorrect(question, answer))}<div class="question-actions"><button class="button secondary" data-action="previous" ${active.index === 0 ? 'disabled' : ''}>← Previous</button><button class="button" data-action="next">${active.index === active.questions.length - 1 ? (browsing ? 'Back' : active.completedReview ? 'Back to results' : 'Finish') : 'Next →'}</button></div></section><aside class="question-sidebar">${tools}<section class="card palette-card"><div class="section-heading"><div><span class="eyebrow">NAVIGATOR</span><h3>Questions</h3></div><span>${answered}/${active.questions.length}</span></div><div class="status-legend" aria-label="Question status legend"><span class="correct">Correct</span><span class="incorrect">Incorrect</span><span class="review">Review</span><span class="bookmark">Bookmarked</span><span class="unattempted">Unattempted</span></div><div class="palette">${palette}</div>${active.questions.length > 500 ? '<p class="subtle">Palette shows the first 500 positions; Previous/Next continues through all questions.</p>' : ''}${active.kind === 'test' && !active.completedReview ? `<p class="subtle">${active.questions.length - answered} unanswered</p><button class="button danger full" data-action="submit">Submit test</button>` : ''}</section></aside></div>`);
+  if(!reveal&&active.preset==='active-recall-v2'&&activeRecallUnit()?.primary_concept&&active.arOptionsFor!==question.id){document.querySelectorAll('[data-action=answer],[data-action=submit-multi-answer]').forEach(el=>el.hidden=true);}
   if (timerRunning) updateActiveTimerDisplay();
   bindCerebellumMedia(question, root, () => !reveal && !sharedClock(active).manualPaused);
   if (sharedClock(active).manualPaused) document.querySelectorAll('[data-action=answer],[data-action=next],[data-action=previous],[data-action=jump],[data-action=submit-multi-answer]').forEach(el=>el.disabled=true);
@@ -1024,15 +1033,17 @@ async function recordAttempt(question, answer) {
   const mode = state.active.kind === 'recall' ? 'recall' : state.active.kind === 'test' ? 'test' : 'qbank';
   const confidence = isAnswerCorrect(question, answer) ? (answer.confidence === 'sure' ? 'sure' : 'unsure') : null;
   const args = { p_question_id: question.id, p_selected_option: answer.selected_option, p_mode: mode, p_event_id: answer.client_event_id, p_test_session_id: state.active.id || null, p_time_spent_seconds: answer.time_spent_seconds || 0, p_confidence: confidence, p_error_reason: answer.error_reason || null };
-  const result = await db.rpc('qbank_record_attempt_v2', args);
+  const isV2 = state.active.preset === 'active-recall-v2';
+  const result = await db.rpc(isV2 ? 'qbank_active_recall_record' : 'qbank_record_attempt_v2', isV2 ? {p_question_id:question.id,p_selected_option:answer.selected_option,p_event_id:answer.client_event_id,p_test_session_id:state.active.id||null,p_time_spent_seconds:answer.time_spent_seconds||0,p_strength:answer.retrieval_strength||(isAnswerCorrect(question,answer)?(confidence==='sure'?'strong':'partial'):'failed'),p_error_reason:answer.error_reason||null}:args);
   if (!result.error) {
-    answer.confidence = confidence; answer.attemptRecorded = true; answer.srmFeedback = result.data;
+    answer.confidence = confidence; answer.attemptRecorded = true; answer.srmFeedback = isV2 ? {...result.data,relearn:!isAnswerCorrect(question,answer)||answer.retrieval_strength==='failed'} : result.data;
     const learning = state.active.learning.get(question.id) || { user_id: state.user.id, question_id: question.id };
     state.active.learning.set(question.id, { ...learning, srm_active: result.data?.active, srm_state: result.data?.state, srm_due_at: result.data?.due_at, srm_interval_minutes: result.data?.interval_minutes });
     await saveActiveAnswer(question.id);
     invalidateLearnerCaches();
     return result.data;
   }
+  if (isV2) { toast(result.error.message, 'error'); return null; }
   if (isMissingTable(result.error) || /function .* does not exist|schema cache/i.test(result.error.message)) {
     const saved = await db.from('question_attempts').insert({ user_id: state.user.id, question_id: question.id, selected_option: answer.selected_option, is_correct: isAnswerCorrect(question, answer), mode, answered_at: new Date().toISOString() });
     if (saved.error) toast(`Answer sync failed: ${saved.error.message}`, 'error');
@@ -1089,7 +1100,7 @@ async function selectAnswer(key) {
   active.explanationOpen = false;
   // Answer feedback is local; persistence must not delay the selected/correct state.
   renderActive();
-  if (['practice', 'recall'].includes(active.kind) && !multiple && !existing?.selected_option && !isAnswerCorrect(question, answer)) await recordAttempt(question, answer);
+  if (['practice', 'recall'].includes(active.kind) && !multiple && !existing?.selected_option && !isAnswerCorrect(question, answer) && active.preset !== 'active-recall-v2') await recordAttempt(question, answer);
   await saveActiveAnswer(question.id);
   if (state.active === active && activeQuestion()?.id === question.id && location.hash === answerRoute) renderActive();
 }
@@ -1099,7 +1110,7 @@ async function submitMultiAnswer() {
   if (!question || !answer?.selected_option || !['practice', 'recall'].includes(state.active.kind)) return;
   const active = state.active, answerRoute = location.hash;
   answer.submitted = true; active.explanationOpen = false; renderActive();
-  if (!isAnswerCorrect(question, answer)) await recordAttempt(question, answer);
+  if (!isAnswerCorrect(question, answer) && active.preset !== 'active-recall-v2') await recordAttempt(question, answer);
   await saveActiveAnswer(question.id);
   if (state.active === active && activeQuestion()?.id === question.id && location.hash === answerRoute) renderActive();
 }
@@ -1165,6 +1176,7 @@ async function updateAnswerMetadata(field, value) {
   if (field === 'confidence' && answer.attemptRecorded) return;
   answer[field] = answer[field] === value ? null : value;
   if (field === 'confidence' && answer[field] && isAnswerCorrect(question, answer)) await recordAttempt(question, answer);
+  if(state.active.preset==='active-recall-v2'&&field==='error_reason'&&answer.attemptRecorded){const result=await db.from('active_recall_retrievals').update({error_reason:answer.error_reason}).eq('user_id',state.user.id).eq('event_id',answer.client_event_id).eq('question_id',question.id);if(result.error)toast(result.error.message,'error');}
   await saveActiveAnswer(question.id);
   const column = field === 'confidence' ? 'last_confidence' : 'last_error_reason';
   await optional(db.from('user_question_state').upsert({ user_id: state.user.id, question_id: question.id, [column]: answer[field] }, { onConflict: 'user_id,question_id' }), 'learning');
@@ -1173,8 +1185,8 @@ async function updateAnswerMetadata(field, value) {
 
 async function updateQuestionSrm(action) {
   const question = activeQuestion(); if (!question) return;
-  if ((action === 'remove' || action === 'reset') && !confirm(`${action === 'remove' ? 'Remove this question from Recall?' : 'Reset Recall progress for this question? Attempt history will be preserved.'}`)) return;
-  const result = await db.rpc('qbank_srm_manual', { p_question_id: question.id, p_action: action, p_event_id: crypto.randomUUID() });
+  if ((action === 'remove' || action === 'reset') && !confirm(`${action === 'remove' ? 'Remove this knowledge unit from Active Recall? Question history is preserved.' : 'Reset Recall progress for this question? Attempt history will be preserved.'}`)) return;
+  const result = await db.rpc(action==='reset'?'qbank_srm_manual':'qbank_active_recall_manual', { p_question_id: question.id, p_action: action, p_event_id: crypto.randomUUID() });
   if (result.error) return toast(result.error.message, 'error');
   const current = state.active.learning.get(question.id) || { user_id: state.user.id, question_id: question.id };
   state.active.learning.set(question.id, { ...current, srm_active: result.data?.active, srm_state: result.data?.state, srm_due_at: result.data?.due_at, srm_interval_minutes: result.data?.interval_minutes });
@@ -1220,6 +1232,13 @@ async function resumeSession(id) {
       if (answers[questionId] && answer.question_time_remaining_seconds != null) answers[questionId].question_time_remaining_seconds = answer.question_time_remaining_seconds;
     }
     const personal = await loadPersonalState(questions.map((question) => question.id)); const session = sessionResult.data;
+    if(session.preset==='active-recall-v2'){
+      const ids=Object.values(answers).map(a=>a.client_event_id).filter(Boolean),retrievals=[];
+      for(let i=0;i<ids.length;i+=200){const r=await db.from('active_recall_retrievals').select('event_id,strength,is_correct,mastery,interval_minutes').eq('user_id',state.user.id).in('event_id',ids.slice(i,i+200));if(r.error)throw r.error;retrievals.push(...(r.data||[]));}
+      const byEvent=new Map(retrievals.map(r=>[r.event_id,r]));
+      for(const answer of Object.values(answers)){const r=byEvent.get(answer.client_event_id);if(r){answer.attemptRecorded=true;answer.retrieval_strength=r.strength;answer.srmFeedback={state:r.mastery,interval_minutes:r.interval_minutes,relearn:!r.is_correct||r.strength==='failed'};}}
+    }
+
     assertValidation(validateResumeSnapshot({ session, storedRows: itemsResult.data || [], questions, answers: answersResult.data || [] }), 'Resume');
     assertValidation(validateQuestionStateBindings({ questions, answers, bookmarks: personal.bookmarks, marked: personal.marked }), 'Resumed question state');
     const resumedAt = Date.now();
@@ -1259,7 +1278,7 @@ function resultScreen() {
   layout(`<div class="page-heading"><span class="eyebrow">${active.timed_out ? 'TIME EXPIRED' : 'COMPLETED'}</span><h1>${e(active.title || 'Result')}</h1><p>${date(new Date())}</p></div><section class="result-grid"><div class="card metric"><span>Score</span><b>${active.total_correct}/${active.total_questions}</b></div><div class="card metric"><span>Accuracy</span><b>${pct(active.total_correct, answered)}</b></div><div class="card metric"><span>Incorrect</span><b>${active.incorrect_count}</b></div><div class="card metric"><span>Unanswered</span><b>${active.unanswered_count}</b></div><div class="card metric"><span>Average time</span><b>${average}s</b></div></section><section class="card result-actions"><h2>Turn this result into action</h2><div class="row"><button class="button" data-action="review-result">Review every question</button><button class="button secondary" data-action="review-mistakes">Review incorrect</button><button class="button secondary" data-action="retake">Retake</button><a class="button ghost" href="#/history">History</a></div></section>`);
 }
 
-async function history() {
+async function legacyHistory() {
   const result = await optional(db.from('test_sessions').select('*').eq('user_id', state.user.id).neq('status', 'in_progress').order('completed_at', { ascending: false }).limit(100), 'sessions');
   layout(`<div class="page-heading"><span class="eyebrow">TEST HISTORY</span><h1>Completed sessions</h1><p>Every result leads back to its original question set.</p></div><section class="card">${result.data?.length ? `<ul class="history-list">${result.data.map((session) => `<li><div><b>${e(session.title || session.preset || 'Test')}</b><div class="subtle">${date(session.completed_at)} · ${session.total_questions} questions · ${session.total_correct} correct · ${session.incorrect_count ?? '—'} incorrect</div></div><div class="row"><span class="pill">${pct(session.total_correct, session.total_correct + (session.incorrect_count || 0))}</span><button class="button secondary" data-action="resume" data-id="${e(session.id)}">Open result</button></div></li>`).join('')}</ul>` : '<div class="empty">No completed sessions yet.</div>'}</section>`);
 }
@@ -1648,7 +1667,7 @@ async function renderAnalyticsExplore(overallIds, model) {
   return { html: `<section class="analytics-compact"><div class="section-heading"><div><span class="eyebrow">ANALYZE</span><h2>Choose what you want to analyze</h2></div></div><form id="analytics-filter-form" class="stack"><div class="filters analytics-query-filters">${multiPicker('platforms', 'Platforms', state.meta.platforms)}${multiPicker('subjects', 'Subjects', state.meta.subjects)}${multiPicker('systems', 'Systems (optional)', state.meta.systems)}${multiPicker('topics', 'Topics', state.meta.topics)}${multiPicker('subtopics', 'Subtopics', state.meta.subtopics)}${analyticsStatusPicker()}${analyticsMetadataFields(capabilities)}${state.meta.sourceTests.length ? multiPicker('source_tests', 'Source Tests', state.meta.sourceTests) : ''}</div><div class="builder-footer"><div><b>${metric.ids.length.toLocaleString()} questions selected</b><div class="subtle">No fallback questions are substituted.</div></div><div class="row"><button class="button">Apply filters</button><button type="button" class="button ghost" data-action="clear-analytics-filters">Clear</button></div></div></form><div class="selected-analysis"><div class="section-heading"><div><span class="eyebrow">SELECTED ANALYSIS</span><h2>${e(analyticsSelectionLabel(normalizedFilters))}</h2></div>${analyticsPopulationControls({ title: 'Selected analytics population', questionIds, filters: normalizedFilters })}</div>${metricStrip([['Available', metric.ids.length], ['Attempted', metric.attempted.length, metric.coverage], ['Latest accuracy', metric.latestAccuracy], ['Currently wrong', metric.incorrect.length], ['Repeated', metric.repeatedIncorrect.length], ['Recovered', metric.recovered.length], ['Bookmarked', metric.bookmarked.length], ['Avg time', metric.averageTime == null ? '—' : `${metric.averageTime}s`]])}</div><div class="detailed-analytics">${breakdowns.length ? `<div class="field breakdown-selector"><label for="analytics-breakdown-select">Break down by</label><select id="analytics-breakdown-select"><option value="">Choose a breakdown</option>${breakdowns.map(([level, label]) => `<option value="${e(level)}" ${state.analyticsBreakdown === level ? 'selected' : ''}>${e(label)}</option>`).join('')}</select></div><div id="analytics-breakdown-selected">${state.analyticsBreakdown ? '' : '<div class="empty compact-empty">Choose one useful breakdown.</div>'}</div>` : '<div id="analytics-breakdown-selected" class="empty compact-empty">This selection has no useful multi-group breakdown.</div>'}</div></section>`, normalizedFilters };
 }
 
-async function analytics() {
+async function advancedAnalytics() {
   loading('Calculating analytics…');
   if (state.analyticsSection === 'overview') {
     const snapshot = await analyticsSnapshot();
@@ -1767,17 +1786,75 @@ async function recordRecallResponse(value) {
 }
 
 const smartRecall=createSmartRecall({db,state,e,toast,prepareQuestionSet,readyScreen,returnHome:()=>home()});
+const analyticsTabCache = new Map();
+let analyticsTabGeneration = 0;
+function activeRecallUnit() {return state.active?.filters?.active_recall_units?.find(u=>u.question_id===activeQuestion()?.id);}
+function activeRecallFeedback(answer,wrong) {
+ const unit=activeRecallUnit();
+ const choices=wrong?[['failed',"DIDN’T KNOW"],['partial','PARTIAL'],['strong','KNEW IT']]:[['partial','UNSURE / GUESSED'],['strong','KNEW IT']];
+ return `<div class="learning-feedback">${unit?.primary_concept?`<p><b>${e(unit.primary_concept)}</b></p>`:''}<span class="field-label">Retrieval strength</span><div class="segmented">${choices.map(([v,label])=>`<button data-action="ar-strength" data-value="${v}" ${answer.attemptRecorded?'disabled':''}>${label}</button>`).join('')}</div><small>${wrong?'A wrong answer remains a lapse, even if it feels familiar after reading the explanation.':'If skipped, the safe unsure schedule is used.'}</small>${wrong?`<details><summary>Classify mistake (optional)</summary><div class="reason-chips">${[['didnt_know',"Didn't know"],['forgot','Forgot'],['silly_mistake','Silly mistake'],['misread','Misread'],['confused_options','Confused options'],['overthought','Overthought'],['guess','Guess']].map(([v,label])=>`<button data-action="error-reason" data-value="${v}">${label}</button>`).join('')}</div></details>`:''}${answer.srmFeedback?`<p>Next retrieval: ${e(srmIntervalLabel(answer.srmFeedback.interval_minutes))} · ${e(answer.srmFeedback.state)}</p>`:''}${unit?'<button class="button ghost" data-action="ar-question-detail">Concept Details</button>':''}</div>`;
+}
+const activeRecall=createActiveRecall({db,state,e,layout,toast,legacy:()=>{window.history.replaceState({},'', '#/recall');state.route='recall';return legacyRecall();},
+ startSession:async (rows,isCurrent)=>{
+  const set=await prepareQuestionSet({mode:'recall',preset:'active-recall-v2',title:'Active Recall',filters:{platforms:[],subjects:[],systems:[],topics:[],subtopics:[],source_tests:[],statuses:['all'],active_recall_units:rows,active_recall_plan:rows.map((_,i)=>i),active_recall_cursor:0,active_recall_repeated:[]},questionIds:rows.map(u=>u.question_id),requested:'all',autoSubmit:false,origin:'#/home'});
+  if(!isCurrent())return;state.pendingSet=set;await startPendingSession(isCurrent);
+ },practice:async ids=>openQuestionSet({mode:'browse',preset:'active-recall-v2-history',title:'Previously encountered questions',filters:{},questionIds:ids,requested:'all',origin:'#/recall'})
+});
+async function recall(){return activeRecall.render();}
+async function nextActiveRecall(){
+ const active=state.active,q=activeQuestion(),answer=active.answers[q.id];
+ if(!answer?.selected_option){toast('Answer this retrieval before continuing.');return;}
+ await ensureAttemptRecorded(q,answer);if(!answer.attemptRecorded)return;
+ const f=active.filters,plan=[...(f.active_recall_plan||active.questions.map((_,i)=>i))];let cursor=Number(f.active_recall_cursor||0);
+ if(plan[cursor]!==active.index){const later=plan.findIndex((index,position)=>index===active.index&&position>=cursor);cursor=later>=0?later:plan.indexOf(active.index);}
+ const repeated=[...(f.active_recall_repeated||[])];
+ if(answer.srmFeedback?.relearn&&!repeated.includes(q.id)&&plan.length-cursor-1>=3){plan.splice(Math.min(cursor+4,plan.length),0,active.index);repeated.push(q.id);}
+ if(cursor+1>=plan.length){await submitActive(false);return;}
+ cursor++;const nextIndex=plan[cursor];
+ await saveActiveAnswer(q.id);
+ // The canonical attempt remains in question_attempts. Only the session's current answer is cleared for a fresh retrieval.
+ if(plan.slice(0,cursor).includes(nextIndex)){delete active.answers[active.questions[nextIndex].id];await saveActiveAnswer(active.questions[nextIndex].id);}
+ const updatedFilters={...f,active_recall_plan:plan,active_recall_cursor:cursor,active_recall_repeated:repeated};
+ if(active.id){const saved=await db.from('test_sessions').update({filters:updatedFilters}).eq('id',active.id).eq('user_id',state.user.id);if(saved.error){toast(saved.error.message,'error');return;}}
+ active.filters=updatedFilters;active.arOptionsFor=null;await navigateActive(nextIndex);
+}
+function sessionHistoryRows(rows){return `<ul class="history-list">${rows.map(s=>`<li><div><b>${e(s.subjects||'Subject unavailable')}</b><p>${e(s.platforms||'')} · ${e(s.modules||s.title||s.preset||'Session')}</p><small>${s.status==='in_progress'?`In progress · Question ${Number(s.current_position||0)+1}/${s.total_questions}`:`${s.total_correct||0}/${s.total_questions} · ${pct(s.total_correct||0,s.total_questions)}`} · ${date(s.completed_at||s.updated_at)}</small></div><button class="button secondary" data-action="resume" data-id="${e(s.id)}">${s.status==='in_progress'?'Resume':'Open result'}</button></li>`).join('')}</ul>`;}
+async function history(page=0){
+ const user=state.user?.id;layout('<div class="page-heading"><h1>Session history</h1></div><section class="card" id="history-page">Loading recent sessions…</section>');const host=document.querySelector('#history-page');
+ const result=await db.rpc('qbank_session_history',{p_limit:20,p_offset:page*20,p_include_unfinished:true});if(!host.isConnected||state.user?.id!==user)return;
+ host.innerHTML=result.error?e(result.error.message):`${sessionHistoryRows(result.data||[])}<div class="row">${page?`<button class="button secondary" data-action="history-page" data-page="${page-1}">Previous</button>`:''}${result.data?.length===20?`<button class="button secondary" data-action="history-page" data-page="${page+1}">Next</button>`:''}</div>`;
+}
+async function analytics(){
+ const tab=state.analyticsSection||'overview';
+ if((tab==='subjects'&&state.analyticsSubjectId)||!['overview','subjects','weaknesses','performance'].includes(tab)){await loadFullMeta();return advancedAnalytics();}
+ const user=state.user?.id,g=++analyticsTabGeneration,key=`${user}:${tab}`;
+ const tabs=[['overview','Overview'],['subjects','Subjects'],['weaknesses','Weaknesses'],['performance','Performance / History']];
+ layout(`<div class="page-heading"><span class="eyebrow">ANALYTICS</span><h1>Your study progress</h1></div><nav class="analytics-tabs" aria-label="Analytics sections">${tabs.map(([id,label])=>`<button data-action="analytics-section" data-section="${id}" class="${tab===id?'active':''}">${label}</button>`).join('')}</nav><section class="card section-card" id="analytics-tab-content" role="status">Loading ${e(tab)}…</section><details class="card section-card"><summary>Advanced analysis and question filters</summary><button class="button secondary" data-action="analytics-section" data-section="pyq">PYQ analysis</button><button class="button secondary" data-action="analytics-section" data-section="explore">Explore filtered populations</button><a class="button ghost" href="#/review">Saved review lists</a></details>`);
+ const host=document.querySelector('#analytics-tab-content'),started=performance.now();
+ try{let value=analyticsTabCache.get(key);if(!value||Date.now()-value.at>60000){const r=await db.rpc('qbank_analytics_tab',{p_tab:tab,p_subject_id:null});if(r.error)throw r.error;value={data:r.data,at:Date.now()};if(state.user?.id===user)analyticsTabCache.set(key,value);}
+ if(g!==analyticsTabGeneration||state.user?.id!==user||!host.isConnected)return;
+ const d=value.data;
+ if(tab==='overview')host.innerHTML=metricStrip([['Questions attempted',d.attempted],['Total attempts',d.attempts],['Attempt accuracy',pct(d.correct_attempts,d.attempts)],['Currently incorrect',d.currently_incorrect],['Bookmarked',d.bookmarked],['Marked for review',d.marked]])+'<p class="subtle">Your consolidated question history. Subject and weakness details load when opened.</p>';
+ if(tab==='subjects')host.innerHTML=`<ul class="list">${d.map(r=>`<li><div><b>${e(r.subject)}</b><small>${r.attempted} questions · ${r.attempts} attempts · ${r.incorrect} currently incorrect</small></div><div><b>${pct(r.correct_attempts,r.attempts)}</b><button class="button secondary compact" data-action="analytics-subject" data-subject="${e(r.subject_id||'')}">Explore subject</button></div></li>`).join('')}</ul>`;
+ if(tab==='weaknesses')host.innerHTML=`<p>Up to 30 encountered knowledge units, ordered by available importance and failures.</p><ul class="list">${d.map(u=>`<li><div><b>${e(u.primary_concept||'Question-level recall')}</b><small>${e(u.subject)} · ${u.incorrect} incorrect attempts${u.tier?` · ${e(u.tier)}`:''}</small></div><button class="button secondary" data-action="ar-details" data-id="${e(u.unit_key)}">Details</button></li>`).join('')}</ul>`;
+ if(tab==='performance')host.innerHTML=sessionHistoryRows(d)+'<a class="button secondary" href="#/history">View full history</a>';
+ host.dataset.loadMs=String(Math.round(performance.now()-started));
+ }catch(err){if(g===analyticsTabGeneration&&host.isConnected)host.textContent=err.message;}
+}
+
 const globalImportance = createGlobalImportance({db,state,layout,e,toast,prepareQuestionSet,readyScreen});
 
 async function render() {
   recallGeneration++;
   smartRecall.cancel();
+  activeRecall.cancel();
   if (state.active) state.active.solvingVisible = false;
   if (state.active?.kind === 'recall') pauseTotalTimer(state.active);
   gtMode.cancel(); grandTests.cancel();
   persistTimer(state.active);
   stopActiveTimer(); state.route = route(); if (!state.user) return auth();
   try {
+    if (state.route === 'analytics') return analytics();
     await loadMeta();
     if (['global-importance','importance-subject','importance-recall'].includes(state.route)) return globalImportance.render(); if (state.route === 'home') return home(); if (state.route === 'qbank') return qbank(); if (state.route === 'tests') return tests(); if (state.route === 'recall') return recall(); if (state.route === 'review') return review(); if (state.route === 'analytics') return analytics(); if (state.route === 'grand-test-analytics') return grandTests.analytics(); if (state.route === 'grand-test-attempt') return gtMode.attempt(new URLSearchParams(location.hash.split('?')[1]).get('id')); if (state.route === 'my-bank' || state.route === 'manage') return myBank(); if (state.route === 'history') return history(); return home();
   } catch (error) { console.error(error); layout(`<div class="card notice"><b>Something went wrong.</b><p>${e(error.message || 'Please try again.')}</p><button class="button secondary" data-action="retry">Try again</button></div>`); }
@@ -1804,7 +1881,8 @@ async function resetPassword() { const email = document.querySelector('[name="em
 
 document.addEventListener('click', async (event) => {
   const target = event.target.closest('[data-action]'); if (!target) return; const action = target.dataset.action;
-  const guarded = ['answer', 'submit-multi-answer', 'previous', 'next', 'jump', 'bookmark', 'mark', 'confidence', 'error-reason', 'srm-add', 'srm-remove', 'srm-reset', 'start-recall', 'start-pending-test', 'resume', 'submit'].includes(action);
+  if (await activeRecall.handle(target)) return;
+  const guarded = ['ar-strength', 'ar-options', 'answer', 'submit-multi-answer', 'previous', 'next', 'jump', 'bookmark', 'mark', 'confidence', 'error-reason', 'srm-add', 'srm-remove', 'srm-reset', 'start-recall', 'start-pending-test', 'resume', 'submit'].includes(action);
   if (guarded && state.actionBusy) return;
   if (guarded) state.actionBusy = true;
   try {
@@ -1815,6 +1893,10 @@ document.addEventListener('click', async (event) => {
   if (action === 'open-pyq-test') await openSelectedPyqTest(target, false); if (action === 'start-pyq-test') await openSelectedPyqTest(target, true);
   if (action === 'open-core-btr-test') await openSelectedCoreBtrTest(target, false); if (action === 'start-core-btr-test') await openSelectedCoreBtrTest(target, true);
   if (action === 'answer') await selectAnswer(target.dataset.key); if (action === 'submit-multi-answer') await submitMultiAnswer(); if (action === 'previous') await navigateActive(state.active.index - 1);
+  if (action === 'ar-strength') { const answer=state.active.answers[activeQuestion().id];if(answer&&!answer.attemptRecorded){answer.retrieval_strength=target.dataset.value;answer.confidence=target.dataset.value==='strong'?'sure':'unsure';await recordAttempt(activeQuestion(),answer);renderActive();}return;}
+  if (action === 'ar-options') { state.active.arOptionsFor=activeQuestion().id;renderActive();return;}
+  if (action === 'ar-question-detail') {const unit=activeRecallUnit();if(unit)await activeRecall.details(unit.unit_key);return;}
+  if (action === 'next' && state.active.preset === 'active-recall-v2' && !state.active.completedReview) {await nextActiveRecall();return;}
   if (action === 'next') { if (state.active.index === state.active.questions.length - 1) { if (state.active.kind === 'browse') { goToHash(state.active.origin || '#/qbank'); return; } if (state.active.completedReview) return resultScreen(); return submitActive(false); } await navigateActive(state.active.index + 1); }
   if (action === 'jump') await navigateActive(Number(target.dataset.index)); if (action === 'bookmark') await toggleBookmark(); if (action === 'mark') await toggleMark();
   if (action === 'retry-media') { const question=activeQuestion(); question.mediaError=false; void recoverSnapshotMedia(state.active,question); }
@@ -1838,6 +1920,7 @@ document.addEventListener('click', async (event) => {
   if (action === 'clear-review-filters') { state.reviewFilters = null; await review(); }
   if (action === 'clear-analytics-filters') { state.analyticsFilters = null; state.analyticsBreakdown = null; await analytics(); }
   if (action === 'analyze-pyqs') { state.analyticsFilters = { platforms: [], subjects: [], systems: [], topics: [], subtopics: [], source_tests: [], statuses: ['all'], exams: [], years: [], sessions: [], pyq: 'yes' }; state.analyticsBreakdown = 'source_test'; await analytics(); }
+  if (action === 'history-page') {await history(Number(target.dataset.page));return;}
   if (action === 'analytics-section') { state.analyticsSection = target.dataset.section; state.analyticsSubjectId = null; state.analyticsPyqBreakdown = null; state.analyticsBreakdown = null; await analytics(); }
   if (action === 'analytics-pyq-subject') { state.analyticsSubjectId = target.dataset.subject; state.analyticsPyqBreakdown = null; await analytics(); }
   if (action === 'analytics-pyq-back') { state.analyticsSubjectId = null; state.analyticsPyqBreakdown = null; await analytics(); }

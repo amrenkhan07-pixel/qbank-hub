@@ -553,3 +553,11 @@ fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 .content-audio { margin:10px 0; }
 .content-audio label { display:block; }
 .content-audio audio { width:100%; max-width:100%; }
+
+/* Active Recall's retrieval prompt must remain reachable above the controls. */
+.active-recall-session .question-actions { position: static; margin: 20px 0 0; padding: 16px 0 0; box-shadow: none; }
+.recall-retrieve-prompt { display: grid; gap: 12px; margin: 16px 0; }
+.recall-retrieve-prompt textarea { width: 100%; min-height: 88px; }
+.question-header.active-recall-session .timer-cluster { flex-wrap: wrap; gap: 8px; }
+.question-header.active-recall-session .timer-cluster > label { flex: 1 1 140px; min-width: 0; }
+.question-header.active-recall-session .timer-cluster > div { flex: 0 0 auto; }
