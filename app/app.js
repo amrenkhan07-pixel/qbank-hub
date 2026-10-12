@@ -1,3 +1,4 @@
+import { resolveImportedMedia } from './imported-media.js?v=marrow-qbank-v1';
 import {createActiveRecall} from './active-recall.js';
 import {safeRecallMetadata,recallConcept,isRecallSelection,studyContext} from './study-flow.mjs';
 import { isCerebellum, cerebellumMedia, cerebellumNotice, essentialMediaReady, bindCerebellumMedia } from './cerebellum-media.js?v=20261004-v1';
@@ -480,11 +481,19 @@ async function hydrateHybridQuestions(questions, options, filters = {}) {
     if (!result.error) refs.push(...(result.data || []));
   }
   const context = await sourceContext(missingIds, filters); const byQuestion = new Map();
+  const documents = new Map();
   for (const ref of refs) {
-    const object = ref.qbank_payload_objects; const document = await decodePayloadObject(object);
+    const object = ref.qbank_payload_objects;
+    if (!documents.has(object.object_path)) documents.set(object.object_path, await decodePayloadObject(object));
+  }
+  const importedMedia = refs.flatMap(ref => documents.get(ref.qbank_payload_objects.object_path).questions[Number(ref.payload_index)]?.media || []);
+  const resolvedMedia = await resolveImportedMedia(db, importedMedia);
+  const storedMedia = new Map(resolvedMedia.filter(item => item.storage_path).map(item => [item.storage_path, item.reference]));
+  for (const ref of refs) {
+    const object = ref.qbank_payload_objects; const document = documents.get(object.object_path);
     const payload = document.questions[Number(ref.payload_index)];
     if (!payload) throw new Error(`Payload index is missing for question ${ref.question_id}`);
-    const media = payload.media || []; const source = context.get(String(ref.question_id));
+    const media = (payload.media || []).filter(item => item.type !== 'tracking').map(item => ({ ...item, reference: storedMedia.get(item.storage_path) || item.reference })); const source = context.get(String(ref.question_id));
     byQuestion.set(String(ref.question_id), {
       question_text: payload.question_html,
       explanation_html: payload.explanation_html,

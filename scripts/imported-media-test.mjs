@@ -1,0 +1,10 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+const code=await readFile(new URL('../app/imported-media.js',import.meta.url),'utf8');
+const {resolveImportedMedia}=await import('data:text/javascript;base64,'+Buffer.from(code).toString('base64'));
+let calls=[];const db={storage:{from(bucket){assert.equal(bucket,'question-media');return {async createSignedUrls(paths,ttl){calls.push(paths);assert.equal(ttl,3600);return {data:paths.map(path=>({path,signedUrl:'https://storage.test/'+path}))}}}}}};
+const media=Array.from({length:201},(_,i)=>({type:'image',reference:'https://original.test/'+i,storage_path:'marrow/qbank-v1/'+i.toString(16).padStart(64,'0')+'.jpeg'}));
+const source=structuredClone(media);const result=await resolveImportedMedia(db,[...media,media[0],{type:'tracking',reference:'https://tracker.test'}]);assert.equal(result.length,202);assert.deepEqual(calls.map(p=>p.length),[100,100,1]);assert.equal(result[0].reference,result[201].reference);assert.deepEqual(media,source);
+const failed={storage:{from:()=>({createSignedUrls:async()=>({error:new Error('unavailable')})})}};assert.deepEqual(await resolveImportedMedia(failed,media),media);
+const ordinary=[{type:'image',reference:'https://existing.test/image.jpg'}];assert.deepEqual(await resolveImportedMedia(null,ordinary),ordinary);
+console.log('Imported media: batching, dedupe, source immutability, tracking omission, fallback, existing platforms passed');

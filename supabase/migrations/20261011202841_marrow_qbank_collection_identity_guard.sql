@@ -1,0 +1,1 @@
+alter table public.questions add constraint marrow_qbank_collection_identity_check check (source_type is distinct from 'marrow_qbank_v1' or (platform_id = '1a5c5236-9319-4396-a98a-0b743d7380ca'::uuid and source_collection is not distinct from 'Marrow QBank' and source_question_id is not null and source_question_id ~ '^QB:[^@]+@[0-9a-f]{16}$'));
