@@ -1,3 +1,5 @@
+import {studyIcon} from './study-icons.js';
+import { compactStudy } from './compact-study.js?v=compact-ui-v1';
 import { resolveImportedMedia } from './imported-media.js?v=marrow-qbank-v1';
 import {createActiveRecall} from './active-recall.js';
 import {safeRecallMetadata,recallConcept,isRecallSelection,studyContext} from './study-flow.mjs';
@@ -5,7 +7,7 @@ import { isCerebellum, cerebellumMedia, cerebellumNotice, essentialMediaReady, b
 import {renderContent,questionContent,installMediaFailures} from './media-content.js?v=20261003-media1';
 import { createSmartRecall } from './smart-recall.js?v=20261005-finalrecall1';
 import { recallQuestionLimit, LABELS as SMART_RECALL_LABELS } from './smart-recall-model.mjs';
-import { createGlobalImportance } from './global-importance.js?v=20261002-v1';
+import { createGlobalImportance } from './global-importance.js?v=compact-ui-v1';
 import {readClock,freezeClock,runClock,checkpointClock,initialClock} from './session-timers.js?v=20260926-recall1';
 import { createGTExamMode } from './gt-exam-mode.js?v=20261003-media1';
 import { createGrandTests } from './grand-tests.js?v=20261003-media1';
@@ -112,7 +114,7 @@ async function recoverSnapshotMedia(active, question) {
 }
 
 function layout(content) {
-  const nav = [['home', 'Home'], ['qbank', 'QBank'], ['tests', 'Test'], ['global-importance', 'Global Importance'],    ['analytics', 'Analytics'], ['grand-test-analytics', 'GT Analytics'], ['my-bank', 'My Bank']];
+  const nav = [['home', 'Home'], ['qbank', 'QBank'], ['tests', 'Test'], ['global-importance', 'Global Importance'],    ['review', 'Incorrect / Saved'], ['analytics', 'Analytics'], ['grand-test-analytics', 'GT Analytics'], ['my-bank', 'My Bank']];
   root.innerHTML = `<header class="topbar"><div class="shell topbar-row"><a class="brand" href="#/home">QBank <span>Hub</span></a><div class="user-actions"><span class="email">${e(state.user?.email)}</span><button class="button secondary compact" data-action="signout">Sign out</button></div></div><nav class="shell nav" aria-label="Primary navigation">${nav.map(([id, label]) => `<a href="#/${id}" class="${state.route === id ? 'active' : ''}">${label}</a>`).join('')}</nav></header><main class="shell">${content}</main>`;
 }
 
@@ -230,7 +232,7 @@ function multiPicker(name, label, items, empty = `No ${label.toLowerCase()} avai
 function statusPicker(revision = false) {
   const values = revision
     ? [['incorrect', 'Incorrect'], ['bookmarked', 'Bookmarked'], ['marked', 'Marked for review'], ['recall_due', 'Recall due'], ['difficult', 'Personally difficult'], ['confident_wrong', 'Confidently wrong'], ['slow', 'Slow >50 sec'], ['my_content', 'My Content']]
-    : [['new', 'New'], ['incorrect', 'Incorrect'], ['correct', 'Correct'], ['bookmarked', 'Bookmarked'], ['marked', 'Marked for review'], ['recall_due', 'Recall due'], ['my_content', 'My Content']];
+    : [['new', 'Unattempted'], ['incorrect', 'Incorrect'], ['correct', 'Correct'], ['bookmarked', 'Bookmarked'], ['marked', 'Marked for review'], ['recall_due', 'Recall due'], ['my_content', 'My Content']];
   return `<fieldset class="field wide status-field"><legend>Question status</legend><div class="chip-checks"><label><input type="checkbox" name="statuses" value="all" checked /> <span>All</span></label>${values.map(([value, label]) => `<label><input type="checkbox" name="statuses" value="${value}" /> <span>${label}</span></label>`).join('')}</div></fieldset>`;
 }
 
@@ -248,11 +250,15 @@ function readFilters(form) {
     platforms: readMulti(form, 'platforms'), subjects: readMulti(form, 'subjects'), systems: readMulti(form, 'systems'),
     topics: readMulti(form, 'topics'), subtopics: readMulti(form, 'subtopics'), statuses: readMulti(form, 'statuses'),
     source_tests: readMulti(form, 'source_tests'), exams: readMulti(form, 'exams'), years: readMulti(form, 'years'), sessions: readMulti(form, 'sessions'),
-    pyq: raw.pyq || '', srm: raw.srm || '', year: raw.year || '', search: raw.search?.trim() || '', source: raw.source?.trim() || '',
+    pyq: form.dataset.marrowPlatform && readMulti(form,'platforms').includes(form.dataset.marrowPlatform) ? 'no' : raw.pyq || '', srm: raw.srm || '', year: raw.year || '', search: raw.search?.trim() || '', source: raw.source?.trim() || '',
   };
 }
 
 function setupDependentFilters(form) {
+  compactStudy(form,{meta:state.meta,e,practice:async(test,status)=>{
+    try {const filters={...readFilters(form),platforms:[test.platform_id],subjects:[test.subject_id],source_tests:[test.id],statuses:[status]};await createSession({mode:form.id==='test-form'?'test':'practice',preset:form.dataset.preset||'qbank',title:test.title,filters,requested:'all',autoSubmit:form.id==='test-form',origin:location.hash});}catch(error){toast(error.message||'Could not open this module.','error');}
+  },resume:async id=>{try{await resumeSession(id);}catch(error){toast(error.message||'Could not resume this session.','error');}}});
+
   const update = async () => {
     const requestId = (filterCountRequests.get(form) || 0) + 1;
     filterCountRequests.set(form, requestId);
@@ -279,6 +285,7 @@ function setupDependentFilters(form) {
       field.querySelector('[data-multi-summary]').textContent = checked.length ? `${checked.length} selected` : `All ${field.dataset.multiField}`;
     });
     if (pruned) return update();
+    form.dispatchEvent(new Event('study-facets-ready'));
     if (holder) {
       holder.textContent = `${facets.count.toLocaleString()} question${facets.count === 1 ? '' : 's'} match`;
       holder.dataset.count = facets.count;
@@ -742,7 +749,7 @@ async function home() {
 }
 
 async function qbank() {
-  layout(`<div class="page-heading"><span class="eyebrow">QBANK</span><h1>Build a focused practice set</h1><p>Platform → Subject → Topic → Subtopic. Systems remain optional.</p></div><section class="card builder-card"><form id="practice-form" class="stack"><div class="filters">${filterFields({ sourceTests: true })}</div><div class="builder-footer"><div><b data-match-count>Choose filters to count questions</b><div class="subtle">Browse without timers, or preview the same exact set before starting.</div></div><div class="row"><label class="inline-label">Questions <select name="count-mode"><option value="10">10</option><option value="20">20</option><option value="50">50</option><option value="100">100</option><option value="all">All matching</option><option value="custom">Custom</option></select></label><input class="custom-count hidden" name="custom-count" type="number" min="1" max="5000" value="30" aria-label="Custom question count" /><button class="button secondary" name="intent" value="browse">Open questions</button><button class="button" name="intent" value="test">Start practice</button></div></div></form></section>`);
+  layout(`<div class="page-heading"><span class="eyebrow">QBANK</span><h1>Build a focused practice set</h1><p>Choose platforms, choose subjects, then practice a module. Multiple selections are welcome.</p></div><section class="card builder-card"><form id="practice-form" class="stack"><div class="filters">${filterFields({ sourceTests: true })}</div><div class="builder-footer"><div><b data-match-count>Choose filters to count questions</b><div class="subtle">Browse without timers, or preview the same exact set before starting.</div></div><div class="row"><label class="inline-label">Questions <select name="count-mode"><option value="10">10</option><option value="20">20</option><option value="50">50</option><option value="100">100</option><option value="all">All matching</option><option value="custom">Custom</option></select></label><input class="custom-count hidden" name="custom-count" type="number" min="1" max="5000" value="30" aria-label="Custom question count" /><button class="button secondary" name="intent" value="browse">Open questions</button><button class="button" name="intent" value="test">Start practice</button></div></div></form></section>`);
   const form = document.querySelector('#practice-form'); setupDependentFilters(form);
   form.elements['count-mode'].onchange = () => form.querySelector('.custom-count').classList.toggle('hidden', form.elements['count-mode'].value !== 'custom');
   form.onsubmit = async (event) => {
@@ -752,6 +759,8 @@ async function qbank() {
     try { if (event.submitter?.value === 'browse') await openQuestionSet(definition); else await createSession(definition); }
     catch (error) { toast(error.message || 'Could not build practice set.', 'error'); qbank(); }
   };
+  const studyUser=state.user?.id;
+  void db.rpc('qbank_session_history',{p_limit:4,p_offset:0,p_include_unfinished:true}).then(result=>{if(form.isConnected&&state.user?.id===studyUser&&!result.error)form.studySetSessions?.(result.data);}).catch(()=>{});
   const diagnostic = new URLSearchParams(location.hash.split('?')[1] || '').get('dom-regression');
   if (diagnostic === '1') {
     const regressionRun = `${Date.now()}-${Math.random()}`;
@@ -835,7 +844,7 @@ const TEST_PRESETS = {
 };
 
 async function tests() {
-  layout(`<div class="page-heading"><span class="eyebrow">TEST</span><h1>Choose a test type</h1><p>Start with intent, then narrow the question pool.</p></div><section class="preset-grid">${Object.entries(TEST_PRESETS).map(([id, item]) => `<button class="card preset-card" data-action="choose-preset" data-preset="${id}"><b>${e(item[0])}</b><span>${e(item[1])}</span></button>`).join('')}</section><section id="test-builder-slot"></section><section class="card section-card"><div class="section-heading"><div><span class="eyebrow">CONTINUE</span><h2>Recent sessions</h2></div><a href="#/history">History</a></div><div id="resume-tests" class="empty">Loading…</div></section>`);
+  layout(`<div class="page-heading"><span class="eyebrow">TEST</span><h1>Choose a test type</h1><p>Start with intent, then narrow the question pool.</p></div><section class="preset-grid">${Object.entries(TEST_PRESETS).map(([id, item]) => `<button class="card preset-card" data-action="choose-preset" data-preset="${id}"><b>${studyIcon(id==='revision'?'retry':id==='grand'?'chart':'book')}${e(item[0])}</b><span>${e(item[1])}</span></button>`).join('')}</section><section id="test-builder-slot"></section><section class="card section-card"><div class="section-heading"><div><span class="eyebrow">CONTINUE</span><h2>Recent sessions</h2></div><a href="#/history">History</a></div><div id="resume-tests" class="empty">Loading…</div></section>`);
   const resumeHost = document.querySelector('#resume-tests');
   const user=state.user?.id;
   const result = await db.rpc('qbank_session_history',{p_limit:4,p_offset:0,p_include_unfinished:true});
@@ -854,7 +863,7 @@ function showTestBuilder(preset) {
   if (preset === 'grand') { grandTests.showCatalog(slot); return; }
   if (preset === 'pyq') { slot.innerHTML = '<section class="card builder-card"><div class="empty">Loading PYQ subjects and tests…</div></section>'; showPyqCatalog(); return; }
   if (preset === 'coreBtr') { slot.innerHTML = '<section class="card builder-card"><div class="empty">Loading Core BTR sections and collections…</div></section>'; showCoreBtrCatalog(); return; }
-  slot.innerHTML = `<section class="card builder-card"><div class="section-heading"><div><span class="eyebrow">${e(item[0])}</span><h2>Configure this test</h2></div><button class="button ghost compact" data-action="close-builder">Close</button></div><form id="test-form" class="stack" data-preset="${e(preset)}"><div class="filters">${filterFields({ revision })}</div><div class="builder-footer"><div><b data-match-count>Counting available questions…</b><div class="subtle">Browse without timers, or preview this exact set before starting.</div></div><div class="row"><label class="inline-label">Questions <select name="count"><option>10</option><option>20</option><option selected>50</option><option>100</option><option value="all">All matching</option></select></label><button class="button secondary" name="intent" value="browse">Open questions</button><button class="button" name="intent" value="test">Preview ${e(item[0])}</button></div></div></form></section>`;
+  slot.innerHTML = `<section class="card builder-card"><div class="section-heading"><div><span class="eyebrow">${e(item[0])}</span><h2>Configure this test</h2></div><button class="button ghost compact" data-action="close-builder">Close</button></div><form id="test-form" class="stack" data-preset="${e(preset)}"><div class="filters">${filterFields({ revision, sourceTests: true })}</div><div class="builder-footer"><div><b data-match-count>Counting available questions…</b><div class="subtle">Browse without timers, or preview this exact set before starting.</div></div><div class="row"><label class="inline-label">Questions <select name="count"><option>10</option><option>20</option><option selected>50</option><option>100</option><option value="all">All matching</option></select></label><button class="button secondary" name="intent" value="browse">Open questions</button><button class="button" name="intent" value="test">Preview ${e(item[0])}</button></div></div></form></section>`;
   const form = document.querySelector('#test-form'); if (preset === 'pyq') form.elements.pyq.value = 'yes'; setupDependentFilters(form);
   form.onsubmit = async (event) => {
     event.preventDefault(); const filters = readFilters(form);
@@ -867,7 +876,12 @@ function showTestBuilder(preset) {
   slot.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-async function showPyqCatalog() {
+async function marrowPyqs(){
+ layout('<div class="page-heading"><span class="eyebrow">MARROW PYQs</span><h1>Marrow PYQs</h1><p>Trusted PYQ source · separate from ordinary Marrow QBank.</p><a href="#/qbank">All study sources</a></div><section id="test-builder-slot"><div class="card empty">Loading Marrow PYQ subjects and tests…</div></section>');
+ await showPyqCatalog('marrow');
+}
+
+async function showPyqCatalog(platformScope='') {
   const slot = document.querySelector('#test-builder-slot'); if (!slot) return;
   if (!state.pyqCatalog) {
     const result = await db.rpc('qbank_pyq_catalog');
@@ -875,14 +889,14 @@ async function showPyqCatalog() {
     state.pyqCatalog = result.data || [];
   }
   const bySubject = new Map();
-  state.pyqCatalog.forEach((row) => { if (!bySubject.has(row.subject)) bySubject.set(row.subject, new Map()); const exams = bySubject.get(row.subject); if (!exams.has(row.exam)) exams.set(row.exam, []); exams.get(row.exam).push(row); });
+  state.pyqCatalog.filter(row=>!platformScope||String(row.platform).toLowerCase()===platformScope).forEach((row) => { if (!bySubject.has(row.subject)) bySubject.set(row.subject, new Map()); const exams = bySubject.get(row.subject); if (!exams.has(row.exam)) exams.set(row.exam, []); exams.get(row.exam).push(row); });
   slot.innerHTML = `<section class="card builder-card"><div class="section-heading"><div><span class="eyebrow">PYQS</span><h2>Choose subject, exam and year</h2><p class="subtle">Only the selected test’s questions are loaded.</p></div><button class="button ghost compact" data-action="close-builder">Close</button></div><div class="pyq-catalog">${[...bySubject.entries()].map(([subject, exams]) => `<details><summary><b>${e(subject)}</b><span>${[...exams.values()].flat().reduce((sum, row) => sum + Number(row.question_count || 0), 0)} questions</span></summary>${[...exams.entries()].map(([exam, tests]) => `<div class="pyq-exam"><h3>${e(exam)}</h3><div class="list">${tests.map((test) => `<div class="pyq-test-row"><div><b>${e(test.year)} · ${e(test.title)}</b><small>${Number(test.question_count || 0)} questions</small></div><div class="row"><button class="button secondary compact" data-action="open-pyq-test" data-test="${e(test.test_id)}" data-title="${e(`${subject} · ${exam} ${test.year}`)}">Browse</button><button class="button compact" data-action="start-pyq-test" data-test="${e(test.test_id)}" data-title="${e(`${subject} · ${exam} ${test.year}`)}">Start test</button></div></div>`).join('')}</div></div>`).join('')}</details>`).join('')}</div></section>`;
 }
 
 async function openSelectedPyqTest(target, start) {
   const definition = { mode: 'test', preset: 'pyq', title: target.dataset.title || 'PYQ test',
-    filters: { platforms: [], subjects: [], systems: [], topics: [], subtopics: [], source_tests: [target.dataset.test], statuses: ['all'], exams: [], years: [], sessions: [], pyq: 'yes' },
-    requested: 'all', autoSubmit: true, origin: '#/tests' };
+    filters: { platforms: state.route==='marrow-pyqs' ? state.meta.platforms.filter(p=>p.name.toLowerCase()==='marrow').map(p=>p.id) : [], subjects: [], systems: [], topics: [], subtopics: [], source_tests: [target.dataset.test], statuses: ['all'], exams: [], years: [], sessions: [], pyq: 'yes' },
+    requested: 'all', autoSubmit: true, origin: state.route==='marrow-pyqs' ? '#/marrow-pyqs' : '#/tests' };
   if (start) await createSession(definition); else await openQuestionSet(definition);
 }
 
@@ -1865,7 +1879,7 @@ async function render() {
   try {
     if (state.route === 'analytics') return analytics();
     await loadMeta();
-    if (['global-importance','importance-subject','importance-recall'].includes(state.route)) return globalImportance.render(); if (state.route === 'home') return home(); if (state.route === 'qbank') return qbank(); if (state.route === 'tests') return tests(); if (state.route === 'recall') return recall(); if (state.route === 'review') return review(); if (state.route === 'analytics') return analytics(); if (state.route === 'grand-test-analytics') return grandTests.analytics(); if (state.route === 'grand-test-attempt') return gtMode.attempt(new URLSearchParams(location.hash.split('?')[1]).get('id')); if (state.route === 'my-bank' || state.route === 'manage') return myBank(); if (state.route === 'history') return history(); return home();
+    if (['global-importance','importance-subject','importance-recall'].includes(state.route)) return globalImportance.render(); if (state.route === 'home') return home(); if (state.route === 'qbank') return qbank(); if (state.route === 'marrow-pyqs') return marrowPyqs(); if (state.route === 'tests') return tests(); if (state.route === 'recall') return recall(); if (state.route === 'review') return review(); if (state.route === 'analytics') return analytics(); if (state.route === 'grand-test-analytics') return grandTests.analytics(); if (state.route === 'grand-test-attempt') return gtMode.attempt(new URLSearchParams(location.hash.split('?')[1]).get('id')); if (state.route === 'my-bank' || state.route === 'manage') return myBank(); if (state.route === 'history') return history(); return home();
   } catch (error) { console.error(error); layout(`<div class="card notice"><b>Something went wrong.</b><p>${e(error.message || 'Please try again.')}</p><button class="button secondary" data-action="retry">Try again</button></div>`); }
 }
 
