@@ -7,7 +7,7 @@ import { isCerebellum, cerebellumMedia, cerebellumNotice, essentialMediaReady, b
 import {renderContent,questionContent,installMediaFailures} from './media-content.js?v=20261003-media1';
 import { createSmartRecall } from './smart-recall.js?v=20261005-finalrecall1';
 import { recallQuestionLimit, LABELS as SMART_RECALL_LABELS } from './smart-recall-model.mjs';
-import { createGlobalImportance } from './global-importance.js?v=compact-ui-v1';
+import { createGlobalImportance } from './global-importance.js?v=20261015-performance1';
 import {readClock,freezeClock,runClock,checkpointClock,initialClock} from './session-timers.js?v=20260926-recall1';
 import { createGTExamMode } from './gt-exam-mode.js?v=20261003-media1';
 import { createGrandTests } from './grand-tests.js?v=20261003-media1';
@@ -136,13 +136,14 @@ async function optional(query, feature) {
   return result;
 }
 
-async function loadMeta(force = false) {
-  const basic = state.route === 'recall' || route() === 'recall';
-  const key = `${state.user?.id}:${basic ? 'basic' : 'full'}`;
+async function loadMeta(force = false, scope = '') {
+  const basic = scope!=='full' && ['recall','global-importance','importance-subject','importance-recall','history','tests','marrow-pyqs','analytics'].includes(route());
+  const homeOnly=scope!=='full' && route()==='home';
+  const key = `${state.user?.id}:${basic ? 'basic' : homeOnly ? 'home' : 'full'}`;
   if (force) metadataRequests.clear();
   if (metadataRequests.has(key)) return metadataRequests.get(key);
   const request = (async () => {
-    if (!basic) return loadFullMeta(force);
+    if (!basic) return loadFullMeta(force,!homeOnly);
     if (state.meta.subjects.length && state.meta.platforms.length) return;
     const [subjects, platforms] = await Promise.all([db.from('subjects').select('id,name').order('name'), db.from('platforms').select('id,name').order('name')]);
     if (subjects.error || platforms.error) throw subjects.error || platforms.error;
@@ -152,7 +153,7 @@ async function loadMeta(force = false) {
   try { return await request; } catch (error) { metadataRequests.delete(key); throw error; }
 }
 
-async function loadFullMeta(force = false) {
+async function loadFullMeta(force = false, includeSources = true) {
   if (!force && state.meta.fullLoaded) return;
   const [subjects, platforms, platformSubjects, systems, topics, subtopics, sourceTests] = await Promise.all([
     db.from('subjects').select('id,name').order('name'),
@@ -161,16 +162,18 @@ async function loadFullMeta(force = false) {
     optional(db.from('systems').select('id,name,platform_subject_id').order('sort_order').order('name')),
     optional(paged(() => db.from('topics').select('id,name,platform_subject_id,system_id,parent_topic_id').order('sort_order').order('name').order('id'))),
     optional(db.from('subtopics').select('id,name,topic_id').order('sort_order').order('name'), 'subtopics'),
-    optional(paged(() => db.from('qbank_source_tests').select('id,title,platform_id,subject_id,sequence,declared_question_count,is_pyq').not('subject_id', 'is', null).order('sequence').order('id')), 'hybrid'),
+    includeSources ? optional(paged(() => db.from('qbank_source_tests').select('id,title,platform_id,subject_id,sequence,declared_question_count,is_pyq').not('subject_id', 'is', null).order('sequence').order('id')), 'hybrid') : Promise.resolve(state.meta.sourceTests),
   ]);
   if (subjects.error) throw subjects.error;
   if (platforms.error) throw platforms.error;
   if (platformSubjects.error) throw platformSubjects.error;
+  // A slower Home-only request must not erase modules loaded by a newer builder.
+  if (!includeSources && state.meta.fullLoaded) return;
   const subjectByPlatformSubject = new Map((platformSubjects.data || []).map((row) => [row.id, row.subject_id]));
   const hydratedTopics = (topics.data || topics || []).map((topic) => ({ ...topic, subject_id: subjectByPlatformSubject.get(topic.platform_subject_id) || '' }));
   const topicById = new Map(hydratedTopics.map((topic) => [topic.id, topic]));
   state.meta = {
-    fullLoaded: true, subjects: subjects.data || [], platforms: platforms.data || [],
+    fullLoaded: includeSources, subjects: subjects.data || [], platforms: platforms.data || [],
     systems: (systems.data || []).map((system) => ({ ...system, subject_id: subjectByPlatformSubject.get(system.platform_subject_id) || '' })),
     topics: hydratedTopics.filter((topic) => !topic.parent_topic_id),
     subtopics: (subtopics.data || []).map((subtopic) => ({ ...subtopic, subject_id: topicById.get(subtopic.topic_id)?.subject_id || '' })),
@@ -207,7 +210,7 @@ async function resolveFacets(filters) {
   try { return await promise; } catch (error) { facetCache.delete(key); throw error; }
 }
 async function fetchFacets(filters) {
-  const result = await db.rpc('qbank_filter_facets', { p_filters: filters || {} });
+  const result = await db.rpc('qbank_filter_facets_fast', { p_filters: filters || {} });
   if (result.error) throw result.error;
   const data = result.data || {};
   return {
@@ -726,6 +729,15 @@ async function home() {
   state.continueLearning=!studyContinuation.error&&studyContinuation.data?.kind==='next'?studyContinuation.data.module:null;
   const nextModule=state.continueLearning;
   const study=studyContinuation.error?null:studyContinuation.data;
+  // Home needs the names of at most its two continuation sessions, not every module.
+  const contextIds=[...new Set([sessions.data?.[0],study?.session].flatMap(s=>s?.filters?.source_tests||[]))];
+  const missingIds=contextIds.filter(id=>!state.meta.sourceTests.some(t=>t.id===id));
+  if(missingIds.length){
+    const context=await db.from('qbank_source_tests').select('id,title').in('id',missingIds);
+    if(!homeCurrent())return;
+    if(context.error)throw context.error;
+    state.meta.sourceTests.push(...(context.data||[]).map(t=>({...t,name:t.title})));
+  }
   const active = sessions.data?.[0]; const dueCount = (due.count || due.data?.length || 0) + (cards.count || cards.data?.length || 0);
   const mistakes = new Map(); logs.filter((row) => !row.is_correct).forEach((row) => mistakes.set(row.question_id, (mistakes.get(row.question_id) || 0) + 1));
   const recommendation = dueCount ? { label: 'Start Active Recall', route: '#/recall' }
@@ -760,7 +772,7 @@ async function qbank() {
     catch (error) { toast(error.message || 'Could not build practice set.', 'error'); qbank(); }
   };
   const studyUser=state.user?.id;
-  void db.rpc('qbank_session_history',{p_limit:4,p_offset:0,p_include_unfinished:true}).then(result=>{if(form.isConnected&&state.user?.id===studyUser&&!result.error)form.studySetSessions?.(result.data);}).catch(()=>{});
+  void db.rpc('qbank_session_history_light',{p_limit:4,p_offset:0,p_include_unfinished:true}).then(result=>{if(form.isConnected&&state.user?.id===studyUser&&!result.error)form.studySetSessions?.(result.data);}).catch(()=>{});
   const diagnostic = new URLSearchParams(location.hash.split('?')[1] || '').get('dom-regression');
   if (diagnostic === '1') {
     const regressionRun = `${Date.now()}-${Math.random()}`;
@@ -847,7 +859,7 @@ async function tests() {
   layout(`<div class="page-heading"><span class="eyebrow">TEST</span><h1>Choose a test type</h1><p>Start with intent, then narrow the question pool.</p></div><section class="preset-grid">${Object.entries(TEST_PRESETS).map(([id, item]) => `<button class="card preset-card" data-action="choose-preset" data-preset="${id}"><b>${studyIcon(id==='revision'?'retry':id==='grand'?'chart':'book')}${e(item[0])}</b><span>${e(item[1])}</span></button>`).join('')}</section><section id="test-builder-slot"></section><section class="card section-card"><div class="section-heading"><div><span class="eyebrow">CONTINUE</span><h2>Recent sessions</h2></div><a href="#/history">History</a></div><div id="resume-tests" class="empty">Loading…</div></section>`);
   const resumeHost = document.querySelector('#resume-tests');
   const user=state.user?.id;
-  const result = await db.rpc('qbank_session_history',{p_limit:4,p_offset:0,p_include_unfinished:true});
+  const result = await db.rpc('qbank_session_history_light',{p_limit:4,p_offset:0,p_include_unfinished:true});
   if (!resumeHost.isConnected||state.user?.id!==user) return;
   resumeHost.innerHTML = result.error?e(result.error.message):result.data?.length?sessionHistoryRows(result.data)+'<a class="button secondary" href="#/history">View History</a>':'<div class="empty">No sessions yet.</div>';
 
@@ -856,13 +868,18 @@ async function tests() {
 const gtMode = createGTExamMode({ db, e, richHtml, safeUrl, decodePayloadObject, layout });
 const grandTests = createGrandTests({ db, e, richHtml, safeUrl, decodePayloadObject, layout, startGT: (host,test) => gtMode.setup(host,test,()=>grandTests.showCatalog(host)) });
 
-function showTestBuilder(preset) {
+let testBuilderGeneration=0;
+async function showTestBuilder(preset) {
+  const generation=++testBuilderGeneration,userId=state.user?.id;
   grandTests.cancel(); gtMode.cancel();
   const item = TEST_PRESETS[preset] || TEST_PRESETS.custom; const revision = preset === 'revision';
   const slot = document.querySelector('#test-builder-slot');
   if (preset === 'grand') { grandTests.showCatalog(slot); return; }
   if (preset === 'pyq') { slot.innerHTML = '<section class="card builder-card"><div class="empty">Loading PYQ subjects and tests…</div></section>'; showPyqCatalog(); return; }
   if (preset === 'coreBtr') { slot.innerHTML = '<section class="card builder-card"><div class="empty">Loading Core BTR sections and collections…</div></section>'; showCoreBtrCatalog(); return; }
+  slot.innerHTML='<div class="card study-loading" role="status">Loading test filters…</div>';
+  await loadMeta(false,'full');
+  if(generation!==testBuilderGeneration||state.user?.id!==userId||!slot.isConnected)return;
   slot.innerHTML = `<section class="card builder-card"><div class="section-heading"><div><span class="eyebrow">${e(item[0])}</span><h2>Configure this test</h2></div><button class="button ghost compact" data-action="close-builder">Close</button></div><form id="test-form" class="stack" data-preset="${e(preset)}"><div class="filters">${filterFields({ revision, sourceTests: true })}</div><div class="builder-footer"><div><b data-match-count>Counting available questions…</b><div class="subtle">Browse without timers, or preview this exact set before starting.</div></div><div class="row"><label class="inline-label">Questions <select name="count"><option>10</option><option>20</option><option selected>50</option><option>100</option><option value="all">All matching</option></select></label><button class="button secondary" name="intent" value="browse">Open questions</button><button class="button" name="intent" value="test">Preview ${e(item[0])}</button></div></div></form></section>`;
   const form = document.querySelector('#test-form'); if (preset === 'pyq') form.elements.pyq.value = 'yes'; setupDependentFilters(form);
   form.onsubmit = async (event) => {
@@ -1307,13 +1324,16 @@ async function legacyHistory() {
 }
 
 async function review() {
+  const reviewUser=state.user?.id,reviewGeneration=recallGeneration;
   const now = new Date().toISOString();
-  const learning = await optional(db.from('user_question_state').select('*').eq('user_id', state.user.id), 'learning');
+  const learning = await optional(paged(() => db.from('user_question_state').select('question_id,last_is_correct,wrong,bookmarked,marked_for_review,revision,srm_active,srm_due_at,personally_difficult,last_time_seconds,questions(id,platform_id,subject_id)').eq('user_id', reviewUser).order('question_id'),500).then(data=>({data})).catch(error=>({error})), 'learning');
+  if(state.user?.id!==reviewUser||recallGeneration!==reviewGeneration||state.route!=='review')return;
   const rows = learning.data || [];
   const selected = state.reviewFilters || { platforms: [], subjects: [], systems: [], topics: [], subtopics: [], source_tests: [], pyq: '' };
   const learningQuestionIds = [...new Set(rows.map((row) => String(row.question_id)))];
   const hasPopulationFilter = ['platforms','subjects','systems','topics','subtopics','source_tests'].some((key) => selected[key]?.length) || Boolean(selected.pyq);
   const validIds = new Set(hasPopulationFilter ? await matchingQuestionIds({ ...selected, question_ids: learningQuestionIds, statuses: ['all'], year: '', search: '', source: '' }) : learningQuestionIds);
+  if(state.user?.id!==reviewUser||recallGeneration!==reviewGeneration||state.route!=='review')return;
   const categories = [
     ['incorrect', 'Incorrect', rows.filter((x) => x.last_is_correct === false || x.wrong), 'Questions whose current learning state is incorrect.'],
     ['correct', 'Correct', rows.filter((x) => x.last_is_correct === true), 'Questions whose current learning state is correct.'],
@@ -1323,12 +1343,7 @@ async function review() {
     ['difficult', 'Personally Difficult', rows.filter((x) => x.personally_difficult), 'Questions flagged as difficult.'],
     ['slow', 'Slow >50s', rows.filter((x) => Number(x.last_time_seconds) > TARGET_SECONDS), 'Questions whose latest relevant time exceeded 50 seconds.'],
   ];
-  const taxonomyRows = [];
-  for (let index = 0; index < learningQuestionIds.length; index += 200) {
-    const result = await db.from('questions').select('id,platform_id,subject_id').in('id', learningQuestionIds.slice(index, index + 200));
-    if (result.error) throw result.error;
-    taxonomyRows.push(...(result.data || []));
-  }
+  const taxonomyRows = rows.map(row=>row.questions).filter(Boolean);
   const taxonomyByQuestion = new Map(taxonomyRows.map((item) => [String(item.id), item]));
   const groupRows = (ids, field, items, status, title) => {
     const groups = new Map(); ids.forEach((id) => { const key = taxonomyByQuestion.get(String(id))?.[field]; if (key) { if (!groups.has(key)) groups.set(key, []); groups.get(key).push(id); } });
@@ -1844,7 +1859,7 @@ async function nextActiveRecall(){
 function sessionHistoryRows(rows){return `<ul class="history-list">${rows.map(s=>`<li><div><b>${e(s.subjects||'Subject unavailable')}</b><p>${e(s.platforms||'')} · ${e(s.modules||s.title||s.preset||'Session')}</p><small>${s.status==='in_progress'?`In progress · Question ${Number(s.current_position||0)+1}/${s.total_questions}`:`${s.total_correct||0}/${s.total_questions} · ${pct(s.total_correct||0,s.total_questions)}`} · ${date(s.completed_at||s.updated_at)}</small></div><button class="button secondary" data-action="resume" data-id="${e(s.id)}">${s.status==='in_progress'?'Resume':'Open result'}</button></li>`).join('')}</ul>`;}
 async function history(page=0){
  const user=state.user?.id;layout('<div class="page-heading"><h1>Session history</h1></div><section class="card" id="history-page">Loading recent sessions…</section>');const host=document.querySelector('#history-page');
- const result=await db.rpc('qbank_session_history',{p_limit:20,p_offset:page*20,p_include_unfinished:true});if(!host.isConnected||state.user?.id!==user)return;
+ const result=await db.rpc('qbank_session_history_light',{p_limit:20,p_offset:page*20,p_include_unfinished:true});if(!host.isConnected||state.user?.id!==user)return;
  host.innerHTML=result.error?e(result.error.message):`${sessionHistoryRows(result.data||[])}<div class="row">${page?`<button class="button secondary" data-action="history-page" data-page="${page-1}">Previous</button>`:''}${result.data?.length===20?`<button class="button secondary" data-action="history-page" data-page="${page+1}">Next</button>`:''}</div>`;
 }
 async function analytics(){
@@ -1912,7 +1927,8 @@ document.addEventListener('click', async (event) => {
   if (action === 'exit-recall') { event.preventDefault(); pauseTotalTimer(state.active); persistTimer(state.active, false); stopActiveTimer(); state.active.solvingVisible = false; return goToHash('#/recall'); }
   if (action === 'toggle-timers') await toggleAttemptPause();
   if (action === 'signout') await db.auth.signOut(); if (action === 'signup') await signUp(); if (action === 'reset-password') await resetPassword(); if (action === 'retry') render();
-  if (action === 'choose-preset') showTestBuilder(target.dataset.preset); if (action === 'close-builder') { grandTests.cancel(); gtMode.cancel(); document.querySelector('#test-builder-slot').innerHTML = ''; }
+  if (action === 'choose-preset') await showTestBuilder(target.dataset.preset); if (action === 'close-builder') testBuilderGeneration++;
+  if (action === 'close-builder') { grandTests.cancel(); gtMode.cancel(); document.querySelector('#test-builder-slot').innerHTML = ''; }
   if (action === 'open-pyq-test') await openSelectedPyqTest(target, false); if (action === 'start-pyq-test') await openSelectedPyqTest(target, true);
   if (action === 'open-core-btr-test') await openSelectedCoreBtrTest(target, false); if (action === 'start-core-btr-test') await openSelectedCoreBtrTest(target, true);
   if (action === 'answer') await selectAnswer(target.dataset.key); if (action === 'submit-multi-answer') await submitMultiAnswer(); if (action === 'previous') await navigateActive(state.active.index - 1);
