@@ -1,5 +1,5 @@
 import {studyIcon} from './study-icons.js';
-import { compactStudy } from './compact-study.js?v=compact-ui-v1';
+import { compactStudy } from './compact-study.js?v=20261017-study1';
 import { resolveImportedMedia } from './imported-media.js?v=marrow-qbank-v1';
 import {createActiveRecall} from './active-recall.js';
 import {safeRecallMetadata,recallConcept,isRecallSelection,studyContext} from './study-flow.mjs';
@@ -7,7 +7,7 @@ import { isCerebellum, cerebellumMedia, cerebellumNotice, essentialMediaReady, b
 import {renderContent,questionContent,installMediaFailures} from './media-content.js?v=20261003-media1';
 import { createSmartRecall } from './smart-recall.js?v=20261005-finalrecall1';
 import { recallQuestionLimit, LABELS as SMART_RECALL_LABELS } from './smart-recall-model.mjs';
-import { createGlobalImportance } from './global-importance.js?v=20261015-performance1';
+import { createGlobalImportance } from './global-importance.js?v=20261017-study1';
 import {readClock,freezeClock,runClock,checkpointClock,initialClock} from './session-timers.js?v=20260926-recall1';
 import { createGTExamMode } from './gt-exam-mode.js?v=20261003-media1';
 import { createGrandTests } from './grand-tests.js?v=20261003-media1';
@@ -162,7 +162,7 @@ async function loadFullMeta(force = false, includeSources = true) {
     optional(db.from('systems').select('id,name,platform_subject_id').order('sort_order').order('name')),
     optional(paged(() => db.from('topics').select('id,name,platform_subject_id,system_id,parent_topic_id').order('sort_order').order('name').order('id'))),
     optional(db.from('subtopics').select('id,name,topic_id').order('sort_order').order('name'), 'subtopics'),
-    includeSources ? optional(paged(() => db.from('qbank_source_tests').select('id,title,platform_id,subject_id,sequence,declared_question_count,is_pyq').not('subject_id', 'is', null).order('sequence').order('id')), 'hybrid') : Promise.resolve(state.meta.sourceTests),
+    includeSources ? optional(paged(() => db.from('qbank_source_tests').select('id,title,platform_id,subject_id,sequence,declared_question_count,is_pyq,source_path').order('sequence').order('id')), 'hybrid') : Promise.resolve(state.meta.sourceTests),
   ]);
   if (subjects.error) throw subjects.error;
   if (platforms.error) throw platforms.error;
@@ -249,17 +249,20 @@ function readMulti(form, name) {
 
 function readFilters(form) {
   const raw = Object.fromEntries(new FormData(form));
+  const folders=readMulti(form,'source_folders'),explicitTests=readMulti(form,'source_tests');
+  const sourceTests=folders.length?state.meta.sourceTests.filter(t=>folders.includes(JSON.stringify([t.platform_id,...(t.source_path||[])]))&&(!explicitTests.length||explicitTests.includes(t.id))).map(t=>t.id):explicitTests;
   return {
+    study_sources:readMulti(form,'study_sources'),source_folders:folders,
     platforms: readMulti(form, 'platforms'), subjects: readMulti(form, 'subjects'), systems: readMulti(form, 'systems'),
     topics: readMulti(form, 'topics'), subtopics: readMulti(form, 'subtopics'), statuses: readMulti(form, 'statuses'),
-    source_tests: readMulti(form, 'source_tests'), exams: readMulti(form, 'exams'), years: readMulti(form, 'years'), sessions: readMulti(form, 'sessions'),
+    source_tests: folders.length&&!sourceTests.length?['00000000-0000-0000-0000-000000000000']:sourceTests, exams: readMulti(form, 'exams'), years: readMulti(form, 'years'), sessions: readMulti(form, 'sessions'),
     pyq: form.dataset.marrowPlatform && readMulti(form,'platforms').includes(form.dataset.marrowPlatform) ? 'no' : raw.pyq || '', srm: raw.srm || '', year: raw.year || '', search: raw.search?.trim() || '', source: raw.source?.trim() || '',
   };
 }
 
 function setupDependentFilters(form) {
   compactStudy(form,{meta:state.meta,e,practice:async(test,status)=>{
-    try {const filters={...readFilters(form),platforms:[test.platform_id],subjects:[test.subject_id],source_tests:[test.id],statuses:[status]};await createSession({mode:form.id==='test-form'?'test':'practice',preset:form.dataset.preset||'qbank',title:test.title,filters,requested:'all',autoSubmit:form.id==='test-form',origin:location.hash});}catch(error){toast(error.message||'Could not open this module.','error');}
+    try {const filters={...readFilters(form),platforms:[test.platform_id],subjects:[],systems:[],topics:[],subtopics:[],source_tests:[test.id],statuses:[status]};await createSession({mode:form.id==='test-form'?'test':'practice',preset:form.dataset.preset||'qbank',title:test.title,filters,requested:'all',autoSubmit:form.id==='test-form',origin:location.hash});}catch(error){toast(error.message||'Could not open this module.','error');}
   },resume:async id=>{try{await resumeSession(id);}catch(error){toast(error.message||'Could not resume this session.','error');}}});
 
   const update = async () => {
@@ -686,7 +689,7 @@ async function startPendingSession(isCurrent = () => true) {
     session = created.data;
     const snapshots = questions.map((q, position) => ({
       session_id: session.id, question_id: q.id, position,
-      question_snapshot: { ...(isCerebellum(q)?{cerebellum_full_v1:true,source_media:q.source_media,import_warnings:q.import_warnings,option_text_blank:q.option_text_blank,needs_media_review:q.needs_media_review,question_images:q.question_images,explanation_images:q.explanation_images,video_url:q.video_url,audio:q.audio}:{}), question_text: q.question_text, correct_answer: q.correct_answer, correct_option_keys: q.correct_option_keys || correctKeys(q), explanation_html: q.explanation_html, source_reference: q.source_reference, source_collection: q.source_collection, source_test_label: q.source_test_label, source_position: q.source_position, media_status: q.media_status, image_url: q.image_url, subject_id: q.subject_id, platform_id: q.platform_id, system_id: q.system_id, options: q.options },
+      question_snapshot: { ...(isCerebellum(q)?{cerebellum_full_v1:true,source_media:q.source_media,import_warnings:q.import_warnings,option_text_blank:q.option_text_blank,needs_media_review:q.needs_media_review,question_images:q.question_images,explanation_images:q.explanation_images,video_url:q.video_url,audio:q.audio}:{}), question_text: q.question_text, correct_answer: q.correct_answer, correct_option_keys: q.correct_option_keys || correctKeys(q), explanation_html: q.explanation_html, source_reference: q.source_reference, source_collection: q.source_collection, source_test_label: q.source_test_label, source_position: q.source_position, is_pyq:q.is_pyq, media_status: q.media_status, image_url: q.image_url, subject_id: q.subject_id, platform_id: q.platform_id, system_id: q.system_id, options: q.options },
     }));
     for (let i = 0; i < snapshots.length; i += 100) {
       const result = await db.from('test_session_questions').insert(snapshots.slice(i, i + 100));
@@ -907,7 +910,7 @@ async function showPyqCatalog(platformScope='') {
   }
   const bySubject = new Map();
   state.pyqCatalog.filter(row=>!platformScope||String(row.platform).toLowerCase()===platformScope).forEach((row) => { if (!bySubject.has(row.subject)) bySubject.set(row.subject, new Map()); const exams = bySubject.get(row.subject); if (!exams.has(row.exam)) exams.set(row.exam, []); exams.get(row.exam).push(row); });
-  slot.innerHTML = `<section class="card builder-card"><div class="section-heading"><div><span class="eyebrow">PYQS</span><h2>Choose subject, exam and year</h2><p class="subtle">Only the selected test’s questions are loaded.</p></div><button class="button ghost compact" data-action="close-builder">Close</button></div><div class="pyq-catalog">${[...bySubject.entries()].map(([subject, exams]) => `<details><summary><b>${e(subject)}</b><span>${[...exams.values()].flat().reduce((sum, row) => sum + Number(row.question_count || 0), 0)} questions</span></summary>${[...exams.entries()].map(([exam, tests]) => `<div class="pyq-exam"><h3>${e(exam)}</h3><div class="list">${tests.map((test) => `<div class="pyq-test-row"><div><b>${e(test.year)} · ${e(test.title)}</b><small>${Number(test.question_count || 0)} questions</small></div><div class="row"><button class="button secondary compact" data-action="open-pyq-test" data-test="${e(test.test_id)}" data-title="${e(`${subject} · ${exam} ${test.year}`)}">Browse</button><button class="button compact" data-action="start-pyq-test" data-test="${e(test.test_id)}" data-title="${e(`${subject} · ${exam} ${test.year}`)}">Start test</button></div></div>`).join('')}</div></div>`).join('')}</details>`).join('')}</div></section>`;
+  slot.innerHTML = `<section class="card builder-card"><div class="section-heading"><div><span class="eyebrow">PYQS</span><h2>Choose subject, exam and year</h2><div class="row"><button class="button compact" data-action="start-catalog-selection" data-kind="pyq">Start selected tests</button><button class="button secondary compact" data-action="browse-catalog-selection" data-kind="pyq">Browse selected</button></div><p class="subtle">Only the selected test’s questions are loaded.</p></div><button class="button ghost compact" data-action="close-builder">Close</button></div><div class="pyq-catalog">${[...bySubject.entries()].map(([subject, exams]) => `<details><summary><b>${e(subject)}</b><span>${[...exams.values()].flat().reduce((sum, row) => sum + Number(row.question_count || 0), 0)} questions</span></summary>${[...exams.entries()].map(([exam, tests]) => `<div class="pyq-exam"><h3>${e(exam)}</h3><div class="list">${tests.map((test) => `<div class="pyq-test-row"><div><label><input type="checkbox" name="catalog-tests" value="${e(test.test_id)}"> <b>${e(test.year)} · ${e(test.title)}</b></label><small>${Number(test.question_count || 0)} questions</small></div><div class="row"><button class="button secondary compact" data-action="open-pyq-test" data-test="${e(test.test_id)}" data-title="${e(`${subject} · ${exam} ${test.year}`)}">Browse</button><button class="button compact" data-action="start-pyq-test" data-test="${e(test.test_id)}" data-title="${e(`${subject} · ${exam} ${test.year}`)}">Start test</button></div></div>`).join('')}</div></div>`).join('')}</details>`).join('')}</div></section>`;
 }
 
 async function openSelectedPyqTest(target, start) {
@@ -932,7 +935,14 @@ async function showCoreBtrCatalog() {
     collections.get(row.collection_type).push(row);
   });
   const labels = { TOPIC_TEST: 'Topic tests', ALL_QBANK_EXCLUDING_PYQ: 'All QBank excluding PYQs', CORE_BTR_PYQ: 'Core BTR PYQs', ZV_RECOMMENDED: 'ZV Recommended' };
-  slot.innerHTML = `<section class="card builder-card"><div class="section-heading"><div><span class="eyebrow">CORE BTR</span><h2>Choose section and collection</h2><p class="subtle">Metadata loads first. Questions are fetched only for the selected collection.</p></div><button class="button ghost compact" data-action="close-builder">Close</button></div><div class="pyq-catalog">${[...bySection.entries()].map(([section, collections]) => `<details><summary><b>${e(section)}</b><span>${[...collections.values()].flat().reduce((sum, row) => sum + Number(row.question_count || 0), 0)} memberships</span></summary>${[...collections.entries()].map(([type, tests]) => `<div class="pyq-exam"><h3>${e(labels[type] || type)}</h3><div class="list">${tests.map((test) => `<div class="pyq-test-row"><div><b>${e(test.title)}</b><small>${Number(test.question_count || 0)} questions · Analytics: ${e(test.analytics_subject)}</small></div><div class="row"><button class="button secondary compact" data-action="open-core-btr-test" data-test="${e(test.test_id)}" data-title="${e(`Core BTR · ${section} · ${test.title}`)}">Browse</button><button class="button compact" data-action="start-core-btr-test" data-test="${e(test.test_id)}" data-title="${e(`Core BTR · ${section} · ${test.title}`)}">Start test</button></div></div>`).join('')}</div></div>`).join('')}</details>`).join('')}</div></section>`;
+  slot.innerHTML = `<section class="card builder-card"><div class="section-heading"><div><span class="eyebrow">CORE BTR</span><h2>Original source folders</h2><div class="row"><button class="button compact" data-action="start-catalog-selection" data-kind="coreBtr">Start selected tests</button><button class="button secondary compact" data-action="browse-catalog-selection" data-kind="coreBtr">Browse selected</button></div><p class="subtle">Metadata loads first. Questions are fetched only for the selected collection.</p></div><button class="button ghost compact" data-action="close-builder">Close</button></div><div class="pyq-catalog">${[...bySection.entries()].map(([section, collections]) => `<details><summary><b>${e(section)}</b><span>${[...collections.values()].flat().reduce((sum, row) => sum + Number(row.question_count || 0), 0)} memberships</span></summary>${[...collections.entries()].map(([type, tests]) => `<div class="pyq-exam"><h3>${e(labels[type] || type)}</h3><div class="list">${tests.map((test) => `<div class="pyq-test-row"><div><label><input type="checkbox" name="catalog-tests" value="${e(test.test_id)}"> <b>${e(test.title)}</b></label><small>${Number(test.question_count || 0)} questions</small></div><div class="row"><button class="button secondary compact" data-action="open-core-btr-test" data-test="${e(test.test_id)}" data-title="${e(`Core BTR · ${section} · ${test.title}`)}">Browse</button><button class="button compact" data-action="start-core-btr-test" data-test="${e(test.test_id)}" data-title="${e(`Core BTR · ${section} · ${test.title}`)}">Start test</button></div></div>`).join('')}</div></div>`).join('')}</details>`).join('')}</div></section>`;
+}
+
+async function openCatalogSelection(kind,start) {
+ const ids=[...document.querySelectorAll('#test-builder-slot input[name="catalog-tests"]:checked')].map(i=>i.value);
+ if(!ids.length)return toast('Select one or more source tests.');
+ const definition={mode:'test',preset:kind,title:kind==='pyq'?'Selected PYQ tests':'Core BTR selected tests',filters:{platforms:state.route==='marrow-pyqs'?state.meta.platforms.filter(p=>p.name.toLowerCase()==='marrow').map(p=>p.id):[],source_tests:ids,pyq:kind==='pyq'?'yes':'',statuses:['all']},requested:'all',autoSubmit:true,origin:location.hash};
+ if(start)await createSession(definition);else await openQuestionSet(definition);
 }
 
 async function openSelectedCoreBtrTest(target, start) {
@@ -969,7 +979,7 @@ function renderQuestion(question, answer, reveal) {
 }
 
 function feedbackControls(answer, reveal, wrong) {
-  if (!reveal) return '';
+  if (!reveal || state.active?.completedReview) return '';
   if (state.active?.preset === 'active-recall-v2') return activeRecallFeedback(answer,wrong);
   const confidence = wrong ? '' : `<div><span class="field-label">How confident were you?</span><div class="segmented"><button data-action="confidence" data-value="sure" class="${answer.confidence === 'sure' ? 'active' : ''}" ${answer.attemptRecorded ? 'disabled' : ''}>SURE</button><button data-action="confidence" data-value="unsure" class="${answer.confidence === 'unsure' ? 'active' : ''}" ${answer.attemptRecorded ? 'disabled' : ''}>GUESSED / UNSURE</button></div><small class="subtle">If skipped, correct answers use the safe “unsure” schedule.</small></div>`;
   const mistake = wrong ? `<div><span class="field-label">What happened? <small>Optional</small></span><div class="reason-chips">${[['didnt_know', "Didn't know"], ['forgot', 'Forgot'], ['misread', 'Misread'], ['confused_options', 'Confused options'], ['overthought', 'Overthought'], ['silly_mistake', 'Silly mistake'], ['guess', 'Guess']].map(([value, label]) => `<button data-action="error-reason" data-value="${value}" class="${answer.error_reason === value ? 'active' : ''}">${label}</button>`).join('')}</div></div>` : '';
@@ -979,6 +989,7 @@ function feedbackControls(answer, reveal, wrong) {
 
 function renderActive() {
   const active = state.active; const question = activeQuestion(); if (!active || !question || active.solvingVisible === false) return;
+  const reviewVisible=active.completedReview?new Set(reviewPositions(active)):null;
   if (question.restoreMedia && !question.mediaLoading && !question.mediaError) void recoverSnapshotMedia(active, question);
   const answer = active.answers[question.id]; const reveal = active.completedReview || ['practice', 'recall'].includes(active.kind) && Boolean(answer?.selected_option) && (correctKeys(question).length === 1 || answer.submitted);
   const answered = Object.values(active.answers).filter((item) => item?.selected_option).length;
@@ -990,6 +1001,7 @@ function renderActive() {
   const timerRunning = !browsing && (active.kind !== 'recall' || active.target_seconds_per_question !== 0) && !active.completedReview && active.status === 'in_progress';
   const timerShouldTick = timerRunning && !answer?.selected_option && active.questionTimeRemainingSeconds !== 0;
   const palette = active.questions.slice(0, 500).map((item, index) => {
+    if(reviewVisible&&!reviewVisible.has(index))return ''; 
     const itemAnswer = active.answers[item.id]; const selected = Boolean(itemAnswer?.selected_option);
     const known = selected && (active.completedReview || ['practice', 'recall'].includes(active.kind));
     const base = known ? (isAnswerCorrect(item, itemAnswer) ? 'correct' : 'incorrect') : selected ? 'answered' : 'unattempted';
@@ -999,12 +1011,12 @@ function renderActive() {
     return `<button data-action="jump" data-index="${index}" class="palette-item ${base} ${index === active.index ? 'current' : ''}" aria-label="Question ${index + 1}${bookmark ? ', bookmarked' : ''}${marked ? ', marked for review' : ''}"><span>${index + 1}</span>${badges}</button>`;
   }).join('');
   const smartReason=recallConcept(active,question.id);
-  const tools = browsing ? '' : `<section class="card question-tools"><span class="eyebrow">QUESTION TOOLS</span><button class="tool-button bookmark-tool ${active.bookmarks.has(question.id) ? 'active' : ''}" data-action="bookmark" aria-pressed="${active.bookmarks.has(question.id)}"><span>${active.bookmarks.has(question.id) ? '★' : '☆'}</span>${active.bookmarks.has(question.id) ? 'Bookmarked' : 'Bookmark'}</button><button class="tool-button review-tool ${active.marked.has(question.id) ? 'active' : ''}" data-action="mark" aria-pressed="${active.marked.has(question.id)}"><span>!</span>${active.marked.has(question.id) ? 'Marked for review' : 'Mark for review'}</button>${srmButton}<button class="tool-button" data-action="note"><span>＋</span>Note</button><button class="tool-button" data-action="report"><span>⚑</span>Report</button></section>`;
-  layout(`<section class="question-header ${active.preset==='active-recall-v2'?'active-recall-session':''}"><div><span class="pill">${browsing ? 'Browse' : active.completedReview ? 'Review' : active.kind === 'recall' ? 'Recall' : active.kind === 'test' ? e(TEST_PRESETS[active.preset]?.[0] || 'Test') : 'Practice'}</span><h1>${e(!reveal&&isRecallSelection(active)?'Recall practice':active.title || 'Question set')}</h1></div>${browsing ? `<div class="row"><button class="button" data-action="preview-browsed-set">Start test with these exact questions</button><button class="button secondary" data-action="back-to-origin">Back</button></div>` : active.kind === 'recall' ? `<div class="timer-cluster">${recallTimerSetting(active.target_seconds_per_question ?? 50)}${timerRunning ? '<div><span>QUESTION TIMER</span><b id="question-timer"></b><span id="recall-timeout" role="status"></span></div>' : ''}<a class="button secondary" href="#/recall" data-action="exit-recall">Exit Recall</a></div>` : timerRunning ? `<div class="timer-cluster"><div><span>QUESTION TIMER</span><b id="question-timer">00:50</b></div><div><span>TOTAL TIMER</span><b id="total-timer">${timerText(active.questions.length * TARGET_SECONDS)}</b></div><button class="button secondary compact" data-action="toggle-timers" ${answer?.selected_option||active.timerBusy?'disabled':''}>${sharedClock(active).manualPaused?'Resume':'Pause'}</button>${sharedClock(active).paused?'<span class="pill">PAUSED</span>':''}</div>` : ''}</section><div class="question-layout ${active.preset==='active-recall-v2'?'active-recall-session':''}"><section class="card question-card"><div class="question-topline"><span>Question ${active.index + 1} of ${active.questions.length}</span><span class="question-context">${questionMeta(question)}</span></div><div class="progress"><i style="width:${((active.index + 1) / active.questions.length) * 100}%"></i></div>${smartReason?`<p class="smart-recall-reason">${e(safeRecallMetadata(smartReason))}</p><details class="smart-recall-why"><summary>Why this question?</summary><ul>${[...new Set([safeRecallMetadata(smartReason),...(smartReason.reasons||[])])].map(reason=>`<li>${e(reason)}</li>`).join('')}</ul></details>`:''}${question.mediaLoading ? '<p role="status" class="subtle">Loading original media…</p>' : question.mediaError ? '<p class="media-unavailable">Could not load original media. <button class="button ghost compact" data-action="retry-media">Retry images</button></p>' : ''}${renderQuestion(question, answer, reveal)}${!reveal&&active.preset==='active-recall-v2'&&activeRecallUnit()?.primary_concept&&active.arOptionsFor!==question.id?'<div class="recall-retrieve-prompt"><p>Retrieve the diagnosis, mechanism or next step before looking at the choices.</p><textarea aria-label="Your retrieval" placeholder="Recall it in your own words (optional; not saved)"></textarea><button class="button" data-action="ar-options">Show answer choices</button></div>':''}${browsing ? '' : feedbackControls(answer || {}, reveal, Boolean(answer?.selected_option) && !isAnswerCorrect(question, answer))}<div class="question-actions"><button class="button secondary" data-action="previous" ${active.index === 0 ? 'disabled' : ''}>← Previous</button><button class="button" data-action="next">${active.index === active.questions.length - 1 ? (browsing ? 'Back' : active.completedReview ? 'Back to results' : 'Finish') : 'Next →'}</button></div></section><aside class="question-sidebar">${tools}<section class="card palette-card"><div class="section-heading"><div><span class="eyebrow">NAVIGATOR</span><h3>Questions</h3></div><span>${answered}/${active.questions.length}</span></div><div class="status-legend" aria-label="Question status legend"><span class="correct">Correct</span><span class="incorrect">Incorrect</span><span class="review">Review</span><span class="bookmark">Bookmarked</span><span class="unattempted">Unattempted</span></div><div class="palette">${palette}</div>${active.questions.length > 500 ? '<p class="subtle">Palette shows the first 500 positions; Previous/Next continues through all questions.</p>' : ''}${active.kind === 'test' && !active.completedReview ? `<p class="subtle">${active.questions.length - answered} unanswered</p><button class="button danger full" data-action="submit">Submit test</button>` : ''}</section></aside></div>`);
+  const tools = browsing ? '' : `<section class="card question-tools"><span class="eyebrow">QUESTION TOOLS</span><button class="tool-button bookmark-tool ${active.bookmarks.has(question.id) ? 'active' : ''}" data-action="bookmark" aria-pressed="${active.bookmarks.has(question.id)}"><span>${active.bookmarks.has(question.id) ? '★' : '☆'}</span>${active.bookmarks.has(question.id) ? 'Bookmarked' : 'Bookmark'}</button><button class="tool-button review-tool ${active.marked.has(question.id) ? 'active' : ''}" data-action="mark" aria-pressed="${active.marked.has(question.id)}"><span>!</span>${active.marked.has(question.id) ? 'Marked for review' : 'Mark for review'}</button>${active.completedReview?'':srmButton}<button class="tool-button" data-action="note"><span>＋</span>Note</button><button class="tool-button" data-action="report"><span>⚑</span>Report</button></section>`;
+  layout(`<section class="question-header ${active.preset==='active-recall-v2'?'active-recall-session':''}"><div><span class="pill">${browsing ? 'Browse' : active.completedReview ? 'Review' : active.kind === 'recall' ? 'Recall' : active.kind === 'test' ? e(TEST_PRESETS[active.preset]?.[0] || 'Test') : 'Practice'}</span><h1>${e(!reveal&&isRecallSelection(active)?'Recall practice':active.title || 'Question set')}</h1></div>${browsing ? `<div class="row"><button class="button" data-action="preview-browsed-set">Start test with these exact questions</button><button class="button secondary" data-action="back-to-origin">Back</button></div>` : active.kind === 'recall' ? `<div class="timer-cluster">${recallTimerSetting(active.target_seconds_per_question ?? 50)}${timerRunning ? '<div><span>QUESTION TIMER</span><b id="question-timer"></b><span id="recall-timeout" role="status"></span></div>' : ''}<a class="button secondary" href="#/recall" data-action="exit-recall">Exit Recall</a></div>` : timerRunning ? `<div class="timer-cluster"><div><span>QUESTION TIMER</span><b id="question-timer">00:50</b></div><div><span>TOTAL TIMER</span><b id="total-timer">${timerText(active.questions.length * TARGET_SECONDS)}</b></div><button class="button secondary compact" data-action="toggle-timers" ${answer?.selected_option||active.timerBusy?'disabled':''}>${sharedClock(active).manualPaused?'Resume':'Pause'}</button>${sharedClock(active).paused?'<span class="pill">PAUSED</span>':''}</div>` : ''}</section><div class="question-layout ${active.preset==='active-recall-v2'?'active-recall-session':''}"><section class="card question-card"><div class="question-topline"><span>Question ${active.index + 1} of ${active.questions.length}</span><span class="question-context">${questionMeta(question)}</span></div><div class="progress"><i style="width:${((active.index + 1) / active.questions.length) * 100}%"></i></div>${smartReason&&!active.completedReview?`<p class="smart-recall-reason">${e(safeRecallMetadata(smartReason))}</p><details class="smart-recall-why"><summary>Why this question?</summary><ul>${[...new Set([safeRecallMetadata(smartReason),...(smartReason.reasons||[])])].map(reason=>`<li>${e(reason)}</li>`).join('')}</ul></details>`:''}${question.mediaLoading ? '<p role="status" class="subtle">Loading original media…</p>' : question.mediaError ? '<p class="media-unavailable">Could not load original media. <button class="button ghost compact" data-action="retry-media">Retry images</button></p>' : ''}${active.completedReview&&active.kind!=='browse'?`<div class="row review-status-filters">${['all','incorrect','correct','unattempted'].map(f=>`<button class="button secondary compact" data-action="review-filter" data-value="${f}" aria-pressed="${(active.reviewFilter||'all')===f}">${f[0].toUpperCase()+f.slice(1)}</button>`).join('')}</div><p class="pill">${!answer?.selected_option?'Unattempted':isAnswerCorrect(question,answer)?'Correct':'Incorrect'} · Selected: ${e(answer?.selected_option||'—')} · Correct: ${e(correctKeys(question).join(', '))}</p>`:''}${renderQuestion(question, answer, reveal)}${!reveal&&active.preset==='active-recall-v2'&&activeRecallUnit()?.primary_concept&&active.arOptionsFor!==question.id?'<div class="recall-retrieve-prompt"><p>Retrieve the diagnosis, mechanism or next step before looking at the choices.</p><textarea aria-label="Your retrieval" placeholder="Recall it in your own words (optional; not saved)"></textarea><button class="button" data-action="ar-options">Show answer choices</button></div>':''}${browsing ? '' : feedbackControls(answer || {}, reveal, Boolean(answer?.selected_option) && !isAnswerCorrect(question, answer))}<div class="question-actions"><button class="button secondary" data-action="previous" ${active.index === 0 ? 'disabled' : ''}>← Previous</button><button class="button" data-action="next">${active.index === active.questions.length - 1 ? (browsing ? 'Back' : active.completedReview ? 'Back to results' : 'Finish') : 'Next →'}</button></div></section><aside class="question-sidebar">${tools}<section class="card palette-card"><div class="section-heading"><div><span class="eyebrow">NAVIGATOR</span><h3>Questions</h3></div><span>${answered}/${active.questions.length}</span></div><div class="status-legend" aria-label="Question status legend"><span class="correct">Correct</span><span class="incorrect">Incorrect</span><span class="review">Review</span><span class="bookmark">Bookmarked</span><span class="unattempted">Unattempted</span></div><div class="palette">${palette}</div>${active.questions.length > 500 ? '<p class="subtle">Palette shows the first 500 positions; Previous/Next continues through all questions.</p>' : ''}${active.kind === 'test' && !active.completedReview ? `<p class="subtle">${active.questions.length - answered} unanswered</p><button class="button danger full" data-action="submit">Submit test</button>` : ''}</section></aside></div>`);
   if(!reveal&&active.preset==='active-recall-v2'&&activeRecallUnit()?.primary_concept&&active.arOptionsFor!==question.id){document.querySelectorAll('[data-action=answer],[data-action=submit-multi-answer]').forEach(el=>el.hidden=true);}
   if (timerRunning) updateActiveTimerDisplay();
   bindCerebellumMedia(question, root, () => !reveal && !sharedClock(active).manualPaused);
-  if (sharedClock(active).manualPaused) document.querySelectorAll('[data-action=answer],[data-action=next],[data-action=previous],[data-action=jump],[data-action=submit-multi-answer]').forEach(el=>el.disabled=true);
+  if (!active.completedReview && sharedClock(active).manualPaused) document.querySelectorAll('[data-action=answer],[data-action=next],[data-action=previous],[data-action=jump],[data-action=submit-multi-answer]').forEach(el=>el.disabled=true);
   if (timerShouldTick && !sharedClock(active).paused) startActiveTimers(); else stopActiveTimer();
 }
 
@@ -1068,24 +1080,27 @@ function startActiveTimers(){
 function elapsedOnQuestion(at=Date.now()){return Math.floor(readClock(sharedClock(state.active),at,totalTimerLimit(state.active)).questionUsedMs/1000);}
 
 async function recordAttempt(question, answer) {
+  const active=state.active,userId=state.user?.id;
+  if (!active || active.completedReview || !userId) return null;
   if (!answer?.selected_option || answer.attemptRecorded) return answer?.srmFeedback || null;
   answer.client_event_id ||= crypto.randomUUID();
-  const mode = state.active.kind === 'recall' ? 'recall' : state.active.kind === 'test' ? 'test' : 'qbank';
+  const mode = active.kind === 'recall' ? 'recall' : active.kind === 'test' ? 'test' : 'qbank';
   const confidence = isAnswerCorrect(question, answer) ? (answer.confidence === 'sure' ? 'sure' : 'unsure') : null;
-  const args = { p_question_id: question.id, p_selected_option: answer.selected_option, p_mode: mode, p_event_id: answer.client_event_id, p_test_session_id: state.active.id || null, p_time_spent_seconds: answer.time_spent_seconds || 0, p_confidence: confidence, p_error_reason: answer.error_reason || null };
-  const isV2 = state.active.preset === 'active-recall-v2';
-  const result = await db.rpc(isV2 ? 'qbank_active_recall_record' : 'qbank_record_attempt_v2', isV2 ? {p_question_id:question.id,p_selected_option:answer.selected_option,p_event_id:answer.client_event_id,p_test_session_id:state.active.id||null,p_time_spent_seconds:answer.time_spent_seconds||0,p_strength:answer.retrieval_strength||(isAnswerCorrect(question,answer)?(confidence==='sure'?'strong':'partial'):'failed'),p_error_reason:answer.error_reason||null}:args);
+  const args = { p_question_id: question.id, p_selected_option: answer.selected_option, p_mode: mode, p_event_id: answer.client_event_id, p_test_session_id: active.id || null, p_time_spent_seconds: answer.time_spent_seconds || 0, p_confidence: confidence, p_error_reason: answer.error_reason || null };
+  const isV2 = active.preset === 'active-recall-v2';
+  const result = await db.rpc(isV2 ? 'qbank_active_recall_record' : 'qbank_record_attempt_v2', isV2 ? {p_question_id:question.id,p_selected_option:answer.selected_option,p_event_id:answer.client_event_id,p_test_session_id:active.id||null,p_time_spent_seconds:answer.time_spent_seconds||0,p_strength:answer.retrieval_strength||(isAnswerCorrect(question,answer)?(confidence==='sure'?'strong':'partial'):'failed'),p_error_reason:answer.error_reason||null}:args);
+  if (state.active !== active || state.user?.id !== userId) return null;
   if (!result.error) {
     answer.confidence = confidence; answer.attemptRecorded = true; answer.srmFeedback = isV2 ? {...result.data,relearn:!isAnswerCorrect(question,answer)||answer.retrieval_strength==='failed'} : result.data;
-    const learning = state.active.learning.get(question.id) || { user_id: state.user.id, question_id: question.id };
-    state.active.learning.set(question.id, { ...learning, srm_active: result.data?.active, srm_state: result.data?.state, srm_due_at: result.data?.due_at, srm_interval_minutes: result.data?.interval_minutes });
+    const learning = active.learning.get(question.id) || { user_id: userId, question_id: question.id };
+    active.learning.set(question.id, { ...learning, srm_active: result.data?.active, srm_state: result.data?.state, srm_due_at: result.data?.due_at, srm_interval_minutes: result.data?.interval_minutes });
     await saveActiveAnswer(question.id);
     invalidateLearnerCaches();
     return result.data;
   }
   if (isV2) { toast(result.error.message, 'error'); return null; }
   if (isMissingTable(result.error) || /function .* does not exist|schema cache/i.test(result.error.message)) {
-    const saved = await db.from('question_attempts').insert({ user_id: state.user.id, question_id: question.id, selected_option: answer.selected_option, is_correct: isAnswerCorrect(question, answer), mode, answered_at: new Date().toISOString() });
+    const saved = await db.from('question_attempts').insert({ user_id: userId, question_id: question.id, selected_option: answer.selected_option, is_correct: isAnswerCorrect(question, answer), mode, answered_at: new Date().toISOString() });
     if (saved.error) toast(`Answer sync failed: ${saved.error.message}`, 'error');
     else invalidateLearnerCaches();
   } else toast(result.error.message, 'error');
@@ -1093,7 +1108,7 @@ async function recordAttempt(question, answer) {
 }
 
 async function ensureAttemptRecorded(question, answer) {
-  if (!answer?.selected_option || answer.attemptRecorded || state.active.kind === 'browse') return;
+  if (!answer?.selected_option || answer.attemptRecorded || state.active.completedReview || ['browse','test'].includes(state.active.kind)) return;
   if (isAnswerCorrect(question, answer) && !answer.confidence) answer.confidence = 'unsure';
   await recordAttempt(question, answer);
 }
@@ -1101,15 +1116,16 @@ async function ensureAttemptRecorded(question, answer) {
 const answerWrites = new Map();
 async function saveActiveAnswer(questionId) {
   const active = state.active;
-  if (!active?.id || !state.features.sessions) return;
+  if (!active?.id || !state.features.sessions || active.completedReview || active.status !== 'in_progress') return;
   const answer = active.answers[questionId] || {}; const question = active.questions.find((q) => q.id === questionId);
+  if(answer.selected_option)answer.answered_at ||= new Date().toISOString();
   const value = { session_id: active.id, question_id: questionId, selected_option: answer.selected_option || null, marked_for_review: active.marked.has(questionId), answered_at: answer.selected_option ? answer.answered_at || new Date().toISOString() : null, is_correct: answer.selected_option ? isAnswerCorrect(question, answer) : null, time_spent_seconds: answer.time_spent_seconds || 0, confidence: answer.confidence || null, error_reason: answer.error_reason || null, client_event_id: answer.client_event_id || null };
   const key = `${active.id}:${questionId}`, signature = JSON.stringify(value), previous = answerWrites.get(key);
-  if (active.kind === 'recall' && previous?.signature === signature) return previous.promise;
+  if (previous?.signature === signature) return previous.promise;
   const position = active.index, started = active.questionStartedAt, userId = state.user.id;
   const promise = (async () => {
     if (previous) await previous.promise.catch(() => {});
-    await persistTimer(active);
+    if (state.user?.id !== userId || active.status !== 'in_progress' || active.completedReview) return;
     const saved = await optional(db.from('test_answers').upsert(value, { onConflict: 'session_id,question_id' }), 'sessions');
     if (saved.error) throw saved.error;
     if (active.kind !== 'recall') await optional(db.from('test_sessions').update({ current_position: position, last_question_started_at: new Date(started).toISOString(), updated_at: new Date().toISOString() }).eq('id', active.id).eq('user_id', userId), 'sessions');
@@ -1120,7 +1136,7 @@ async function saveActiveAnswer(questionId) {
 
 async function selectAnswer(key) {
   if (!essentialMediaReady(activeQuestion(), root)) return toast('Wait for the question image to load. If it fails, skip this question until the source image is recovered.');
-  const active = state.active; const question = activeQuestion(); if (!active || active.completedReview || sharedClock(active).manualPaused) return;
+  const active = state.active; const question = activeQuestion(); if (!active || active.completedReview || active.submitting || active.status !== 'in_progress' || sharedClock(active).manualPaused) return;
   const existing = active.answers[question.id]; const multiple = correctKeys(question).length > 1;
   if (['practice', 'recall'].includes(active.kind) && existing?.selected_option && (!multiple || existing.submitted)) return;
   const selectedAt = Date.now();
@@ -1157,6 +1173,14 @@ async function submitMultiAnswer() {
 
 async function navigateActive(index) {
   const active = state.active; const current = activeQuestion();
+  if (!active || active.submitting) return;
+  if (active.completedReview) {
+    const positions=reviewPositions(active);
+    const direction=index>=active.index?1:-1;
+    const next=direction>0?positions.find(i=>i>=index):positions.findLast(i=>i<=index);
+    if(next===undefined){if(direction>0)resultScreen();return;}
+    active.index=next;active.explanationOpen=true;renderActive();return;
+  }
   if(active.navigationBusy || sharedClock(active).manualPaused)return;
   active.navigationBusy = true;
   const originalRoute = state.route;
@@ -1173,9 +1197,9 @@ async function navigateActive(index) {
   if (active.kind !== 'browse' && !destinationAnswer?.selected_option) resumeTotalTimer(active, active.questionStartedAt);
   active.explanationOpen = false;
   await persistTimer(active);
-  if (active.kind === 'recall') renderActive();
+  if (state.active === active && state.route === originalRoute) renderActive();
   if (active.id) await optional(db.from('test_sessions').update({ current_position: active.index, last_question_started_at: new Date().toISOString() }).eq('id', active.id).eq('user_id', state.user.id), 'sessions');
-  if (state.active === active && state.route === originalRoute && active.kind !== 'recall') renderActive();
+
   } finally { active.navigationBusy = false; }
 }
 
@@ -1212,7 +1236,7 @@ async function toggleMark() {
 }
 
 async function updateAnswerMetadata(field, value) {
-  const question = activeQuestion(); const answer = state.active.answers[question.id]; if (!answer) return;
+  const question = activeQuestion(); const answer = state.active.answers[question.id]; if (!answer || state.active.completedReview) return;
   if (field === 'confidence' && answer.attemptRecorded) return;
   answer[field] = answer[field] === value ? null : value;
   if (field === 'confidence' && answer[field] && isAnswerCorrect(question, answer)) await recordAttempt(question, answer);
@@ -1224,7 +1248,7 @@ async function updateAnswerMetadata(field, value) {
 }
 
 async function updateQuestionSrm(action) {
-  const question = activeQuestion(); if (!question) return;
+  const question = activeQuestion(); if (!question || state.active?.completedReview) return;
   if ((action === 'remove' || action === 'reset') && !confirm(`${action === 'remove' ? 'Remove this knowledge unit from Active Recall? Question history is preserved.' : 'Reset Recall progress for this question? Attempt history will be preserved.'}`)) return;
   const result = await db.rpc(action==='reset'?'qbank_srm_manual':'qbank_active_recall_manual', { p_question_id: question.id, p_action: action, p_event_id: crypto.randomUUID() });
   if (result.error) return toast(result.error.message, 'error');
@@ -1260,12 +1284,14 @@ function reportModal() {
 }
 
 async function resumeSession(id) {
+  const resumeUser=state.user?.id;
   const existingActive = state.active?.id === id ? state.active : null;
   loading('Restoring your exact session…');
   try {
     const sessionResult = await db.from('test_sessions').select('*').eq('id', id).eq('user_id', state.user.id).single(); if (sessionResult.error) throw sessionResult.error;
-    const [itemsResult, answersResult] = await Promise.all([db.from('test_session_questions').select('*').eq('session_id', id).order('position'), db.from('test_answers').select('*').eq('session_id', id)]);
+    const [itemsResult, answersResult] = await Promise.all([paged(()=>db.from('test_session_questions').select('*').eq('session_id', id).order('position')).then(data=>({data})), paged(()=>db.from('test_answers').select('*').eq('session_id', id).order('question_id')).then(data=>({data}))]);
     if (itemsResult.error) throw itemsResult.error;
+    if (answersResult.error) throw answersResult.error;
     const questions = (itemsResult.data || []).map((item) => ({ id: item.question_id, ...item.question_snapshot, options: item.question_snapshot.options || [], restoreMedia: item.question_snapshot.media_status !== 'NO_MEDIA' && (!Array.isArray(item.question_snapshot.question_images) || !Array.isArray(item.question_snapshot.explanation_images)) }));
     const answers = Object.fromEntries((answersResult.data || []).map((answer) => [answer.question_id, answer]));
     if (existingActive) for (const [questionId, answer] of Object.entries(existingActive.answers || {})) {
@@ -1279,6 +1305,7 @@ async function resumeSession(id) {
       for(const answer of Object.values(answers)){const r=byEvent.get(answer.client_event_id);if(r){answer.attemptRecorded=true;answer.retrieval_strength=r.strength;answer.srmFeedback={state:r.mastery,interval_minutes:r.interval_minutes,relearn:!r.is_correct||r.strength==='failed'};}}
     }
 
+    if(state.user?.id!==resumeUser)return;
     assertValidation(validateResumeSnapshot({ session, storedRows: itemsResult.data || [], questions, answers: answersResult.data || [] }), 'Resume');
     assertValidation(validateQuestionStateBindings({ questions, answers, bookmarks: personal.bookmarks, marked: personal.marked }), 'Resumed question state');
     const resumedAt = Date.now();
@@ -1292,30 +1319,50 @@ async function resumeSession(id) {
     if (session.mode === 'recall') { restoredClock.questionLimitMs = session.target_seconds_per_question === 0 ? Infinity : (session.target_seconds_per_question ?? 50) * 1000; restoredClock.startedAt = resumedAt; restoredClock.paused = Boolean(resumedAnswer?.selected_option); }
     restoredClock=checkpointClock(restoredClock,resumedAt,session.mode === 'recall' ? Infinity : questions.length*50000);
     state.active = { ...session, solvingVisible: true, kind: ['practice', 'recall'].includes(session.mode) ? session.mode : 'test', questions, index: resumedIndex, answers, bookmarks: personal.bookmarks, marked: personal.marked, learning: personal.learning, questionStartedAt: resumedAt, questionTimeRemainingSeconds: resumedAnswer?.selected_option ? answeredQuestionTimeRemaining(resumedAnswer) : null, timer_state: restoredClock, explanationOpen: false, completedReview: session.status !== 'in_progress' };
+    if (state.active.completedReview) { resultScreen(); return; }
     await persistTimer(state.active);
     renderActive();
   } catch (error) { toast(error.message || 'Could not resume session.', 'error'); location.hash = '#/home'; }
 }
 
 async function submitActive(timedOut = false) {
-  const active = state.active; if (!active || active.completedReview) return;
+  const active = state.active; if (!active || active.completedReview || active.submitting || active.status !== 'in_progress') return;
   const answeredRows = Object.values(active.answers).filter((a) => a?.selected_option); const unanswered = active.questions.length - answeredRows.length;
   if (!timedOut && !confirm(`Finish this ${active.kind}? ${unanswered} question${unanswered === 1 ? '' : 's'} unanswered.`)) return;
+  const submitUser=state.user?.id;
+  active.submitting=true;
+  try {
+  await Promise.all([...answerWrites.entries()].filter(([key])=>key.startsWith(active.id+':')).map(([,write])=>write.promise));
   pauseTotalTimer(active);await persistTimer(active);
   stopActiveTimer(); const current = activeQuestion(); if (current) { const currentAnswer = active.answers[current.id]; await ensureAttemptRecorded(current, currentAnswer); await saveActiveAnswer(current.id); }
   let completed = null;
   if (active.id) { const result = await db.rpc('submit_test_session', { p_session_id: active.id, p_timed_out: timedOut }); if (result.error) return toast(result.error.message, 'error'); completed = result.data; }
-  if (active.kind === 'test') for (const question of active.questions) { const answer = active.answers[question.id]; if (answer?.selected_option) await ensureAttemptRecorded(question, answer); }
+  if (Array.isArray(completed)) completed = completed[0] || null;
+  active.status = completed?.status || (timedOut ? 'timed_out' : 'completed');
+  if(state.active!==active||state.user?.id!==submitUser)return;
+  if (active.kind === 'test') for (const question of active.questions) { const answer = active.answers[question.id]; if (answer?.selected_option) await recordAttempt(question, answer); }
   if (Array.isArray(completed)) completed = completed[0] || null;
   const totalCorrect = completed?.total_correct ?? active.questions.filter((q) => isAnswerCorrect(q, active.answers[q.id])).length;
   state.active = { ...active, ...(completed || {}), total_questions: completed?.total_questions ?? active.questions.length, total_correct: totalCorrect, incorrect_count: completed?.incorrect_count ?? answeredRows.length - totalCorrect, unanswered_count: completed?.unanswered_count ?? unanswered, total_time_seconds: completed?.total_time_seconds ?? Math.floor(totalTimeUsed(active)/1000), timed_out: completed?.timed_out ?? timedOut, status: completed?.status ?? (timedOut ? 'timed_out' : 'completed'), completedReview: false };
   resultScreen();
+  } finally { active.submitting=false;if(state.active?.id===active.id)state.active.submitting=false; }
+}
+
+function reviewPositions(active) {
+ return active.questions.flatMap((q,i)=>{const a=active.answers[q.id],status=!a?.selected_option?'unattempted':isAnswerCorrect(q,a)?'correct':'incorrect';return !active.reviewFilter||active.reviewFilter==='all'||active.reviewFilter===status?[i]:[];});
+}
+function startCompletedReview(filter='all') {
+ const active=state.active;const previous=active.reviewFilter;active.reviewFilter=filter;
+ const positions=reviewPositions(active);
+ if(!positions.length){active.reviewFilter=previous;toast('No questions match this review filter.');return;}
+ active.completedReview=true;
+ active.index=positions[0];active.explanationOpen=true;stopActiveTimer();renderActive();
 }
 
 function resultScreen() {
   const active = state.active; const answered = Object.values(active.answers).filter((answer) => answer?.selected_option).length;
   const average = answered ? Math.round(Object.values(active.answers).reduce((sum, answer) => sum + (answer?.time_spent_seconds || 0), 0) / answered) : 0;
-  layout(`<div class="page-heading"><span class="eyebrow">${active.timed_out ? 'TIME EXPIRED' : 'COMPLETED'}</span><h1>${e(active.title || 'Result')}</h1><p>${date(new Date())}</p></div><section class="result-grid"><div class="card metric"><span>Score</span><b>${active.total_correct}/${active.total_questions}</b></div><div class="card metric"><span>Accuracy</span><b>${pct(active.total_correct, answered)}</b></div><div class="card metric"><span>Incorrect</span><b>${active.incorrect_count}</b></div><div class="card metric"><span>Unanswered</span><b>${active.unanswered_count}</b></div><div class="card metric"><span>Average time</span><b>${average}s</b></div></section><section class="card result-actions"><h2>Turn this result into action</h2><div class="row"><button class="button" data-action="review-result">Review every question</button><button class="button secondary" data-action="review-mistakes">Review incorrect</button><button class="button secondary" data-action="retake">Retake</button><a class="button ghost" href="#/history">History</a></div></section>`);
+  layout(`<div class="page-heading"><span class="eyebrow">${active.timed_out ? 'TIME EXPIRED' : 'COMPLETED'}</span><h1>${e(active.title || 'Result')}</h1><p>${[...new Set(active.questions.map(q=>questionMeta(q)))].join(' · ')} · ${e(active.questions[0]?.source_test_label||active.title||'')}</p><small>${date(active.completed_at||new Date())} · Time ${timerText(active.total_time_seconds||0)}</small></div><section class="result-grid"><div class="card metric"><span>Score</span><b>${active.total_correct}/${active.total_questions}</b></div><div class="card metric"><span>Accuracy</span><b>${pct(active.total_correct, answered)}</b></div><div class="card metric"><span>Incorrect</span><b>${active.incorrect_count}</b></div><div class="card metric"><span>Unanswered</span><b>${active.unanswered_count}</b></div><div class="card metric"><span>Average time</span><b>${average}s</b></div></section><section class="card result-actions"><div class="row"><button class="button" data-action="review-result">Review Test</button><button class="button secondary" data-action="review-mistakes">Review incorrect</button><a class="button secondary" href="#/tests">Return to Tests</a><a class="button ghost" href="#/history">History</a></div></section>`);
 }
 
 async function legacyHistory() {
@@ -1326,14 +1373,19 @@ async function legacyHistory() {
 async function review() {
   const reviewUser=state.user?.id,reviewGeneration=recallGeneration;
   const now = new Date().toISOString();
-  const learning = await optional(paged(() => db.from('user_question_state').select('question_id,last_is_correct,wrong,bookmarked,marked_for_review,revision,srm_active,srm_due_at,personally_difficult,last_time_seconds,questions(id,platform_id,subject_id)').eq('user_id', reviewUser).order('question_id'),500).then(data=>({data})).catch(error=>({error})), 'learning');
+  const learning = await optional(paged(() => db.from('user_question_state').select('question_id,last_is_correct,wrong,bookmarked,marked_for_review,revision,srm_active,srm_due_at,personally_difficult,last_time_seconds,questions(id,platform_id,subject_id,is_pyq)').eq('user_id', reviewUser).order('question_id'),500).then(data=>({data})).catch(error=>({error})), 'learning');
   if(state.user?.id!==reviewUser||recallGeneration!==reviewGeneration||state.route!=='review')return;
   const rows = learning.data || [];
   const selected = state.reviewFilters || { platforms: [], subjects: [], systems: [], topics: [], subtopics: [], source_tests: [], pyq: '' };
+  const marrowId=state.meta.platforms.find(p=>p.name.toLowerCase()==='marrow')?.id;
+  const sourceItems=state.meta.platforms.flatMap(p=>p.id===marrowId?[{id:p.id+':qbank',name:'Marrow QBank'},{id:p.id+':pyq',name:'Marrow PYQs'}]:[p]);
+  const sourceKey=q=>q?.platform_id===marrowId?marrowId+(q.is_pyq?':pyq':':qbank'):q?.platform_id;
+  const sourceAllowed=new Set(rows.filter(r=>!selected.study_sources?.length||selected.study_sources.includes(sourceKey(r.questions))).map(r=>r.question_id));
   const learningQuestionIds = [...new Set(rows.map((row) => String(row.question_id)))];
   const hasPopulationFilter = ['platforms','subjects','systems','topics','subtopics','source_tests'].some((key) => selected[key]?.length) || Boolean(selected.pyq);
   const validIds = new Set(hasPopulationFilter ? await matchingQuestionIds({ ...selected, question_ids: learningQuestionIds, statuses: ['all'], year: '', search: '', source: '' }) : learningQuestionIds);
   if(state.user?.id!==reviewUser||recallGeneration!==reviewGeneration||state.route!=='review')return;
+  for(const id of validIds)if(!sourceAllowed.has(id))validIds.delete(id);
   const categories = [
     ['incorrect', 'Incorrect', rows.filter((x) => x.last_is_correct === false || x.wrong), 'Questions whose current learning state is incorrect.'],
     ['correct', 'Correct', rows.filter((x) => x.last_is_correct === true), 'Questions whose current learning state is correct.'],
@@ -1343,7 +1395,7 @@ async function review() {
     ['difficult', 'Personally Difficult', rows.filter((x) => x.personally_difficult), 'Questions flagged as difficult.'],
     ['slow', 'Slow >50s', rows.filter((x) => Number(x.last_time_seconds) > TARGET_SECONDS), 'Questions whose latest relevant time exceeded 50 seconds.'],
   ];
-  const taxonomyRows = rows.map(row=>row.questions).filter(Boolean);
+  const taxonomyRows = rows.map(row=>row.questions?{...row.questions,study_source:sourceKey(row.questions)}:null).filter(Boolean);
   const taxonomyByQuestion = new Map(taxonomyRows.map((item) => [String(item.id), item]));
   const groupRows = (ids, field, items, status, title) => {
     const groups = new Map(); ids.forEach((id) => { const key = taxonomyByQuestion.get(String(id))?.[field]; if (key) { if (!groups.has(key)) groups.set(key, []); groups.get(key).push(id); } });
@@ -1352,12 +1404,12 @@ async function review() {
   };
   const cards = categories.map(([status, title, categoryRows, description]) => {
     const questionIds = [...new Set(categoryRows.map((row) => String(row.question_id)).filter((id) => validIds.has(id)))];
-    return `<article class="card review-detail"><div class="section-heading"><div><span class="eyebrow">${e(title)}</span><b class="review-count">${questionIds.length}</b><p>${e(description)}</p></div>${actionSetButtons({ mode: 'test', preset: 'revision', title: `${title} revision`, filters: { ...selected, statuses: ['all'], pyq: '', year: '', search: '', source: '' }, questionIds }, 'Start revision test')}</div>${questionIds.length ? `<details><summary>By subject</summary><ul class="action-list">${groupRows(questionIds, 'subject_id', state.meta.subjects, status, title)}</ul></details><details><summary>By platform</summary><ul class="action-list">${groupRows(questionIds, 'platform_id', state.meta.platforms, status, title)}</ul></details>` : ''}</article>`;
+    return `<article class="card review-detail"><div class="section-heading"><div><span class="eyebrow">${e(title)}</span><b class="review-count">${questionIds.length}</b><p>${e(description)}</p></div>${actionSetButtons({ mode: 'test', preset: 'revision', title: `${title} revision`, filters: { ...selected, statuses: ['all'], pyq: '', year: '', search: '', source: '' }, questionIds }, 'Start revision test')}</div>${questionIds.length ? `<details><summary>By subject</summary><ul class="action-list">${groupRows(questionIds, 'subject_id', state.meta.subjects, status, title)}</ul></details><details><summary>By platform</summary><ul class="action-list">${groupRows(questionIds, 'study_source', sourceItems, status, title)}</ul></details>` : ''}</article>`;
   }).join('');
-  layout(`<div class="page-heading"><span class="eyebrow">REVIEW</span><h1>Everything worth revisiting</h1><p>Filter the review population, then browse or test the exact same question IDs.</p></div>${!state.features.learning ? featureNotice('Apply the learning-interface migration for accurate consolidated review counts.') : ''}<section class="card builder-card"><form id="review-filter-form" class="stack"><div class="filters">${multiPicker('platforms', 'Platforms', state.meta.platforms)}${multiPicker('subjects', 'Subjects', state.meta.subjects)}${multiPicker('systems', 'Systems (optional)', state.meta.systems)}${multiPicker('topics', 'Topics', state.meta.topics)}${multiPicker('subtopics', 'Subtopics', state.meta.subtopics)}</div><div class="row"><button class="button">Apply review filters</button><button type="button" class="button ghost" data-action="clear-review-filters">Clear</button></div></form></section><section class="review-stack">${cards}</section><section class="card section-card"><div class="section-heading"><h2>Test history</h2><a class="button secondary" href="#/history">Open history</a></div></section>`);
+  layout(`<div class="page-heading"><span class="eyebrow">REVIEW</span><h1>Everything worth revisiting</h1><p>Filter the review population, then browse or test the exact same question IDs.</p></div>${!state.features.learning ? featureNotice('Apply the learning-interface migration for accurate consolidated review counts.') : ''}<section class="card builder-card"><form id="review-filter-form" class="stack"><div class="filters">${multiPicker('study_sources', 'Study sources', sourceItems)}${multiPicker('subjects', 'Subjects', state.meta.subjects)}${multiPicker('systems', 'Systems (optional)', state.meta.systems)}${multiPicker('topics', 'Topics', state.meta.topics)}${multiPicker('subtopics', 'Subtopics', state.meta.subtopics)}</div><div class="row"><button class="button">Apply review filters</button><button type="button" class="button ghost" data-action="clear-review-filters">Clear</button></div></form></section><section class="review-stack">${cards}</section><section class="card section-card"><div class="section-heading"><h2>Test history</h2><a class="button secondary" href="#/history">Open history</a></div></section>`);
   const form = document.querySelector('#review-filter-form');
   if (state.meta.sourceTests.length) form.querySelector('.filters')?.insertAdjacentHTML('beforeend', `${multiPicker('source_tests', 'Source Tests', state.meta.sourceTests)}<div class="field"><label>PYQ</label><select name="pyq"><option value="">All questions</option><option value="yes">PYQ only</option><option value="no">Non-PYQ</option></select></div>`);
-  for (const level of ['platforms', 'subjects', 'systems', 'topics', 'subtopics', 'source_tests']) (selected[level] || []).forEach((id) => { const input = form.querySelector(`input[name="${level}"][value="${CSS.escape(String(id))}"]`); if (input) input.checked = true; });
+  for (const level of ['study_sources', 'platforms', 'subjects', 'systems', 'topics', 'subtopics', 'source_tests']) (selected[level] || []).forEach((id) => { const input = form.querySelector(`input[name="${level}"][value="${CSS.escape(String(id))}"]`); if (input) input.checked = true; });
   if (form.elements.pyq) form.elements.pyq.value = selected.pyq || '';
   setupDependentFilters(form);
   form.onsubmit = (event) => { event.preventDefault(); const filters = readFilters(form); state.reviewFilters = filters; review(); };
@@ -1930,6 +1982,7 @@ document.addEventListener('click', async (event) => {
   if (action === 'choose-preset') await showTestBuilder(target.dataset.preset); if (action === 'close-builder') testBuilderGeneration++;
   if (action === 'close-builder') { grandTests.cancel(); gtMode.cancel(); document.querySelector('#test-builder-slot').innerHTML = ''; }
   if (action === 'open-pyq-test') await openSelectedPyqTest(target, false); if (action === 'start-pyq-test') await openSelectedPyqTest(target, true);
+  if (action === 'start-catalog-selection'||action === 'browse-catalog-selection') await openCatalogSelection(target.dataset.kind,action==='start-catalog-selection');
   if (action === 'open-core-btr-test') await openSelectedCoreBtrTest(target, false); if (action === 'start-core-btr-test') await openSelectedCoreBtrTest(target, true);
   if (action === 'answer') await selectAnswer(target.dataset.key); if (action === 'submit-multi-answer') await submitMultiAnswer(); if (action === 'previous') await navigateActive(state.active.index - 1);
   if (action === 'ar-strength') { const answer=state.active.answers[activeQuestion().id];if(answer&&!answer.attemptRecorded){answer.retrieval_strength=target.dataset.value;answer.confidence=target.dataset.value==='strong'?'sure':'unsure';await recordAttempt(activeQuestion(),answer);renderActive();}return;}
@@ -1969,8 +2022,9 @@ document.addEventListener('click', async (event) => {
   if (action === 'analytics-open-ids') { const questionIds = String(target.dataset.ids || '').split(',').filter(Boolean); await openQuestionSet({ mode: 'test', preset: 'analytics', title: target.dataset.label || 'Analytics review', filters: { platforms: [], subjects: [], systems: [], topics: [], subtopics: [], source_tests: [], statuses: ['all'], exams: [], years: [], sessions: [], pyq: '' }, questionIds, origin: '#/analytics' }); }
   if (action === 'select-analytics-breakdown') { state.analyticsBreakdown = target.dataset.level; document.querySelectorAll('[data-action="select-analytics-breakdown"]').forEach((button) => { button.classList.toggle('secondary', button !== target); }); renderAnalyticsBreakdown(state.analyticsBreakdown, 1); }
   if (action === 'analytics-more') renderAnalyticsBreakdown(target.dataset.level, Number(target.dataset.page) || 1);
-  if (action === 'review-result') { state.active.index = 0; state.active.completedReview = true; state.active.questionStartedAt = Date.now(); renderActive(); }
-  if (action === 'review-mistakes') { const questions = state.active.questions.filter((q) => state.active.answers[q.id]?.selected_option && !isAnswerCorrect(q, state.active.answers[q.id])); if (!questions.length) return toast('No incorrect questions in this session.'); state.active = { ...state.active, questions, index: 0, completedReview: true, questionStartedAt: Date.now() }; renderActive(); }
+  if (action === 'review-result') startCompletedReview();
+  if (action === 'review-filter') startCompletedReview(target.dataset.value);
+  if (action === 'review-mistakes') startCompletedReview('incorrect');
   if (action === 'retake') await createSession({ mode: state.active.kind, preset: state.active.preset || 'retake', title: `${state.active.title || 'Test'} retake`, filters: state.active.filters || {}, questionIds: state.active.questions.map((question) => question.id), requested: state.active.questions.length, autoSubmit: state.active.kind === 'test', origin: '#/history' });
   if (action === 'my-bank-tab') showMyBankTab(target.dataset.tab);
   } catch (error) { toast(error.message || 'Could not save. Please try again.', 'error'); } finally { if (guarded) state.actionBusy = false; }
