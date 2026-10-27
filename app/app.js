@@ -1,11 +1,13 @@
 import {createQuestionHistory,historyLabel} from './question-history.mjs';
 import {studyIcon} from './study-icons.js';
 import { compactStudy } from './compact-study.js?v=20261017-study1';
-import { resolveImportedMedia } from './imported-media.js?v=marrow-qbank-v1';
+import { resolveImportedMedia } from './imported-media.js?v=marrow-external-v1';
+import { MARROW_EXTERNAL_FIRST } from './marrow-media-flags.js?v=marrow-external-v1';
+import { MARROW_STORAGE_ONLY } from './marrow-media-policy.js?v=marrow-external-v1';
 import {createActiveRecall} from './active-recall.js';
 import {safeRecallMetadata,recallConcept,isRecallSelection,studyContext} from './study-flow.mjs';
 import { isCerebellum, cerebellumMedia, cerebellumNotice, essentialMediaReady, bindCerebellumMedia } from './cerebellum-media.js?v=20261004-v1';
-import {renderContent,questionContent,installMediaFailures} from './media-content.js?v=20261003-media1';
+import {renderContent,questionContent,installMediaFailures} from './media-content.js?v=marrow-external-v1';
 import { createSmartRecall } from './smart-recall.js?v=20261005-finalrecall1';
 import { recallQuestionLimit, LABELS as SMART_RECALL_LABELS } from './smart-recall-model.mjs';
 import { createGlobalImportance } from './global-importance.js?v=20261017-study1';
@@ -501,21 +503,27 @@ async function hydrateHybridQuestions(questions, options, filters = {}) {
     if (!documents.has(object.object_path)) documents.set(object.object_path, await decodePayloadObject(object));
   }
   const importedMedia = refs.flatMap(ref => documents.get(ref.qbank_payload_objects.object_path).questions[Number(ref.payload_index)]?.media || []);
-  const resolvedMedia = await resolveImportedMedia(db, importedMedia);
-  const storedMedia = new Map(resolvedMedia.filter(item => item.storage_path).map(item => [item.storage_path, item.reference]));
+  const marrowMedia = new Set(refs.flatMap(ref => {
+    const payload = documents.get(ref.qbank_payload_objects.object_path).questions[Number(ref.payload_index)];
+    return payload?.marrow_qbank_v1 === true ? payload.media || [] : [];
+  }));
+  const resolvedMedia = await resolveImportedMedia(db, importedMedia, { externalFirst: MARROW_EXTERNAL_FIRST, marrowMedia, storageOnly: MARROW_STORAGE_ONLY });
+  // Pair by object identity, never by shared storage hash: distinct original URLs must remain distinct.
+  const originals = importedMedia.filter(item => item.type !== 'tracking');
+  const mediaByIdentity = new Map(originals.map((item, index) => [item, resolvedMedia[index]]));
   for (const ref of refs) {
     const object = ref.qbank_payload_objects; const document = documents.get(object.object_path);
     const payload = document.questions[Number(ref.payload_index)];
     if (!payload) throw new Error(`Payload index is missing for question ${ref.question_id}`);
-    const media = (payload.media || []).filter(item => item.type !== 'tracking').map(item => ({ ...item, reference: storedMedia.get(item.storage_path) || item.reference })); const source = context.get(String(ref.question_id));
+    const media = (payload.media || []).filter(item => item.type !== 'tracking').map(item => (mediaByIdentity.get(item) || item)); const source = context.get(String(ref.question_id));
     byQuestion.set(String(ref.question_id), {
       question_text: payload.question_html,
       explanation_html: payload.explanation_html,
       correct_answer: (payload.correct_keys || ref.correct_option_keys || []).join(','),
       correct_option_keys: payload.correct_keys || ref.correct_option_keys || [],
       options: (payload.options || []).map((option, position) => ({ question_id: ref.question_id, option_key: option.key, option_text: option.html, is_correct: option.is_correct, sort_order: position })),
-      question_images: media.filter((item) => item.placement === 'question' && (!payload.cerebellum_full_v1 || item.type === 'image')).map((item) => item.reference),
-      explanation_images: media.filter((item) => item.placement === 'explanation' && (!payload.cerebellum_full_v1 || item.type === 'image')).map((item) => item.reference),
+      question_images: media.filter((item) => item.placement === 'question' && (!payload.cerebellum_full_v1 || item.type === 'image')).map((item) => item.marrowFallbackPath ? item : item.reference),
+      explanation_images: media.filter((item) => item.placement === 'explanation' && (!payload.cerebellum_full_v1 || item.type === 'image')).map((item) => item.marrowFallbackPath ? item : item.reference),
       image_url: media.find((item) => item.placement === 'question')?.reference || '',
       source_test_label: source?.qbank_source_tests?.title || document.source_test?.title || '',
       source_question_id: source?.source_question_id || '', source_position: source?.question_position || null,
