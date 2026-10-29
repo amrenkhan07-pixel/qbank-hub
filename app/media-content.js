@@ -27,14 +27,15 @@ function srcset(value) {
   }).filter(Boolean).join(', ');
 }
 const missing = () => '<span class="media-unavailable" role="status">Image unavailable — the source reference is missing or inaccessible.</span>';
-function imageMarkup(url, alt, candidates = '', fallbackPath = '') {
-  return `<img class="content-image" data-content-image${fallbackPath ? ` data-marrow-fallback-path="${escape(fallbackPath)}"` : ''} src="${escape(url)}"${candidates ? ` srcset="${escape(candidates)}"` : ''} alt="${escape(alt || 'Question content image')}" loading="lazy" decoding="async" referrerpolicy="no-referrer" />`;
+function imageMarkup(url, alt, candidates = '', fallbackPath = '', priority = false) {
+  return `<img class="content-image" data-content-image${fallbackPath ? ` data-marrow-fallback-path="${escape(fallbackPath)}"` : ''} src="${escape(url)}"${candidates ? ` srcset="${escape(candidates)}"` : ''} alt="${escape(alt || 'Question content image')}" loading="${priority ? 'eager' : 'lazy'}"${priority ? ' fetchpriority="high"' : ''} decoding="async" referrerpolicy="no-referrer" />`;
 }
-export function renderContent(value, references = []) {
+export function renderContent(value, references = [], { prioritizeFirstImage = false } = {}) {
   const doc = new DOMParser().parseFromString(`<div>${String(value ?? '')}</div>`, 'text/html');
   const inline = new Set();
   const fallbacks = new Map((Array.isArray(references) ? references : []).filter(ref => ref?.marrowFallbackPath && /^marrow\/qbank-v1\/[a-f0-9]{64}\.(jpeg|png|webp)$/.test(ref.marrowFallbackPath)).map(ref => [safeMediaUrl(ref), ref.marrowFallbackPath]));
-  const scopedImage = (url, alt, candidates = '') => imageMarkup(url, alt, candidates, fallbacks.get(url) || '');
+  let imageCount = 0;
+  const scopedImage = (url, alt, candidates = '') => imageMarkup(url, alt, candidates, fallbacks.get(url) || '', prioritizeFirstImage && imageCount++ === 0);
   const allowed = new Set(['P','BR','B','STRONG','I','EM','U','UL','OL','LI','H2','H3','H4','BLOCKQUOTE','CODE','PRE','TABLE','THEAD','TBODY','TR','TH','TD','SUP','SUB','A','HR','DIV','SPAN','FIGURE','FIGCAPTION']);
   const blocked = new Set(['SCRIPT','STYLE','IFRAME','OBJECT','EMBED','FORM','INPUT','BUTTON','SVG','MATH','TEMPLATE']);
   const clean = node => {
@@ -87,7 +88,7 @@ export function questionContent(question, placement) {
   const explanation = placement === 'explanation';
   const html = explanation ? (question.explanation_html ?? question.explanation ?? '') : (question.question_text ?? (question.raw_text || question.text || ''));
   const references = explanation ? (question.explanation_images || []) : [...(question.question_images || []), ...(question.image_url ? [question.image_url] : [])];
-  return renderContent(html, references) + (explanation ? supplementaryMedia(question) : '');
+  return renderContent(html, references, { prioritizeFirstImage: !explanation }) + (explanation ? supplementaryMedia(question) : '');
 }
 function supplementaryMedia(question) {
   const audio = question.audio || question.audio_url;

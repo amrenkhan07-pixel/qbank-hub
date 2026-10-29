@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import vm from 'node:vm';
+import {readFileSync} from 'node:fs';
+const src=readFileSync(new URL('../app/app.js',import.meta.url),'utf8');
+const extract=(start,end)=>src.slice(src.indexOf(start),src.indexOf(end,src.indexOf(start)));
+let active=0,maxActive=0;
+const rows=Array.from({length:3819},(_,id)=>({id}));
+const c={Promise,Map,Set,Date,console};vm.createContext(c);vm.runInContext(extract('async function metadataPages(', 'async function paged('),c);
+const loaded=await c.metadataPages(()=>({async range(a,b){maxActive=Math.max(maxActive,++active);await new Promise(r=>setTimeout(r,(a===0?8:1)));active--;return {data:rows.slice(a,b+1)};}}));
+assert.deepEqual(Array.from(loaded,r=>r.id),rows.map(r=>r.id));assert.equal(maxActive,3);
+await assert.rejects(c.metadataPages(()=>({range:async()=>({error:new Error('offline')})})),/offline/);
+let calls=0;c.state={user:{id:'a'}};c.facetCache=new Map();c.fetchFacets=async()=>{calls++;return {count:7};};vm.runInContext(extract('async function resolveFacets(', 'async function fetchFacets('),c);
+await Promise.all([c.resolveFacets({}),c.resolveFacets({platforms:[],subjects:[],statuses:['all'],search:'',pyq:''})]);assert.equal(calls,1);
+await c.resolveFacets({statuses:['incorrect']});assert.equal(calls,2);c.state.user.id='b';await c.resolveFacets({});assert.equal(calls,3);
+console.log('PASS: bounded metadata concurrency, complete ordered pages, errors propagated, equivalent empty filters deduplicated, personal filters and accounts separated.');

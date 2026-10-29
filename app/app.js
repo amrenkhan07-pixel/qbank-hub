@@ -7,7 +7,7 @@ import { MARROW_STORAGE_ONLY } from './marrow-media-policy.js?v=marrow-external-
 import {createActiveRecall} from './active-recall.js';
 import {safeRecallMetadata,recallConcept,isRecallSelection,studyContext} from './study-flow.mjs';
 import { isCerebellum, cerebellumMedia, cerebellumNotice, essentialMediaReady, bindCerebellumMedia } from './cerebellum-media.js?v=20261004-v1';
-import {renderContent,questionContent,installMediaFailures} from './media-content.js?v=marrow-external-v1';
+import {renderContent,questionContent,installMediaFailures} from './media-content.js?v=20261030-performance1';
 import { createSmartRecall } from './smart-recall.js?v=20261005-finalrecall1';
 import { recallQuestionLimit, LABELS as SMART_RECALL_LABELS } from './smart-recall-model.mjs';
 import { createGlobalImportance } from './global-importance.js?v=20261017-study1';
@@ -140,7 +140,7 @@ async function optional(query, feature) {
 }
 
 async function loadMeta(force = false, scope = '') {
-  const basic = scope!=='full' && ['recall','global-importance','importance-subject','importance-recall','history','tests','marrow-pyqs','analytics'].includes(route());
+  const basic = scope!=='full' && ['home','recall','global-importance','importance-subject','importance-recall','history','tests','marrow-pyqs','analytics'].includes(route());
   const homeOnly=scope!=='full' && route()==='home';
   const key = `${state.user?.id}:${basic ? 'basic' : homeOnly ? 'home' : 'full'}`;
   if (force) metadataRequests.clear();
@@ -165,7 +165,7 @@ async function loadFullMeta(force = false, includeSources = true) {
     optional(db.from('systems').select('id,name,platform_subject_id').order('sort_order').order('name')),
     optional(paged(() => db.from('topics').select('id,name,platform_subject_id,system_id,parent_topic_id').order('sort_order').order('name').order('id'))),
     optional(db.from('subtopics').select('id,name,topic_id').order('sort_order').order('name'), 'subtopics'),
-    includeSources ? optional(paged(() => db.from('qbank_source_tests').select('id,title,platform_id,subject_id,sequence,declared_question_count,is_pyq,source_path').order('sequence').order('id')), 'hybrid') : Promise.resolve(state.meta.sourceTests),
+    includeSources ? optional(metadataPages(() => db.from('qbank_source_tests').select('id,title,platform_id,subject_id,sequence,declared_question_count,is_pyq,source_path').order('sequence').order('id')), 'hybrid') : Promise.resolve(state.meta.sourceTests),
   ]);
   if (subjects.error) throw subjects.error;
   if (platforms.error) throw platforms.error;
@@ -204,7 +204,8 @@ async function fetchPopulation(filters, { includeIds = true, limit = null, offse
 }
 
 async function resolveFacets(filters) {
-  const key = JSON.stringify([state.user?.id, filters]);
+  const meaningful = Object.fromEntries(Object.entries(filters || {}).filter(([key,value]) => value != null && value !== '' && (!Array.isArray(value) || value.length && !(key === 'statuses' && value.length === 1 && value[0] === 'all'))));
+  const key = JSON.stringify([state.user?.id, meaningful]);
   const cached = facetCache.get(key);
   if (cached && Date.now() - cached.at < 30000) return cached.promise;
   const promise = fetchFacets(filters);
@@ -310,6 +311,16 @@ function setupDependentFilters(form) {
     state.filterTimer = setTimeout(() => { form.__cascadeReady = update().catch((error) => { console.warn(error); const holder = form.querySelector('[data-match-count]'); if (holder) holder.textContent = 'Count unavailable'; }); }, 100);
   });
   form.__cascadeReady = update().catch((error) => { console.warn(error); const holder = form.querySelector('[data-match-count]'); if (holder) holder.textContent = 'Count unavailable'; });
+}
+
+// Only static module metadata uses parallel pages; learner queries retain their ordering.
+async function metadataPages(queryFactory) {
+  const rows = [], size = 1000;
+  for (let from = 0; ; from += size * 3) {
+    const pages = await Promise.all([0,1,2].map(i => queryFactory().range(from+i*size, from+(i+1)*size-1)));
+    for (const page of pages) { if (page.error) throw page.error; }
+    for (const page of pages) { rows.push(...(page.data || [])); if (!page.data || page.data.length < size) return rows; }
+  }
 }
 
 async function paged(queryFactory, size = PAGE_SIZE) {
@@ -496,12 +507,19 @@ async function hydrateHybridQuestions(questions, options, filters = {}) {
     const result = await optional(db.from('qbank_question_payloads').select('question_id,payload_index,correct_option_keys,media_status,qbank_payload_objects!inner(object_path,sha256,compression)').in('question_id', missingIds.slice(index, index + 200)), 'hybrid');
     if (!result.error) refs.push(...(result.data || []));
   }
-  const context = await sourceContext(missingIds, filters); const byQuestion = new Map();
+  const contextRequest = sourceContext(missingIds, filters); const byQuestion = new Map();
   const documents = new Map();
-  for (const ref of refs) {
-    const object = ref.qbank_payload_objects;
-    if (!documents.has(object.object_path)) documents.set(object.object_path, await decodePayloadObject(object));
-  }
+  const objects = [...new Map(refs.map(ref => [ref.qbank_payload_objects.object_path,ref.qbank_payload_objects])).values()];
+  // Repaired questions can each have an immutable payload. Bound downloads to four,
+  // retain checksum validation, and keep output ordering tied to refs.
+  let nextObject = 0;
+  const downloads = Promise.all(Array.from({length: Math.min(4,objects.length)}, async () => {
+    while (nextObject < objects.length) {
+      const object = objects[nextObject++];
+      documents.set(object.object_path, await decodePayloadObject(object));
+    }
+  }));
+  const [context] = await Promise.all([contextRequest, downloads]);
   const importedMedia = refs.flatMap(ref => documents.get(ref.qbank_payload_objects.object_path).questions[Number(ref.payload_index)]?.media || []);
   const marrowMedia = new Set(refs.flatMap(ref => {
     const payload = documents.get(ref.qbank_payload_objects.object_path).questions[Number(ref.payload_index)];
@@ -740,14 +758,15 @@ async function mountHomeReviewTiles(isCurrent) {
 async function home() {
   const homeGeneration=recallGeneration,homeUser=state.user?.id;
   const homeCurrent=()=>homeGeneration===recallGeneration&&state.user?.id===homeUser&&state.route==='home';
-  loading('Preparing your study plan…');
+  layout(`<section class="home-hero" data-home-loading><div><span class="eyebrow">YOUR STUDY PLAN</span><h1>What should you do next?</h1><p class="subtle">Your study summary is loading. You can start exploring now.</p></div><a class="button large" href="#/qbank">Open QBank</a></section><section class="action-grid"><a class="card action-card" href="#/tests"><h2>Test</h2><p>Build a focused test.</p></a><a class="card action-card" href="#/global-importance"><h2>Global Importance</h2><p>Explore important concepts.</p></a><a class="card action-card" href="#/review"><h2>Incorrect / Saved</h2><p>Review your questions.</p></a></section><p role="status">Loading your progress and continuation…</p>`);
   const now = new Date().toISOString();
   const [attempts, sessions, due, cards, studyContinuation] = await Promise.all([
     db.from('question_attempts').select('question_id,is_correct,answered_at').eq('user_id', state.user.id).order('answered_at', { ascending: false }).limit(1000),
     optional(db.from('test_sessions').select('*').eq('user_id', state.user.id).eq('status', 'in_progress').order('updated_at', { ascending: false }).limit(1), 'sessions'),
     optional(db.from('user_question_state').select('question_id', { count: 'exact', head: true }).eq('user_id', state.user.id).eq('srm_active', true).lte('srm_due_at', now), 'srm'),
-    optional(db.from('recall_card_progress').select('card_id', { count: 'exact' }).eq('user_id', state.user.id).lte('due_at', now), 'personal'),
+    optional(db.from('recall_card_progress').select('card_id', { count: 'exact', head: true }).eq('user_id', state.user.id).lte('due_at', now), 'personal'),
     db.rpc('qbank_study_continuation'),
+    loadMeta(false, 'basic'),
   ]);
   if(!homeCurrent())return;
   const logs = attempts.data || []; const correct = logs.filter((row) => row.is_correct).length;
@@ -763,6 +782,13 @@ async function home() {
     if(context.error)throw context.error;
     state.meta.sourceTests.push(...(context.data||[]).map(t=>({...t,name:t.title})));
   }
+  await Promise.all(['systems','topics','subtopics'].map(async collection => {
+    const ids=[...new Set([sessions.data?.[0],study?.session].flatMap(session=>session?.filters?.[collection]||[]))].filter(id=>!state.meta[collection].some(row=>row.id===id));
+    if(!ids.length)return;
+    const result=await db.from(collection).select('id,name').in('id',ids);
+    if(homeCurrent()&&!result.error)state.meta[collection].push(...(result.data||[]));
+  }));
+  if(!homeCurrent())return;
   const active = sessions.data?.[0]; const dueCount = (due.count || due.data?.length || 0) + (cards.count || cards.data?.length || 0);
   const mistakes = new Map(); logs.filter((row) => !row.is_correct).forEach((row) => mistakes.set(row.question_id, (mistakes.get(row.question_id) || 0) + 1));
   const recommendation = dueCount ? { label: 'Start Active Recall', route: '#/recall' }
@@ -1980,11 +2006,17 @@ async function render() {
   gtMode.cancel(); grandTests.cancel();
   persistTimer(state.active);
   stopActiveTimer(); state.route = route(); if (!state.user) return auth();
+  const generation=recallGeneration, owner=state.user.id;
   try {
+    if (state.route === 'home') return await home();
     if (state.route === 'analytics') return analytics();
+    layout(`<div class="page-heading"><h1>${e({qbank:'QBank',tests:'Test',history:'History',review:'Incorrect / Saved',recall:'Active Recall'}[state.route] || 'Your study workspace')}</h1><p role="status">Loading…</p></div>`);
+    // Start the expensive count alongside metadata, not after all module pages.
+    if(state.route==='qbank') void resolveFacets({}).catch(()=>{});
     await loadMeta();
+    if(generation!==recallGeneration || owner!==state.user?.id)return;
     if (['global-importance','importance-subject','importance-recall'].includes(state.route)) return globalImportance.render(); if (state.route === 'home') return home(); if (state.route === 'qbank') return qbank(); if (state.route === 'marrow-pyqs') return marrowPyqs(); if (state.route === 'tests') return tests(); if (state.route === 'recall') return recall(); if (state.route === 'review') return review(); if (state.route === 'analytics') return analytics(); if (state.route === 'grand-test-analytics') return grandTests.analytics(); if (state.route === 'grand-test-attempt') return gtMode.attempt(new URLSearchParams(location.hash.split('?')[1]).get('id')); if (state.route === 'my-bank' || state.route === 'manage') return myBank(); if (state.route === 'history') return history(); return home();
-  } catch (error) { console.error(error); layout(`<div class="card notice"><b>Something went wrong.</b><p>${e(error.message || 'Please try again.')}</p><button class="button secondary" data-action="retry">Try again</button></div>`); }
+  } catch (error) { if(generation!==recallGeneration || owner!==state.user?.id)return; console.error(error); layout(`<div class="card notice"><b>Something went wrong.</b><p>${e(error.message || 'Please try again.')}</p><button class="button secondary" data-action="retry">Try again</button></div>`); }
 }
 
 function auth() {
@@ -2099,9 +2131,7 @@ async function bootstrap() {
       state.meta.fullLoaded = false; state.meta.subjects = []; state.meta.platforms = [];
       setTimeout(render, 0);
     });
-    if (state.user) {
-      try { await loadMeta(); } catch (error) { console.error('Startup metadata failed', error); }
-    }
+
   }
   render();
 }
